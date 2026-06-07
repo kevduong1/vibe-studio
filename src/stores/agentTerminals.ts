@@ -31,6 +31,9 @@ export interface AgentTerminal {
   title: string;
   /** Project binding: spawn cwd, badge label, click-to-switch target. */
   workspacePath: string;
+  /** macOS notification + sound on attention onset (lib/agentNotifications).
+   *  Persisted; stored as true | undefined (absent = off, the default). */
+  notificationsEnabled?: boolean;
 }
 
 export interface AgentTerminalsState extends dock.DockState<AgentTerminal> {
@@ -56,6 +59,9 @@ export interface AgentTerminalsState extends dock.DockState<AgentTerminal> {
   setActiveTerminal: (groupId: string, terminalId: string) => void;
   setActiveGroup: (groupId: string) => void;
   renameTerminal: (id: string, title: string) => void;
+  /** Attention-notification opt-in — UI goes through lib/agentNotifications'
+   *  setTerminalNotifications (which gates enabling on OS permission). */
+  setNotificationsEnabled: (terminalId: string, enabled: boolean) => void;
   moveTerminal: (terminalId: string, targetGroupId: string, index: number) => void;
   splitGroup: (terminalId: string, targetGroupId: string, edge: DropEdge) => void;
   setSplitSizes: (splitId: string, sizes: number[]) => void;
@@ -108,7 +114,12 @@ const loadDock = (): PersistedSlice => {
       for (const [id, v] of Object.entries(p.terminals as Record<string, unknown>)) {
         const t = v as Record<string, unknown> | null;
         if (t && typeof t.title === "string" && typeof t.workspacePath === "string") {
-          terminals[id] = { id, title: t.title, workspacePath: t.workspacePath };
+          terminals[id] = {
+            id,
+            title: t.title,
+            workspacePath: t.workspacePath,
+            ...(t.notificationsEnabled === true && { notificationsEnabled: true }),
+          };
         }
       }
     }
@@ -197,6 +208,18 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
     set((s) => applied(s, dock.setActiveTerminal(s, groupId, terminalId))),
   setActiveGroup: (groupId) => set((s) => applied(s, dock.setActiveGroup(s, groupId))),
   renameTerminal: (id, title) => set((s) => applied(s, dock.renameTerminal(s, id, title))),
+  setNotificationsEnabled: (terminalId, enabled) =>
+    set((s) => {
+      const t = s.terminals[terminalId];
+      if (!t || (t.notificationsEnabled ?? false) === enabled) return s;
+      return {
+        terminals: {
+          ...s.terminals,
+          // true | undefined (never false) keeps the persisted JSON minimal.
+          [terminalId]: { ...t, notificationsEnabled: enabled || undefined },
+        },
+      };
+    }),
   moveTerminal: (terminalId, targetGroupId, index) =>
     set((s) => applied(s, dock.moveTerminal(s, terminalId, targetGroupId, index))),
   splitGroup: (terminalId, targetGroupId, edge) =>

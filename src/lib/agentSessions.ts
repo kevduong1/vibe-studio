@@ -5,6 +5,7 @@
  * close path disposes the PTY before the structural removal.
  */
 import { getOrCreateSession, disposeSession, type TermSession } from "./termSessions";
+import { notifyAgentAttention } from "./agentNotifications";
 import {
   useAgentTerminalsStore,
   type AgentTerminal,
@@ -16,8 +17,17 @@ export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
     id: t.id,
     cwd: t.workspacePath,
     agent: true,
-    onActivity: (activity) =>
-      useAgentTerminalsStore.getState().setPaneActivity(t.id, activity),
+    onActivity: (activity) => {
+      const store = useAgentTerminalsStore.getState();
+      // Attention onset (false → true edge) fires the opt-in system
+      // notification. Prev is read BEFORE the set; the map is sparse
+      // (absent = idle = no attention). Only the id is passed on — this
+      // closure's `t` is the creation-time object and must not leak past
+      // renames/toggles.
+      const wasAttention = store.paneActivity[t.id]?.attention ?? false;
+      store.setPaneActivity(t.id, activity);
+      if (activity.attention && !wasAttention) notifyAgentAttention(t.id);
+    },
     onTitle: (title) =>
       useAgentTerminalsStore.getState().setPaneTitle(t.id, title),
     onExit: (_code, early) => {

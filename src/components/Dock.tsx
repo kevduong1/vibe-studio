@@ -77,6 +77,9 @@ export interface DockProps<
   defaultTitle?: (terminal: T) => string;
   /** Extra tab/pane mousedown behavior (agent: switch to the project). */
   onSelectTerminal?: (terminal: T) => void;
+  /** Right-click on a tab (suppressed while its inline rename is open);
+   *  preventDefault is the handler's job. */
+  onTabContextMenu?: (terminal: T, e: React.MouseEvent) => void;
   /** Close glue: must dispose the session BEFORE the structural removal. */
   closeTerminal: (id: string) => void;
 }
@@ -153,6 +156,12 @@ function DockTab<T extends DockTerminalBase, S extends DockStoreState<T>>({
           cancelled.current = false;
           setEditing(true);
         }
+      }}
+      // While renaming, right-clicks stay on the input's native menu (the
+      // contextmenu event bubbles out of the input — it only stops
+      // pointer/mouse/dblclick).
+      onContextMenu={(e) => {
+        if (!editing) ctx.onTabContextMenu?.(terminal, e);
       }}
     >
       <ctx.TabIcon terminal={terminal} />

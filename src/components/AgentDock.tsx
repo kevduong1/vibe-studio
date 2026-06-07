@@ -6,9 +6,10 @@
  * set; tabs rename via the Dock's double-click), highlight when their
  * project is the active workspace, and clicking them switches the app to
  * that project (reopening it if it was closed → "disconnected" ⊘ until
- * then).
+ * then). Right-click a tab for the per-terminal notifications toggle
+ * (lib/agentNotifications — system notification + sound on attention).
  */
-import { memo, useEffect, useRef, type CSSProperties } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   agentTitleBase,
   useAgentTerminalsStore,
@@ -22,8 +23,10 @@ import {
   openAgentTerminal,
 } from "../lib/agentSessions";
 import { getSession } from "../lib/termSessions";
+import { setTerminalNotifications } from "../lib/agentNotifications";
 import { useProjectColorVar } from "../lib/projectColors";
 import { Dock, type DockPaneProps } from "./Dock";
+import { ContextMenu } from "./ContextMenu";
 import { ActivityGlyph, IcDisconnected, IcSparkle } from "./icons";
 import "./AgentDock.css";
 
@@ -133,6 +136,36 @@ function AgentTabBadge({ terminal }: { terminal: AgentTerminal }) {
   return connected ? null : <IcDisconnected className="dock-tab-disconnected" />;
 }
 
+/** Tab right-click menu. Holds only the terminal id — enabled state is a
+ *  live store read, never a snapshot from the right-click moment. */
+function AgentTabMenu({
+  terminalId,
+  x,
+  y,
+  onClose,
+}: {
+  terminalId: string;
+  x: number;
+  y: number;
+  onClose: () => void;
+}) {
+  const enabled = useAgentTerminalsStore(
+    (s) => s.terminals[terminalId]?.notificationsEnabled ?? false,
+  );
+  return (
+    <ContextMenu x={x} y={y} onClose={onClose}>
+      <button
+        onClick={() => {
+          onClose();
+          void setTerminalNotifications(terminalId, !enabled);
+        }}
+      >
+        {enabled ? "Disable Notifications" : "Enable Notifications"}
+      </button>
+    </ContextMenu>
+  );
+}
+
 function AgentEmpty() {
   const activePath = useWorkspacesStore((s) => s.activePath);
   return (
@@ -154,17 +187,38 @@ function AgentEmpty() {
 }
 
 export default function AgentDock() {
+  const [tabMenu, setTabMenu] = useState<{
+    id: string;
+    x: number;
+    y: number;
+  } | null>(null);
   return (
-    <Dock
-      store={useAgentTerminalsStore}
-      Pane={AgentPane}
-      TabIcon={AgentTabIcon}
-      TabBadge={AgentTabBadge}
-      Empty={AgentEmpty}
-      tabTooltip={(t) => t.workspacePath}
-      defaultTitle={(t) => agentTitleBase(t.workspacePath)}
-      onSelectTerminal={(t) => void switchToProject(t.workspacePath)}
-      closeTerminal={closeAgentTerminal}
-    />
+    <>
+      <Dock
+        store={useAgentTerminalsStore}
+        Pane={AgentPane}
+        TabIcon={AgentTabIcon}
+        TabBadge={AgentTabBadge}
+        Empty={AgentEmpty}
+        tabTooltip={(t) => t.workspacePath}
+        defaultTitle={(t) => agentTitleBase(t.workspacePath)}
+        onSelectTerminal={(t) => void switchToProject(t.workspacePath)}
+        onTabContextMenu={(t, e) => {
+          e.preventDefault();
+          setTabMenu({ id: t.id, x: e.clientX, y: e.clientY });
+        }}
+        closeTerminal={closeAgentTerminal}
+      />
+      {/* Sibling, not child: ContextMenu is position:fixed and its backdrop
+          must sit outside the tab's event handlers (Titlebar pattern). */}
+      {tabMenu && (
+        <AgentTabMenu
+          terminalId={tabMenu.id}
+          x={tabMenu.x}
+          y={tabMenu.y}
+          onClose={() => setTabMenu(null)}
+        />
+      )}
+    </>
   );
 }
