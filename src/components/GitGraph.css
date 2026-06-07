@@ -223,3 +223,39 @@
   color: var(--fg-dim);
   cursor: pointer;
 }
+
+/* ---- rebase branch-picker list (inside .gg-popover) ---- */
+
+.gg-popover-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.gg-popover-list button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: var(--font-size);
+  color: var(--fg);
+}
+.gg-popover-list button:hover {
+  background: var(--bg-hover);
+}
+.gg-popover-list button svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--fg-dim);
+}
+.gg-popover-list button .truncate {
+  flex: 1;
+  min-width: 0;
+}
+.gg-popover-empty {
+  padding: 6px 8px;
+  color: var(--fg-faint);
+  font-size: var(--font-size-sm);
+}

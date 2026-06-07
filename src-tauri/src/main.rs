@@ -45,6 +45,9 @@ fn main() {
             git::git_checkout,
             git::git_create_branch,
             git::git_squash,
+            git::git_rebase,
+            git::git_reset,
+            git::git_cherry_pick,
             git::git_list_refs,
             git::git_generate_commit_message,
             // fs

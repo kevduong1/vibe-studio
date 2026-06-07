@@ -1282,6 +1282,113 @@ pub async fn git_squash(repo_path: String, oids: Vec<String>) -> Result<(), Stri
     .await
 }
 
+/// Rebase the current branch onto `onto` — a full commit oid (from the
+/// graph's "onto this commit") or a branch short name (from the picker).
+/// Always resolved to a commit oid before reaching the CLI, so option
+/// injection is structurally impossible. On failure the rebase is aborted
+/// and the git error returned (same policy as git_squash); dirty-worktree
+/// and in-progress-rebase refusals surface verbatim from the CLI.
+#[tauri::command]
+pub async fn git_rebase(repo_path: String, onto: String) -> Result<(), String> {
+    blocking(move || {
+        if onto.starts_with('-') {
+            return Err(format!("invalid rebase target: {onto}"));
+        }
+        let repo = open_repo(&repo_path)?;
+        if repo.head_detached().unwrap_or(false) {
+            return Err("cannot rebase a detached HEAD — check out a branch first".to_string());
+        }
+        // Full hex first (the graph always sends 40 chars) — the length gate
+        // matters because Oid::from_str zero-pads short hex, which would
+        // misparse a hex-looking branch name like "beef". Otherwise resolve
+        // as a ref, heads before remotes before dwim (same anti-tag-shadowing
+        // order as git_log's filter).
+        let target = if onto.len() == 40 && Oid::from_str(&onto).is_ok() {
+            repo.find_commit(Oid::from_str(&onto).unwrap())
+                .map_err(|e| e.to_string())?
+                .id()
+        } else {
+            repo.find_reference(&format!("refs/heads/{onto}"))
+                .or_else(|_| repo.find_reference(&format!("refs/remotes/{onto}")))
+                .or_else(|_| repo.resolve_reference_from_short_name(&onto))
+                .and_then(|r| r.peel_to_commit())
+                .map_err(|e| format!("cannot resolve '{onto}': {}", e.message()))?
+                .id()
+        };
+        let res = run_git(&repo_path, &["rebase", &target.to_string()]);
+        if res.ok {
+            Ok(())
+        } else {
+            let _ = run_git(&repo_path, &["rebase", "--abort"]);
+            Err(if res.output.is_empty() {
+                "git rebase failed".to_string()
+            } else {
+                res.output
+            })
+        }
+    })
+    .await
+}
+
+/// `git reset --<mode> <oid>`; mode is "soft" | "mixed" | "hard". The UI
+/// confirms hard resets before calling. No abort path — reset either
+/// succeeds or refuses atomically. Works detached too (moves HEAD; the
+/// reflog protects the old position).
+#[tauri::command]
+pub async fn git_reset(repo_path: String, oid: String, mode: String) -> Result<(), String> {
+    blocking(move || {
+        let repo = open_repo(&repo_path)?;
+        let target = Oid::from_str(&oid).map_err(|e| e.to_string())?;
+        repo.find_commit(target).map_err(|e| e.to_string())?;
+        let flag = match mode.as_str() {
+            "soft" => "--soft",
+            "mixed" => "--mixed",
+            "hard" => "--hard",
+            other => return Err(format!("unknown reset mode: {other}")),
+        };
+        let res = run_git(&repo_path, &["reset", flag, &target.to_string()]);
+        if res.ok {
+            Ok(())
+        } else {
+            Err(res.output)
+        }
+    })
+    .await
+}
+
+/// Apply `oids` onto HEAD in the given order — the frontend sends them
+/// OLDEST-FIRST (it owns the display/topo order). All-or-nothing: any
+/// failure aborts the whole sequence (rolling back picks already applied)
+/// and returns the git error.
+#[tauri::command]
+pub async fn git_cherry_pick(repo_path: String, oids: Vec<String>) -> Result<(), String> {
+    blocking(move || {
+        if oids.is_empty() {
+            return Err("no commits to cherry-pick".to_string());
+        }
+        let repo = open_repo(&repo_path)?;
+        let mut args: Vec<String> = vec!["cherry-pick".to_string()];
+        for s in &oids {
+            let oid = Oid::from_str(s).map_err(|e| e.to_string())?;
+            repo.find_commit(oid).map_err(|e| e.to_string())?;
+            args.push(oid.to_string());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let res = run_git(&repo_path, &arg_refs);
+        if res.ok {
+            Ok(())
+        } else {
+            let _ = run_git(&repo_path, &["cherry-pick", "--abort"]);
+            Err(if res.output.is_empty() {
+                "git cherry-pick failed".to_string()
+            } else {
+                res.output
+            })
+        }
+    })
+    .await
+}
+
 /// All local + remote branches (locals first, each alphabetical) for the
 /// commit-graph branch filter.
 #[tauri::command]

@@ -273,6 +273,31 @@ export const gitCreateBranch = (
 export const gitSquash = (repoPath: string, oids: string[]): Promise<void> =>
   invoke("git_squash", { repoPath, oids });
 
+/**
+ * Rebase the current branch onto `onto` — a full commit oid or a branch
+ * short name. Rewrites history; confirm in UI first. Conflicts auto-abort
+ * and reject with the git error.
+ */
+export const gitRebase = (repoPath: string, onto: string): Promise<void> =>
+  invoke("git_rebase", { repoPath, onto });
+
+export type ResetMode = "soft" | "mixed" | "hard";
+
+/** `git reset --<mode> <oid>`. Hard is destructive; confirm in UI first. */
+export const gitReset = (
+  repoPath: string,
+  oid: string,
+  mode: ResetMode,
+): Promise<void> => invoke("git_reset", { repoPath, oid, mode });
+
+/**
+ * Cherry-pick `oids` onto HEAD, applied in array order — callers must pass
+ * them OLDEST-FIRST (the graph displays newest-first; reverse before
+ * calling). Conflicts auto-abort the whole sequence.
+ */
+export const gitCherryPick = (repoPath: string, oids: string[]): Promise<void> =>
+  invoke("git_cherry_pick", { repoPath, oids });
+
 /** All local + remote branches (locals first, alphabetical). */
 export const gitListRefs = (repoPath: string): Promise<RefLabel[]> =>
   invoke("git_list_refs", { repoPath });

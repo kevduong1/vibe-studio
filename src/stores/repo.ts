@@ -1,6 +1,7 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 import {
   gitCheckout,
+  gitCherryPick,
   gitCommit,
   gitCreateBranch,
   gitDiscard,
@@ -8,6 +9,8 @@ import {
   gitLog,
   gitPull,
   gitPush,
+  gitRebase,
+  gitReset,
   gitSquash,
   gitStage,
   gitStashApply,
@@ -22,6 +25,7 @@ import {
   watchRepo,
   type CheckoutKind,
   type CommitInfo,
+  type ResetMode,
   type StatusResult,
   type StashInfo,
 } from "../lib/ipc";
@@ -69,6 +73,12 @@ export interface RepoState {
   ) => Promise<boolean>;
   /** Squash a contiguous run of current-branch commits. Rewrites history. */
   squash: (oids: string[]) => Promise<boolean>;
+  /** Rebase the current branch onto a commit oid or branch name. */
+  rebase: (onto: string) => Promise<boolean>;
+  /** Move HEAD/branch to `oid`. Hard discards all uncommitted changes. */
+  reset: (oid: string, mode: ResetMode) => Promise<boolean>;
+  /** Apply commits onto HEAD; `oids` must be ordered oldest-first. */
+  cherryPick: (oids: string[]) => Promise<boolean>;
 
   stashSave: (
     message: string | null,
@@ -306,6 +316,9 @@ export const createRepoStore = (root: string): RepoStore => {
       createBranch: (name, oid, checkout) =>
         mutate(() => gitCreateBranch(root, name, oid, checkout)),
       squash: (oids) => mutate(() => gitSquash(root, oids)),
+      rebase: (onto) => mutate(() => gitRebase(root, onto)),
+      reset: (oid, mode) => mutate(() => gitReset(root, oid, mode)),
+      cherryPick: (oids) => mutate(() => gitCherryPick(root, oids)),
 
       stashSave: (message, includeUntracked) =>
         mutate(() => gitStashSave(root, message, includeUntracked)),

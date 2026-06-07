@@ -6,9 +6,10 @@
  *
  * Interactions: click expands a commit's files; ⌘-click / shift-click build a
  * multi-selection; right-click opens a context menu (checkout refs / detached,
- * create branch, squash selection, copy SHA). Squash eligibility is
+ * create branch, cherry-pick selection, squash selection, rebase onto commit
+ * or picked branch, reset soft/mixed/hard, copy SHA). Eligibility is
  * pre-checked here against the loaded window for menu enablement, but the
- * backend re-validates authoritatively (git_squash).
+ * backend re-validates authoritatively (git_squash, git_rebase).
  */
 import {
   memo,
@@ -22,7 +23,13 @@ import {
 } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useRepo, useWorkspace } from "../stores/workspaces";
-import { gitCommitFiles, type CommitFile, type RefLabel } from "../lib/ipc";
+import {
+  gitCommitFiles,
+  gitListRefs,
+  type CommitFile,
+  type RefLabel,
+  type ResetMode,
+} from "../lib/ipc";
 import { copyText } from "../lib/clipboard";
 import { statusColor } from "../lib/status";
 import { computeGraph, type GraphRow } from "../lib/graphLayout";
@@ -135,6 +142,97 @@ function BranchPopover({
           />
           Switch to new branch
         </label>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Rebase branch picker (fixed-position overlay, like BranchPopover)
+// ---------------------------------------------------------------------------
+
+function RebasePopover({
+  x,
+  y,
+  branch,
+  onPick,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  /** Current branch name (placeholder label + self-exclusion). */
+  branch: string;
+  onPick: (refName: string) => void;
+  onClose: () => void;
+}) {
+  const repoPath = useRepo((s) => s.repoPath);
+  const [refs, setRefs] = useState<RefLabel[] | null>(null); // null = loading
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    gitListRefs(repoPath).then(
+      (r) => {
+        if (alive) setRefs(r);
+      },
+      () => {
+        if (alive) setRefs([]);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [repoPath]);
+
+  const shown = (refs ?? []).filter(
+    (r) =>
+      // rebasing a branch onto itself is a guaranteed no-op
+      !(r.kind === "local" && r.name === branch) &&
+      r.name.toLowerCase().includes(query.toLowerCase()),
+  );
+
+  // Focus never leaves the input (clicking a row closes the popover), so a
+  // bare input onKeyDown suffices — no window-level handler needed here.
+  return (
+    <>
+      <div className="ctx-menu-backdrop" onMouseDown={onClose} />
+      <div
+        className="gg-popover"
+        style={{
+          left: Math.max(4, Math.min(x, window.innerWidth - 248)),
+          top: Math.max(4, Math.min(y, window.innerHeight - 320)),
+        }}
+      >
+        <input
+          className="text-input"
+          placeholder={`Rebase ${branch} onto…`}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") onClose();
+            else if (e.key === "Enter" && shown.length > 0) onPick(shown[0].name);
+          }}
+          autoFocus
+          spellCheck={false}
+        />
+        <div className="gg-popover-list">
+          {refs === null ? (
+            <div className="gg-popover-empty">loading…</div>
+          ) : shown.length === 0 ? (
+            <div className="gg-popover-empty">no matching branches</div>
+          ) : (
+            shown.map((r) => (
+              <button
+                key={`${r.kind}:${r.name}`}
+                title={r.name}
+                onClick={() => onPick(r.name)}
+              >
+                {PILL_ICON[r.kind]}
+                <span className="truncate">{r.name}</span>
+              </button>
+            ))
+          )}
+        </div>
       </div>
     </>
   );
@@ -419,6 +517,12 @@ export default function GitGraph() {
     y: number;
     oid: string;
   } | null>(null);
+  // carries no oid: it rebases the CURRENT branch, so (unlike branchPopover)
+  // it is not pruned when commits leave the loaded log window
+  const [rebasePopover, setRebasePopover] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
 
   // virtualization state
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -435,6 +539,7 @@ export default function GitGraph() {
     anchorRef.current = null;
     setMenu(null);
     setBranchPopover(null);
+    setRebasePopover(null);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [repoPath]);
 
@@ -546,6 +651,7 @@ export default function GitGraph() {
     anchorRef.current = oid;
     setSelected((prev) => (prev.has(oid) ? prev : new Set([oid])));
     setBranchPopover(null);
+    setRebasePopover(null);
     setMenu({ x: e.clientX, y: e.clientY, oid });
   }, []);
 
@@ -589,6 +695,43 @@ export default function GitGraph() {
     );
     if (!ok) return;
     if (await ws.repo.getState().squash(oids)) {
+      setSelected(new Set());
+      anchorRef.current = null;
+    }
+  };
+
+  /** `onto` is an oid or branch name; `label` is what the confirm shows. */
+  const runRebase = async (onto: string, label: string) => {
+    setMenu(null);
+    const ok = await confirm(
+      `Rebase ${branchName} onto ${label}?\nThis rewrites the current branch's history.`,
+      { title: "Rebase", kind: "warning" },
+    );
+    if (!ok) return;
+    // the rebase rewrote (replaced) any selected oids — drop the selection
+    if (await ws.repo.getState().rebase(onto)) {
+      setSelected(new Set());
+      anchorRef.current = null;
+    }
+  };
+
+  const runReset = async (oid: string, mode: ResetMode) => {
+    setMenu(null);
+    if (mode === "hard") {
+      const ok = await confirm(
+        `Hard reset ${detached ? "HEAD" : branchName} to ${oid.slice(0, 7)}?\nAll uncommitted changes will be LOST!`,
+        { title: "Reset (Hard)", kind: "warning" },
+      );
+      if (!ok) return;
+    }
+    // no selection clearing: the prune effect drops commits that left the log
+    await ws.repo.getState().reset(oid, mode);
+  };
+
+  /** `oids` arrives in display order (newest-first); git applies oldest-first. */
+  const runCherryPick = async (oids: string[]) => {
+    setMenu(null);
+    if (await ws.repo.getState().cherryPick([...oids].reverse())) {
       setSelected(new Set());
       anchorRef.current = null;
     }
@@ -721,6 +864,33 @@ export default function GitGraph() {
       </button>,
       <div key="s1" className="ctx-menu-sep" />,
     );
+    {
+      // every target oid is loaded (the prune effect guarantees it), so the
+      // merge-commit pre-check is reliable; content conflicts surface from
+      // the CLI through the abort-and-report path
+      const hasMerge = target.some(
+        (o) => (byOid.get(o)?.parents.length ?? 0) > 1,
+      );
+      const onlyHead = target.length === 1 && c.isHead;
+      const reason = hasMerge
+        ? "merge commits cannot be cherry-picked"
+        : onlyHead
+          ? "this commit is already the current HEAD"
+          : null;
+      items.push(
+        <button
+          key="cherry"
+          disabled={reason !== null}
+          title={reason ?? undefined}
+          onClick={() => void runCherryPick(target)}
+        >
+          {target.length >= 2
+            ? `Cherry-Pick ${target.length} Commits`
+            : "Cherry-Pick Commit"}
+        </button>,
+        <div key="s-cherry" className="ctx-menu-sep" />,
+      );
+    }
     if (target.length >= 2) {
       const reason = squashCheck(target);
       items.push(
@@ -758,6 +928,57 @@ export default function GitGraph() {
         </button>,
       );
     }
+    {
+      // when detached, branchName is the short oid — use the generic label.
+      // headChain membership = guaranteed "already up to date" no-op; side
+      // ancestors merged in fall through to git's harmless success.
+      const reason = detached
+        ? "check out a branch first"
+        : headChain.has(c.oid)
+          ? "the current branch is already based on this commit"
+          : null;
+      items.push(
+        <button
+          key="rebase-here"
+          disabled={reason !== null}
+          title={reason ?? undefined}
+          onClick={() => void runRebase(c.oid, c.oid.slice(0, 7))}
+        >
+          <span className="truncate">
+            {detached
+              ? "Rebase onto this Commit…"
+              : `Rebase ${branchName} onto this Commit…`}
+          </span>
+        </button>,
+        <button
+          key="rebase-pick"
+          disabled={detached}
+          title={detached ? "check out a branch first" : undefined}
+          onClick={() => {
+            setRebasePopover({ x: m.x, y: m.y });
+            close();
+          }}
+        >
+          <span className="truncate">
+            {detached
+              ? "Rebase onto a Branch…"
+              : `Rebase ${branchName} onto a Branch…`}
+          </span>
+        </button>,
+        <div key="s-reset" className="ctx-menu-sep" />,
+        // reset always targets the CLICKED commit, never the selection;
+        // hard is the only destructive one and gets a confirm in runReset
+        <button key="reset-soft" onClick={() => void runReset(c.oid, "soft")}>
+          Reset Here (Soft)
+        </button>,
+        <button key="reset-mixed" onClick={() => void runReset(c.oid, "mixed")}>
+          Reset Here (Mixed)
+        </button>,
+        <button key="reset-hard" onClick={() => void runReset(c.oid, "hard")}>
+          Reset Here (Hard)…
+        </button>,
+      );
+    }
     items.push(
       <div key="s2" className="ctx-menu-sep" />,
       <button
@@ -791,6 +1012,18 @@ export default function GitGraph() {
           y={branchPopover.y}
           oid={branchPopover.oid}
           onClose={() => setBranchPopover(null)}
+        />
+      )}
+      {rebasePopover && (
+        <RebasePopover
+          x={rebasePopover.x}
+          y={rebasePopover.y}
+          branch={branchName ?? ""}
+          onPick={(refName) => {
+            setRebasePopover(null);
+            void runRebase(refName, refName);
+          }}
+          onClose={() => setRebasePopover(null)}
         />
       )}
     </div>
