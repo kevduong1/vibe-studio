@@ -18,6 +18,7 @@ import { loadTasks, sortForPicker, type TaskDef } from "./lib/tasks";
 import { runTask } from "./lib/taskRunner";
 import TaskPicker from "./components/TaskPicker";
 import QuickOpen from "./components/QuickOpen";
+import SettingsModal from "./components/SettingsModal";
 import Titlebar from "./components/Titlebar";
 import StatusBar from "./components/StatusBar";
 import FileExplorer from "./components/FileExplorer";
@@ -204,6 +205,10 @@ export default function App() {
     if (quickOpen && quickOpen.path !== activePath) setQuickOpen(null);
   }, [quickOpen, activePath]);
 
+  // ⌘, settings. NOT workspace-bound: settings are global and must work
+  // with zero workspaces open.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   // global keyboard shortcuts
   useEffect(() => {
     const runBuildTask = async (ws: Workspace) => {
@@ -268,6 +273,10 @@ export default function App() {
       } else if (e.key === "0") {
         e.preventDefault();
         zoomReset();
+      } else if (e.key === ",") {
+        // ⌘,: settings (macOS convention)
+        e.preventDefault();
+        setSettingsOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -331,7 +340,7 @@ export default function App() {
           <Panel />
         </div>
       </div>
-      <StatusBar />
+      <StatusBar onOpenSettings={() => setSettingsOpen(true)} />
       {taskPick && (
         <TaskPicker
           tasks={taskPick.tasks}
@@ -346,6 +355,7 @@ export default function App() {
       {quickOpen && (
         <QuickOpen ws={quickOpen} onClose={() => setQuickOpen(null)} />
       )}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

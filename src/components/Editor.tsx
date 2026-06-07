@@ -5,13 +5,17 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { basicSetup, EditorView } from "codemirror";
-import { EditorState, Text, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, Text, type Extension } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import { LanguageDescription } from "@codemirror/language";
+import { setDiagnostics } from "@codemirror/lint";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { languages } from "@codemirror/language-data";
 import { fsReadFile, fsWriteFile, onRepoChanged } from "../lib/ipc";
+import { lspExtension } from "../lib/lsp/cmLsp";
+import { getLspForFile, subscribeLspStatus, type WorkspaceLsp } from "../lib/lsp/servers";
+import { subscribeLspSettings } from "../lib/lsp/settings";
 import type { Tab } from "../stores/editor";
 import {
   useEditor,
@@ -40,9 +44,40 @@ export const editorTheme: CmExtension = [
     {
       "&": { backgroundColor: "var(--bg-editor)", fontSize: "12.5px" },
       ".cm-scroller": {
-        fontFamily: '"SF Mono", ui-monospace, Menlo, monospace',
+        fontFamily: "var(--font-mono)",
       },
       ".cm-gutters": { backgroundColor: "var(--bg-editor)" },
+      // Glass chrome for every editor popover (LSP/lint hovers, autocomplete,
+      // completion docs) — overrides oneDark's flat gray boxes. Translucent
+      // surface + blur needs the -webkit- prefix (build target is safari16;
+      // unprefixed backdrop-filter is 18+).
+      ".cm-tooltip": {
+        backgroundColor: "var(--bg-glass)",
+        backdropFilter: "blur(16px) saturate(140%)",
+        "-webkit-backdrop-filter": "blur(16px) saturate(140%)",
+        border: "1px solid var(--border-glass)",
+        borderRadius: "8px",
+        boxShadow: "0 8px 28px rgba(0, 0, 0, 0.45)",
+        color: "var(--fg)",
+      },
+      // Clip only hover tooltips to the rounded corners: the autocomplete
+      // tooltip positions its .cm-completionInfo docs panel OUTSIDE its own
+      // bounds, so overflow:hidden there would amputate it.
+      ".cm-tooltip.cm-tooltip-hover": { overflow: "hidden" },
+      ".cm-tooltip-section:not(:first-child)": {
+        borderTop: "1px solid var(--border-glass)",
+      },
+      ".cm-tooltip.cm-tooltip-autocomplete": { padding: "3px" },
+      ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
+        borderRadius: "5px",
+        padding: "2px 6px",
+      },
+      ".cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
+        background: "var(--bg-selected)",
+        color: "var(--fg)",
+      },
+      ".cm-completionInfo": { padding: "8px 10px", maxWidth: "400px" },
+      ".cm-diagnostic": { padding: "5px 9px", borderLeftWidth: "3px" },
     },
     { dark: true },
   ),
@@ -203,6 +238,23 @@ export default function Editor({ tab }: { tab: FileTab }) {
     [tab.id, tab.path, draftKey, markDirty],
   );
 
+  /** Go-to-definition jump target. Longest-prefix match over open workspaces
+      so nested repos resolve to the inner one; files outside every root
+      (node_modules/*.d.ts) open in the current workspace — openFile and
+      fsReadFile take any absolute path. */
+  const openLocation = useCallback(
+    (absPath: string, line: number, column: number) => {
+      const { workspaces, activePath, setActive } = useWorkspacesStore.getState();
+      const owner = workspaces
+        .filter((w) => absPath === w.path || absPath.startsWith(`${w.path}/`))
+        .sort((a, b) => b.path.length - a.path.length)[0];
+      const target = owner ?? ws;
+      if (target.path !== activePath) setActive(target.path);
+      target.editor.getState().openFile(absPath, { line, column });
+    },
+    [ws],
+  );
+
   /** Move the cursor to line/column (1-based, UTF-16 cols — what CodeMirror
       positions use) and scroll it to the vertical center, clamping both. */
   const revealTo = useCallback((line: number, column: number) => {
@@ -253,6 +305,8 @@ export default function Editor({ tab }: { tab: FileTab }) {
     let disposed = false;
     let view: EditorView | null = null;
     let unlistenRepo: (() => void) | null = null;
+    let unsubLspSettings: (() => void) | null = null;
+    let unsubLspStatus: (() => void) | null = null;
     let diskTimer: ReturnType<typeof setTimeout> | null = null;
     setLoading(true);
     setBinary(false);
@@ -311,11 +365,27 @@ export default function Editor({ tab }: { tab: FileTab }) {
       if (disposed) return;
       setTruncated(isTruncated);
 
+      // LSP attaches through a compartment so settings toggles and server
+      // status changes (binary installed, crash) attach/detach it live —
+      // the doc session plugin's constructor/destroy are the didOpen/
+      // didClose pair. Truncated buffers never attach (the server would see
+      // garbage). DiffViewer deliberately has NO LSP: its worktree side is a
+      // synthetic buffer that would fight this tab over the same document.
+      const lspCompartment = new Compartment();
+      let lspHandle: WorkspaceLsp | null = isTruncated
+        ? null
+        : getLspForFile(ws.path, tab.path);
+      const lspExt = () =>
+        lspHandle
+          ? lspExtension({ handle: lspHandle, path: tab.path, openLocation })
+          : [];
+
       const extensions: CmExtension[] = [
         basicSetup,
         editorTheme,
         editorSearch,
         lang ?? [],
+        lspCompartment.of(lspExt()),
         EditorView.updateListener.of((u) => {
           if (!u.docChanged) return;
           const dirty = !u.state.doc.eq(savedRef.current);
@@ -343,9 +413,28 @@ export default function Editor({ tab }: { tab: FileTab }) {
         ws.editor.getState().clearReveal(req.nonce);
       }
 
+      // Re-evaluate LSP attachment when settings toggle or a server's status
+      // changes (binary found after install, crash, restart). Detaching
+      // must also clear squiggles: the lint state field was installed by
+      // setDiagnostics OUTSIDE the compartment and survives reconfiguration
+      // (and the plugin's destroy runs mid-update, so it can't clear them).
+      const recheckLsp = () => {
+        const v = viewRef.current;
+        if (disposed || !v) return;
+        const next = isTruncated ? null : getLspForFile(ws.path, tab.path);
+        if (next === lspHandle) return;
+        lspHandle = next;
+        v.dispatch({ effects: lspCompartment.reconfigure(lspExt()) });
+        if (!next) v.dispatch(setDiagnostics(v.state, []));
+      };
+      unsubLspSettings = subscribeLspSettings(recheckLsp);
+      unsubLspStatus = subscribeLspStatus(recheckLsp);
+
       // Watch for external modifications (debounced — events arrive in bursts).
       // Events arrive for every open workspace; only the repo containing this
-      // file can have changed it.
+      // file can have changed it. (A clean-buffer auto-reload dispatches a
+      // whole-doc replace, which flows through the LSP plugin's update() as
+      // one didChange — the server stays in sync with no extra wiring.)
       const unlisten = await onRepoChanged((change) => {
         if (disposed || !tab.path.startsWith(`${change.repoPath}/`)) return;
         if (diskTimer) clearTimeout(diskTimer);
@@ -364,10 +453,15 @@ export default function Editor({ tab }: { tab: FileTab }) {
       disposed = true;
       if (diskTimer) clearTimeout(diskTimer);
       unlistenRepo?.();
+      unsubLspSettings?.();
+      unsubLspStatus?.();
       viewRef.current = null;
+      // destroy() runs the LSP plugin's destroy → didClose; never close the
+      // document anywhere else (a second close would desync the server's
+      // open-document set on StrictMode remounts).
       view?.destroy();
     };
-  }, [tab.id, tab.path, draftKey, markDirty, save, revealTo, ws.editor]);
+  }, [tab.id, tab.path, draftKey, markDirty, save, revealTo, openLocation, ws.editor, ws.path]);
 
   return (
     <div className="editor-pane">

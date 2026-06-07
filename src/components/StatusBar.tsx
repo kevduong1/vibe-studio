@@ -1,9 +1,19 @@
 import { useStore } from "zustand";
+import { getWorkspaceLsp, useLspStatusVersionValue } from "../lib/lsp/servers";
+import {
+  isLanguageEnabled,
+  LSP_LANGUAGES,
+  setLspMode,
+  STATUS_KIND,
+  STATUS_LABEL,
+  useLspMode,
+} from "../lib/lsp/settings";
+import { serverLangForPath } from "../lib/lsp/types";
 import { useActiveWorkspace, type Workspace } from "../stores/workspaces";
 import { useUiStore } from "../stores/ui";
 import { useAgentTerminalsStore } from "../stores/agentTerminals";
 import { aggregateActivity } from "../stores/terminal";
-import { IcBranch, IcSidebar, IcTerminal } from "./icons";
+import { IcBranch, IcGear, IcSidebar, IcTerminal } from "./icons";
 import "./StatusBar.css";
 
 /** Branch / sync / error readout for the active workspace. */
@@ -51,7 +61,43 @@ function RepoStatus({ ws }: { ws: Workspace }) {
   );
 }
 
-export default function StatusBar() {
+/** One-click session LSP switch (mode resets to off every launch), doubling
+    as the language-server state for the active editor tab's file — the only
+    place "binary missing" / "crashed" is visible without opening settings
+    (which stay one gear-click away). */
+function LspStatusItem({ ws }: { ws: Workspace }) {
+  useLspStatusVersionValue();
+  const modeOn = useLspMode() === "dynamic";
+  const filePath = useStore(ws.editor, (s) => {
+    const tab = s.tabs.find((t) => t.id === s.activeTabId);
+    return tab?.kind === "file" ? tab.path : null;
+  });
+  const lang = filePath ? serverLangForPath(filePath) : null;
+  // isLanguageEnabled folds in the mode; null info = nothing serves this file.
+  const info = lang && isLanguageEnabled(lang) ? getWorkspaceLsp(ws.path).serverInfo(lang) : null;
+  const label = lang ? (LSP_LANGUAGES.find((l) => l.id === lang)?.label ?? lang) : null;
+  const title = !modeOn
+    ? "Language services off — click to enable for this session"
+    : info
+      ? `${label}: ${STATUS_LABEL[info.status]}${info.error ? ` — ${info.error}` : ""} (click to disable)`
+      : "Language services on for this session — click to disable";
+  return (
+    <button
+      className={`statusbar-item statusbar-clickable${modeOn ? "" : " statusbar-lsp-off"}`}
+      title={title}
+      onClick={() => setLspMode(modeOn ? "disabled" : "dynamic")}
+    >
+      <span className={`lsp-dot ${info ? STATUS_KIND[info.status] : "idle"}`} />
+      LSP
+    </button>
+  );
+}
+
+export default function StatusBar({
+  onOpenSettings,
+}: {
+  onOpenSettings: () => void;
+}) {
   const ws = useActiveWorkspace();
 
   const panelVisible = useUiStore((s) => s.panelVisible);
@@ -69,12 +115,20 @@ export default function StatusBar() {
       {ws && <RepoStatus key={ws.path} ws={ws} />}
 
       <div className="statusbar-right">
+        {ws && <LspStatusItem ws={ws} />}
         {ws && (
           <span className="truncate statusbar-path" title={ws.path}>
             {ws.path}
           </span>
         )}
         <span className="statusbar-divider" />
+        <button
+          className="icon-btn statusbar-toggle"
+          title="Settings (⌘,)"
+          onClick={onOpenSettings}
+        >
+          <IcGear />
+        </button>
         <button
           className={`icon-btn statusbar-toggle ${panelVisible ? "active" : ""}`}
           title="Toggle panel"

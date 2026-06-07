@@ -3,9 +3,12 @@
 Vibe Studio — a Tauri 2 macOS desktop app: multi-repo workspaces (titlebar tab
 switcher), git source control (status, staging, commit/amend/push, stashes,
 commit graph), integrated split terminals (portable-pty + xterm.js), a global
-drag-and-drop agent-terminal dock, and a CodeMirror 6 diff viewer/editor.
-Rust backend in `src-tauri/`, React 19 + TypeScript frontend in `src/` (Vite,
-zustand). No tests; correctness relies on typecheck + manual verification.
+drag-and-drop agent-terminal dock, a CodeMirror 6 diff viewer/editor, and
+TypeScript/Python LSP support (squiggles, hover, completion, go-to-def; off
+at every launch — opt-in per session via the status-bar LSP button or the
+⌘, settings modal). Rust backend in `src-tauri/`, React 19 + TypeScript
+frontend in `src/` (Vite, zustand). No tests; correctness relies on typecheck
++ manual verification.
 
 ## Architecture map
 
@@ -26,6 +29,7 @@ zustand). No tests; correctness relies on typecheck + manual verification.
 | `src/lib/tasks.ts` | VS Code-compatible `.vscode/tasks.json` model: JSONC parse, `${var}` substitution, shell command-line assembly (shell/process types; `osx` override always merged; re-read on every use, no watcher) |
 | `src/lib/taskRunner.ts` | Task execution glue: types the assembled command into a workspace dock terminal (reused per `presentation.panel` shared/dedicated/new; ^C first on reuse), reveals per `presentation.reveal` |
 | `src/lib/dockTree.ts` | Pure dock layout-tree model shared by both docks: split/group types, `normalize()` invariants, move/split/resize state ops, persistence sanitizer |
+| `src/lib/lsp/` | LSP client service, layered and framework-free below cmLsp (a future IDE MCP server consumes the same API): `servers.ts` is the ONLY entry point (WorkspaceLsp facade registry keyed by workspace root — lazy per-language server start that follows the ACTIVE workspace (background/idle auto-stop with doc replay on resume), diagnostics store, crash policy, `getLspForFile` editor gate) → `client.ts` (JSON-RPC correlation + lifecycle + incremental didChange coalescing — the protocol brain) → `transport.ts` (IPC glue) → `lsp.rs`. `settings.ts` = session-scoped master mode (`LspMode` Disabled \| Dynamic — every launch starts Disabled, never persisted; ANDed into `isLanguageEnabled` so all gates + the change fan-out inherit it) over persisted `vibe-studio:lsp` per-language toggles + `LSP_LANGUAGES` UI metadata; `types.ts` = wire types + `serverLangForPath`; `uri.ts` = path↔file:// (NEVER concat URIs elsewhere); `markdown.ts` = sanitized hover/doc renderer (textContent only; fenced blocks async-highlighted via lazy language-data load + oneDarkHighlightStyle classes); `cmLsp.ts` = the CodeMirror bundle (doc-sync ViewPlugin, squiggles via `setDiagnostics` push, hover, completion override, ⌘-click/F12 go-to-def) |
 | `src/lib/projectColors.ts` | Per-project palette-index assignment (auto on first ask; user-set via `setProjectColorIndex`, localStorage-persisted) — render through the reactive `useProjectColorIndex`/`useProjectColorVar` hooks; feeds tab/badge tints and the app-wide `--accent` override |
 | `src/lib/projectNames.ts` | Cosmetic per-project display names (user-set via `setProjectDisplayName`, localStorage-persisted; folder-basename fallback) — render through the reactive `useProjectDisplayName(s)` hooks; purely visual, nothing path-based ever sees them |
 | `src/lib/clipboard.ts` | Shared `copyText` (navigator.clipboard + execCommand fallback, no plugin) — GitGraph copy-SHA, Titlebar copy-path |
@@ -49,6 +53,7 @@ zustand). No tests; correctness relies on typecheck + manual verification.
 | `src/components/TerminalPanel.tsx` | Workspace flavor of Dock: plain registry sessions at the workspace root, auto-first-terminal (session/close glue lives in `lib/workspaceSessions.ts`) |
 | `src/components/TaskPicker.tsx` | ⌘⇧B quick-pick overlay (filter + arrow/enter keyboard nav); a lone default build task skips it (App.tsx) |
 | `src/components/QuickOpen.tsx` | ⌘P fuzzy file picker overlay (TaskPicker pattern); fetches the gitignore-aware file list per open, renders top 100 with match highlighting |
+| `src/components/SettingsModal.tsx` | ⌘, settings modal (gear in status bar): per-language LSP enable toggles + live server status / install hints / restart; sections are plain blocks — append future non-LSP settings here |
 | `src/components/SearchPanel.tsx` | ⌘⇧F sidebar search view: query + case/word/regex toggles, per-file collapsible result groups, click opens the file at the match line (`openFile(path, at)`) |
 | `src/components/AgentDock.tsx` | Agent flavor of Dock: masquerade/tracked sessions, session-summary badge overlay (live OSC 0/2 title — Claude Code's auto-generated topic; hidden until one is set), active-project highlight ring, click-to-switch project, disconnected ⊘ |
 | `src/components/Resizer.tsx` | Generic drag-to-resize handle (sidebar, panel, dock splits) |
@@ -56,6 +61,7 @@ zustand). No tests; correctness relies on typecheck + manual verification.
 | `src/components/FileExplorer.tsx` | Lazy directory tree (per-dir cache + expanded set) |
 | `src-tauri/src/git.rs` | All git2 commands; fetch/pull/push/checkout/branch/squash-rebase shell out to `git` CLI so user auth + safety checks work |
 | `src-tauri/src/pty.rs` | PTY sessions keyed by frontend UUID; output streamed as base64 `pty-data:<id>` events with ack-based flow control (`pty_ack`, reader parks above 1 MiB unacked); kill = SIGHUP → 500 ms → SIGKILL process group |
+| `src-tauri/src/lsp.rs` | Language-server stdio transport (pty.rs sibling, deliberately protocol-blind): spawn as process-group leader with the login-shell PATH injected, Content-Length frame parser → raw `lsp-message:<id>` events, `lsp_send` owns outgoing framing, `lsp_resolve` finds binaries via `$SHELL -lc` (cached, `__VIBE_PATH__` marker); kill = SIGTERM → 500 ms → SIGKILL group |
 | `src-tauri/src/watcher.rs` | Debounced repo watchers (one per open repo, keyed by root) → `repo-changed` event `{repoPath, gitChanged}` |
 | `src-tauri/src/fsops.rs` | fs_read_dir / fs_read_file (5 MB cap, NUL + UTF-8 binary sniff) / atomic fs_write_file |
 | `src-tauri/src/search.rs` | `ignore`-crate worktree walks: list_workspace_files (quick open, 50k cap) + search_workspace (parallel walk, fsops's binary/size skip rules, 2000-match cap, UTF-16 offsets for JS/CodeMirror) |
@@ -185,3 +191,34 @@ cd src-tauri && cargo check     # backend typecheck
 - The editor and worktree/staged diffs reload on external changes (terminal
   git commands, formatters) and guard ⌘S with a disk-conflict check — don't
   bypass `Editor.tsx`'s save path with direct `fsWriteFile` calls.
+- LSP: `lsp.rs` is a dumb byte-framing pipe — ALL protocol logic lives in
+  `src/lib/lsp/client.ts`, which must answer EVERY server→client request
+  (`workspace/configuration`, `client/registerCapability`, ...; unknown →
+  `-32601` error) or the server hangs with no error anywhere. Binaries are
+  resolved through the user's login shell and that PATH is injected into
+  server children (`#!/usr/bin/env node` shebangs + tsserver's child spawn;
+  works-in-dev/fails-from-Finder otherwise). Manual test needs
+  `npm i -g typescript-language-server typescript pyright`.
+- LSP coordinates are `{line, character}` 0-based UTF-16 (≡ JS string
+  indexing); CM-offset conversion lives ONLY in `cmLsp.ts`, and incoming
+  ranges must be clamped (an out-of-range `doc.line()` throws inside CM's
+  update and kills the view). didChange batches emit a transaction's
+  old-coordinate changes in DESCENDING position order, and position requests
+  flush pending changes first — `client.ts` owns both rules; symptoms of
+  breaking them are subtle off-by-N diagnostics, not errors.
+- LSP didOpen/didClose pair exclusively with the doc-session plugin's
+  constructor/destroy (Editor.tsx `lspCompartment`); detaching clears stale
+  squiggles via `recheckLsp`'s second dispatch (the lint field survives the
+  compartment, and plugin `destroy()` runs mid-update so it can't clear).
+  Language servers die via `disposeWorkspaceLsp` (closeWorkspace), settings
+  disable, the page-reload/app-exit `kill_all`, or the idle policy in
+  servers.ts (workspace deactivated 15 min / a language doc-less 5 min —
+  docs stay TRACKED through a stop and replay into a fresh server on
+  resume) — same registry discipline as terminals. Servers only ever run
+  for the ACTIVE workspace (`setActiveLspWorkspace`, subscribed in
+  stores/workspaces.ts); initialize carries the app's real pid so servers
+  self-exit if the app dies without teardown (verified: tls + tsserver also
+  exit on stdin EOF). tsserver's syntax server is disabled
+  (`useSyntaxServer: "never"`) — one tsserver per TS workspace, not two.
+  DiffViewer deliberately has no LSP (its worktree side would fight the
+  file tab over one document).

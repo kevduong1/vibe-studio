@@ -13,6 +13,7 @@ import { create, useStore } from "zustand";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { gitOpen } from "../lib/ipc";
 import { projectDisplayName } from "../lib/projectNames";
+import { disposeWorkspaceLsp, setActiveLspWorkspace } from "../lib/lsp/servers";
 import { disposeSession } from "../lib/termSessions";
 import { createRepoStore, type RepoState, type RepoStore } from "./repo";
 import { createEditorStore, type EditorState, type EditorStore } from "./editor";
@@ -149,6 +150,8 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
     for (const id of Object.keys(ws.terminal.getState().terminals)) {
       disposeSession(id);
     }
+    // Same registry discipline for language servers (lib/lsp/servers.ts).
+    disposeWorkspaceLsp(path);
     set((s) => {
       const idx = s.workspaces.findIndex((w) => w.path === path);
       if (idx === -1) return s;
@@ -174,6 +177,14 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
       return next;
     }),
 }));
+
+// Language servers follow the active workspace (lib/lsp/servers.ts): the
+// newly active facade resumes eagerly, deactivated ones stop after a grace
+// period — their docs stay tracked, so resuming just replays them. Subscribed
+// at module init, before any setState can possibly run.
+useWorkspacesStore.subscribe((s, prev) => {
+  if (s.activePath !== prev.activePath) setActiveLspWorkspace(s.activePath);
+});
 
 /**
  * Agent-terminal navigation: activate the terminal's project, reopening it

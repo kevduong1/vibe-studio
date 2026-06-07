@@ -16,10 +16,13 @@
   --bg-hover: rgba(255, 255, 255, 0.055);
   --bg-active: rgba(255, 255, 255, 0.09);
   --bg-overlay: #232730;
+  --bg-backdrop: rgba(0, 0, 0, 0.35); /* modal-dimming scrim */
+  --bg-glass: rgba(29, 32, 38, 0.72); /* translucent popover surface — pair with backdrop blur */
 
   /* borders */
   --border: #2a2e37;
   --border-subtle: #23262e;
+  --border-glass: rgba(255, 255, 255, 0.09); /* hairline edge on glass surfaces */
 
   /* text */
   --fg: #d4d8e0;
@@ -253,4 +256,25 @@ button {
 .activity-attention {
   color: var(--warning);
   animation: attention-pulse 1.6s ease-in-out infinite;
+}
+
+/* LSP server-status dot (settings modal rows + status-bar LSP item);
+   color class comes from STATUS_KIND in lib/lsp/settings.ts */
+.lsp-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.lsp-dot.ok {
+  background: var(--success);
+}
+.lsp-dot.busy {
+  background: var(--warning);
+}
+.lsp-dot.bad {
+  background: var(--danger);
+}
+.lsp-dot.idle {
+  background: var(--fg-faint);
 }

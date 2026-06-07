@@ -3,6 +3,7 @@
 
 mod fsops;
 mod git;
+mod lsp;
 mod pty;
 mod search;
 mod watcher;
@@ -13,14 +14,17 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(pty::PtyState::default())
+        .manage(lsp::LspState::default())
         .manage(watcher::WatcherState::default())
-        // A page (re)load loses all frontend terminal state (dev HMR full
-        // reload): kill the now-unreachable PTY sessions instead of leaking
-        // them — a flow-parked reader would otherwise never be acked again
-        // and freeze its child mid-write. No-op on the initial load.
+        // A page (re)load loses all frontend terminal and LSP-client state
+        // (dev HMR full reload): kill the now-unreachable sessions instead
+        // of leaking them — a flow-parked PTY reader would otherwise never
+        // be acked again and freeze its child mid-write, and live language
+        // servers would be unreachable garbage. No-op on the initial load.
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 pty::kill_all(&webview.app_handle().state::<pty::PtyState>());
+                lsp::kill_all(&webview.app_handle().state::<lsp::LspState>());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -66,7 +70,22 @@ fn main() {
             pty::pty_resize,
             pty::pty_ack,
             pty::pty_kill,
+            // lsp
+            lsp::lsp_resolve,
+            lsp::lsp_start,
+            lsp::lsp_send,
+            lsp::lsp_stop,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Normal quit (⌘Q): explicitly tear down child processes instead
+            // of relying on their own parent-death handling (stdin EOF /
+            // initialize-processId watch — which still backstop the crash
+            // and force-quit paths this callback never sees).
+            if let tauri::RunEvent::Exit = event {
+                pty::kill_all(&app_handle.state::<pty::PtyState>());
+                lsp::kill_all(&app_handle.state::<lsp::LspState>());
+            }
+        });
 }

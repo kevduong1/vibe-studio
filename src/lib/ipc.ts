@@ -443,3 +443,72 @@ function base64ToBytes(b64: string): Uint8Array {
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
 }
+
+// ---------------------------------------------------------------------------
+// LSP commands (used exclusively by src/lib/lsp/ — never by components)
+// ---------------------------------------------------------------------------
+
+export interface LspResolveResult {
+  /** Absolute path of the executable, or null when not found. */
+  path: string | null;
+  /** Where it was found: workspace-local bin dir or the login-shell PATH. */
+  source: "local" | "path" | null;
+}
+
+export interface LspExit {
+  code: number | null;
+  /** Last ~4 KiB of server stderr, for crash reporting. */
+  stderrTail: string;
+}
+
+/**
+ * Locate a language-server binary: `localCandidates` (absolute paths, e.g.
+ * <root>/node_modules/.bin/...) first, then the user's login-shell PATH
+ * (cached backend-side; `refresh` re-runs the shell). Also warms the PATH
+ * cache that lsp_start injects into server children — always call this
+ * before lspStart.
+ */
+export const lspResolve = (
+  bin: string,
+  localCandidates: string[],
+  refresh: boolean,
+): Promise<LspResolveResult> =>
+  invoke("lsp_resolve", { bin, localCandidates, refresh });
+
+/**
+ * Spawns a language server speaking LSP over stdio. The caller generates
+ * `id` (crypto.randomUUID()) and attaches the `lsp-message:<id>` /
+ * `lsp-exit:<id>` listeners BEFORE calling this, so no early output is lost.
+ * `cmd` must be an absolute path from lspResolve. Resolves with the host
+ * app's pid — sent as initialize's processId so servers self-exit if the
+ * app dies without running any teardown (the spec's parent-death watch).
+ */
+export const lspStart = (
+  id: string,
+  cmd: string,
+  args: string[],
+  cwd: string,
+): Promise<number> => invoke("lsp_start", { id, cmd, args, cwd });
+
+/**
+ * Send one complete JSON-RPC message (already serialized). Rust owns the
+ * Content-Length framing — never frame on this side.
+ */
+export const lspSend = (id: string, payload: string): Promise<void> =>
+  invoke("lsp_send", { id, payload });
+
+/** SIGTERM → SIGKILL teardown; the protocol-level shutdown happens first. */
+export const lspStop = (id: string): Promise<void> => invoke("lsp_stop", { id });
+
+/** One event per complete LSP frame; payload is the raw JSON message body. */
+export const onLspMessage = (
+  id: string,
+  cb: (raw: string) => void,
+): Promise<UnlistenFn> =>
+  listen<string>(`lsp-message:${id}`, (e) => cb(e.payload));
+
+export const onLspExit = (
+  id: string,
+  cb: (exit: LspExit) => void,
+): Promise<UnlistenFn> =>
+  listen<LspExit>(`lsp-exit:${id}`, (e) => cb(e.payload));

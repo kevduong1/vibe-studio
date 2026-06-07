@@ -41,6 +41,11 @@
   max-width: 180px;
 }
 
+/* Session LSP switch while language services are off (the default). */
+.statusbar-lsp-off {
+  color: var(--fg-faint);
+}
+
 .statusbar-error {
   color: var(--danger);
   max-width: 45vw;
