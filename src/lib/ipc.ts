@@ -512,3 +512,49 @@ export const onLspExit = (
   cb: (exit: LspExit) => void,
 ): Promise<UnlistenFn> =>
   listen<LspExit>(`lsp-exit:${id}`, (e) => cb(e.payload));
+
+// ---------------------------------------------------------------------------
+// Attention alerts (notify.rs)
+// ---------------------------------------------------------------------------
+
+/** "unsupported" = no app bundle (bare `tauri dev`) — banners can't work
+ *  there, but playSound still does. */
+export type NotificationPermission =
+  | "granted"
+  | "denied"
+  | "prompt"
+  | "unsupported";
+
+export const notificationState = (): Promise<NotificationPermission> =>
+  invoke("notification_state");
+
+/** Shows the OS authorization prompt when state is "prompt"; resolves only
+ *  once the user answers it. */
+export const notificationRequest = (): Promise<NotificationPermission> =>
+  invoke("notification_request");
+
+/** Fire-and-forget banner (soundless — the attention sound is app-played
+ *  via playSound). id = stable identifier (terminal id): a repeat send
+ *  REPLACES the delivered banner instead of stacking, and dismiss removes
+ *  by it. presentForeground = also present while the app is frontmost
+ *  (answered by notify.rs' willPresent delegate — without it the OS
+ *  silently drops foreground banners). Unauthorized posts are dropped by
+ *  the OS; dev is a no-op. */
+export const notificationSend = (
+  id: string,
+  title: string,
+  body: string,
+  presentForeground: boolean,
+): Promise<void> =>
+  invoke("notification_send", { id, title, body, presentForeground });
+
+/** Remove the delivered banner posted under this identifier (no-op when
+ *  none exists, or in dev). */
+export const notificationDismiss = (id: string): Promise<void> =>
+  invoke("notification_dismiss", { id });
+
+/** Play an audio file through afplay (any format it handles). Rejects when
+ *  afplay can't spawn or the file doesn't exist (so callers can fall back);
+ *  a corrupt-but-present file still just plays nothing. */
+export const playSound = (path: string): Promise<void> =>
+  invoke("play_sound", { path });

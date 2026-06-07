@@ -110,10 +110,6 @@
   text-decoration: underline;
 }
 
-.settings-restart {
-  flex-shrink: 0;
-}
-
 /* Pill toggle (no native checkbox styling exists in the app). */
 .settings-toggle {
   width: 30px;
@@ -143,4 +139,28 @@
 .settings-toggle.on::after {
   left: 15px;
   background: var(--accent);
+}
+
+/* Attention-sound picker (native select, app-themed). */
+.settings-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  padding: 3px 18px 3px 8px;
+  max-width: 180px;
+  flex-shrink: 0;
+  /* chevron drawn in CSS so the glyph follows the theme */
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg-dim) 50%),
+    linear-gradient(135deg, var(--fg-dim) 50%, transparent 50%);
+  background-position: right 10px top 55%, right 6px top 55%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+.settings-select:focus {
+  outline: none;
+  border-color: var(--focus-ring);
 }

@@ -60,7 +60,8 @@ export interface AgentTerminalsState extends dock.DockState<AgentTerminal> {
   setActiveGroup: (groupId: string) => void;
   renameTerminal: (id: string, title: string) => void;
   /** Attention-notification opt-in — UI goes through lib/agentNotifications'
-   *  setTerminalNotifications (which gates enabling on OS permission). */
+   *  setTerminalNotifications (enable always sticks; banner authorization
+   *  is only requested opportunistically on top — enabled ≠ OS-granted). */
   setNotificationsEnabled: (terminalId: string, enabled: boolean) => void;
   moveTerminal: (terminalId: string, targetGroupId: string, index: number) => void;
   splitGroup: (terminalId: string, targetGroupId: string, edge: DropEdge) => void;

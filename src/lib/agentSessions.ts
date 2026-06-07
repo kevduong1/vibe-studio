@@ -5,7 +5,7 @@
  * close path disposes the PTY before the structural removal.
  */
 import { getOrCreateSession, disposeSession, type TermSession } from "./termSessions";
-import { notifyAgentAttention } from "./agentNotifications";
+import { dismissAgentAttention, notifyAgentAttention } from "./agentNotifications";
 import {
   useAgentTerminalsStore,
   type AgentTerminal,
@@ -20,13 +20,15 @@ export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
     onActivity: (activity) => {
       const store = useAgentTerminalsStore.getState();
       // Attention onset (false → true edge) fires the opt-in system
-      // notification. Prev is read BEFORE the set; the map is sparse
-      // (absent = idle = no attention). Only the id is passed on — this
-      // closure's `t` is the creation-time object and must not leak past
-      // renames/toggles.
+      // notification; the clear edge (true → false: the user answered)
+      // tears its banner down. Prev is read BEFORE the set; the map is
+      // sparse (absent = idle = no attention). Only the id is passed on —
+      // this closure's `t` is the creation-time object and must not leak
+      // past renames/toggles.
       const wasAttention = store.paneActivity[t.id]?.attention ?? false;
       store.setPaneActivity(t.id, activity);
       if (activity.attention && !wasAttention) notifyAgentAttention(t.id);
+      else if (!activity.attention && wasAttention) dismissAgentAttention(t.id);
     },
     onTitle: (title) =>
       useAgentTerminalsStore.getState().setPaneTitle(t.id, title),
@@ -38,10 +40,12 @@ export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
   });
 }
 
-/** UI-facing close: kill the PTY first, then remove the tab from the layout. */
+/** UI-facing close: kill the PTY first, then remove the tab from the layout
+ *  (and any banner still standing for it). */
 export function closeAgentTerminal(id: string): void {
   disposeSession(id);
   useAgentTerminalsStore.getState().closeTerminal(id);
+  dismissAgentAttention(id);
 }
 
 /** Typed into fresh agent terminals: a new tab exists to run an agent, so

@@ -7,8 +7,20 @@
  * workspace (servers are per workspace × language); with no workspace open
  * only the persistent enable toggles render.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import {
+  bannerMode,
+  playAttentionSound,
+  setAttentionSoundPath,
+  setBannerMode,
+  storedAttentionSound,
+  SYSTEM_SOUNDS,
+  systemSoundPath,
+  type BannerMode,
+} from "../lib/agentNotifications";
 import { copyText } from "../lib/clipboard";
+import { basename } from "../lib/path";
 import {
   getWorkspaceLsp,
   useLspStatusVersionValue,
@@ -25,7 +37,7 @@ import {
 } from "../lib/lsp/settings";
 import type { ServerLang } from "../lib/lsp/types";
 import { useActiveWorkspace, type Workspace } from "../stores/workspaces";
-import { IcClose, IcRefresh } from "./icons";
+import { IcClose, IcPlay, IcRefresh } from "./icons";
 import "./SettingsModal.css";
 
 function ServerRow({
@@ -84,7 +96,7 @@ function ServerRow({
       </div>
       {showRestart && (
         <button
-          className="icon-btn settings-restart"
+          className="icon-btn"
           title={status === "missing" ? "Recheck binary" : "Restart server"}
           onClick={() => ws && getWorkspaceLsp(ws.path).restartServer(lang)}
         >
@@ -98,6 +110,121 @@ function ServerRow({
         title={`${enabled ? "Disable" : "Enable"} ${label}`}
         onClick={() => setLanguageEnabled(lang, !enabled)}
       />
+    </div>
+  );
+}
+
+/** Attention-sound picker: the bundled default, the standard system sounds,
+ *  or any audio file. Selection persists immediately and previews itself. */
+function AttentionSoundRow() {
+  // null = the bundled default (sounds/alert.mp3) — same encoding as storage.
+  const [sound, setSound] = useState(storedAttentionSound);
+  const systemName = sound
+    ? SYSTEM_SOUNDS.find((n) => systemSoundPath(n) === sound)
+    : undefined;
+
+  const preview = () => void playAttentionSound();
+  const pick = (path: string | null) => {
+    setAttentionSoundPath(path);
+    setSound(path);
+    preview();
+  };
+  const onChange = async (value: string) => {
+    if (value === "default") {
+      pick(null);
+      return;
+    }
+    if (value !== "choose") {
+      pick(systemSoundPath(value));
+      return;
+    }
+    const file = await openDialog({
+      multiple: false,
+      directory: false,
+      filters: [
+        {
+          name: "Audio",
+          extensions: ["aiff", "aif", "wav", "mp3", "m4a", "caf", "flac"],
+        },
+      ],
+    });
+    // Cancel: the controlled value simply snaps back to the current sound.
+    if (typeof file === "string") pick(file);
+  };
+
+  return (
+    <div className="settings-row">
+      <div className="settings-row-main">
+        <span className="settings-row-name">Attention sound</span>
+        <span className="settings-row-status" title={sound ?? undefined}>
+          {sound === null
+            ? "Bundled alert"
+            : systemName
+              ? "macOS system sound"
+              : sound}
+        </span>
+      </div>
+      <select
+        className="settings-select"
+        value={sound === null ? "default" : (systemName ?? "custom")}
+        onChange={(e) => void onChange(e.target.value).catch(() => {})}
+      >
+        <option value="default">Alert (default)</option>
+        {SYSTEM_SOUNDS.map((n) => (
+          <option key={n} value={n}>
+            {n}
+          </option>
+        ))}
+        {sound !== null && !systemName && (
+          // Inert label for the ACTIVE custom file. Switching files goes
+          // through "Choose file…" — re-selecting the selected option never
+          // fires onChange, so the action must live on a distinct value.
+          <option value="custom">Custom — {basename(sound)}</option>
+        )}
+        <option value="choose">Choose file…</option>
+      </select>
+      <button
+        className="icon-btn"
+        title="Preview sound"
+        onClick={preview}
+      >
+        <IcPlay />
+      </button>
+    </div>
+  );
+}
+
+/** Banner visibility: macOS only presents banners from a frontmost app when
+ *  notify.rs' delegate allows it — "Always" opts into that; "App in
+ *  background" keeps the OS default; "Never" is sound-only. */
+function BannerModeRow() {
+  const [mode, setMode] = useState(bannerMode);
+  const LABEL: Record<BannerMode, string> = {
+    always: "Even while the app is focused",
+    background: "Only while the app is in the background",
+    never: "Sound only",
+  };
+  const pick = (value: string) => {
+    const m: BannerMode =
+      value === "background" || value === "never" ? value : "always";
+    setBannerMode(m);
+    setMode(m);
+  };
+  return (
+    <div className="settings-row">
+      <div className="settings-row-main">
+        <span className="settings-row-name">Show banners</span>
+        <span className="settings-row-status">{LABEL[mode]}</span>
+      </div>
+      <select
+        className="settings-select"
+        value={mode}
+        onChange={(e) => pick(e.target.value)}
+      >
+        <option value="always">Always</option>
+        <option value="background">App in background</option>
+        <option value="never">Never</option>
+      </select>
     </div>
   );
 }
@@ -200,6 +327,19 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 modeOn={modeOn}
               />
             ))}
+          </section>
+          <section className="settings-section">
+            <h3>Agent Notifications</h3>
+            <p className="settings-hint">
+              Alerts for agent terminals with notifications enabled
+              (right-click a tab in the agent dock). The sound is played by
+              the app itself — Focus modes and notification settings don't
+              silence it. Banners need a bundled build and OS permission;
+              "Show banners" decides whether they also appear while the app
+              is focused.
+            </p>
+            <AttentionSoundRow />
+            <BannerModeRow />
           </section>
         </div>
       </div>

@@ -4,6 +4,7 @@
 mod fsops;
 mod git;
 mod lsp;
+mod notify;
 mod pty;
 mod search;
 mod watcher;
@@ -13,7 +14,6 @@ use tauri::Manager;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
         .manage(pty::PtyState::default())
         .manage(lsp::LspState::default())
         .manage(watcher::WatcherState::default())
@@ -76,6 +76,12 @@ fn main() {
             lsp::lsp_start,
             lsp::lsp_send,
             lsp::lsp_stop,
+            // notify
+            notify::notification_state,
+            notify::notification_request,
+            notify::notification_send,
+            notify::notification_dismiss,
+            notify::play_sound,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

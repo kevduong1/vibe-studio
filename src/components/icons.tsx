@@ -246,6 +246,12 @@ export const IcChevronsDown = (props: IconProps) => (
     <path d="m3 7.6 5 5 5-5" />
   </Svg>
 );
+/* play triangle: settings-modal sound preview */
+export const IcPlay = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M5.5 3.2v9.6L13 8z" />
+  </Svg>
+);
 export const IcPlus = (props: IconProps) => (
   <Svg {...props}>
     <path d="M8 2.5v11M2.5 8h11" />
@@ -282,6 +288,13 @@ export const IcDisconnected = (props: IconProps) => (
   <Svg {...props}>
     <circle cx="8" cy="8" r="5.5" />
     <path d="M4.2 11.8 11.8 4.2" />
+  </Svg>
+);
+/** Bell — agent terminal with attention notifications enabled. */
+export const IcBell = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M12 5.3a4 4 0 0 0-8 0c0 4.7-2 6-2 6h12s-2-1.3-2-6" />
+    <path d="M9.2 13.5a1.3 1.3 0 0 1-2.4 0" />
   </Svg>
 );
 /** Panel split into two columns at the midline (split-editor / split-terminal). */

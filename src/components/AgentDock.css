@@ -18,6 +18,14 @@
   flex-shrink: 0;
 }
 
+/* Bell = notifications enabled for this terminal (right-click toggle). */
+.dock-tab-bell {
+  color: var(--fg-dim);
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+
 /* --- session-summary badge (live OSC title; absent until one is set) ---- */
 
 .agent-badge {

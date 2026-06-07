@@ -7,7 +7,8 @@
  * project is the active workspace, and clicking them switches the app to
  * that project (reopening it if it was closed → "disconnected" ⊘ until
  * then). Right-click a tab for the per-terminal notifications toggle
- * (lib/agentNotifications — system notification + sound on attention).
+ * (lib/agentNotifications — system notification + sound on attention);
+ * enabled tabs wear a bell next to the activity glyph.
  */
 import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
@@ -27,7 +28,7 @@ import { setTerminalNotifications } from "../lib/agentNotifications";
 import { useProjectColorVar } from "../lib/projectColors";
 import { Dock, type DockPaneProps } from "./Dock";
 import { ContextMenu } from "./ContextMenu";
-import { ActivityGlyph, IcDisconnected, IcSparkle } from "./icons";
+import { ActivityGlyph, IcBell, IcDisconnected, IcSparkle } from "./icons";
 import "./AgentDock.css";
 
 const useConnected = (workspacePath: string): boolean =>
@@ -133,7 +134,17 @@ function AgentTabIcon({ terminal }: { terminal: AgentTerminal }) {
 
 function AgentTabBadge({ terminal }: { terminal: AgentTerminal }) {
   const connected = useConnected(terminal.workspacePath);
-  return connected ? null : <IcDisconnected className="dock-tab-disconnected" />;
+  // Live store read (AgentTabMenu pattern) — the toggle must reflect
+  // immediately, independent of how the Dock memoizes the terminal prop.
+  const notify = useAgentTerminalsStore(
+    (s) => s.terminals[terminal.id]?.notificationsEnabled ?? false,
+  );
+  return (
+    <>
+      {notify && <IcBell className="dock-tab-bell" />}
+      {!connected && <IcDisconnected className="dock-tab-disconnected" />}
+    </>
+  );
 }
 
 /** Tab right-click menu. Holds only the terminal id — enabled state is a
@@ -157,7 +168,9 @@ function AgentTabMenu({
       <button
         onClick={() => {
           onClose();
-          void setTerminalNotifications(terminalId, !enabled);
+          // The flag is set synchronously inside; only the opportunistic
+          // banner-authorization tail can reject (exotic — swallow it).
+          void setTerminalNotifications(terminalId, !enabled).catch(() => {});
         }}
       >
         {enabled ? "Disable Notifications" : "Enable Notifications"}
