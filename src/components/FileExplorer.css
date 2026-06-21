@@ -138,6 +138,26 @@
   min-width: 0;
 }
 
+/* inline rename / new-file / new-folder editor */
+.fx-name-input {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  padding: 0 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--focus-ring);
+  border-radius: 3px;
+  color: var(--fg);
+  font-size: 12.5px;
+  outline: none;
+}
+
+/* the clipboard's cut entry, awaiting its paste */
+.fx-row.cut .fx-icon,
+.fx-row.cut .fx-name {
+  opacity: 0.5;
+}
+
 .fx-placeholder {
   pointer-events: none;
 }

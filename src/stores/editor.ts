@@ -37,6 +37,11 @@ export interface EditorState {
   openFile: (path: string, at?: { line: number; column?: number }) => void;
   openDiff: (req: DiffRequest) => void;
   closeTab: (id: string) => void;
+  /** Repoint open file tabs at/under `from` after it was renamed or moved to
+      `to` (tab ids embed the path). Order and active tab are preserved;
+      dirty flags drop — unsaved drafts are keyed by the old tab id and do
+      not survive, so callers must confirm the loss first. */
+  retargetFileTabs: (from: string, to: string) => void;
   setActive: (id: string) => void;
   markDirty: (id: string, dirty: boolean) => void;
   /** Drop the reveal request, but only if it is still the one consumed. */
@@ -110,6 +115,32 @@ export const createEditorStore = (): EditorStore =>
       set({ tabs: next, activeTabId: nextActive, dirty: restDirty });
     },
 
+    retargetFileTabs: (from, to) => {
+      const prefix = from + "/";
+      set((s) => {
+        let changed = false;
+        const dirty = { ...s.dirty };
+        let activeTabId = s.activeTabId;
+        const tabs = s.tabs.map((t) => {
+          const path =
+            t.kind === "file"
+              ? t.path === from
+                ? to
+                : t.path.startsWith(prefix)
+                  ? to + t.path.slice(from.length)
+                  : null
+              : null;
+          if (path === null) return t;
+          changed = true;
+          const id = `file:${path}`;
+          delete dirty[t.id]; // the draft died with the old id
+          if (activeTabId === t.id) activeTabId = id;
+          return { ...t, id, path, title: basename(path) };
+        });
+        return changed ? { tabs, activeTabId, dirty } : s;
+      });
+    },
+
     setActive: (id) => set({ activeTabId: id }),
     markDirty: (id, d) =>
       set((s) => (s.dirty[id] === d ? s : { dirty: { ...s.dirty, [id]: d } })),
@@ -136,4 +167,16 @@ export async function closeTabSafely(
     if (!ok) return;
   }
   closeTab(id);
+}
+
+/**
+ * Close several tabs (tab-menu "Close Others" / "to the Right" / "All"),
+ * confirming each unsaved one individually — declining keeps that tab open
+ * and continues with the rest.
+ */
+export async function closeTabsSafely(
+  editor: EditorStore,
+  ids: string[],
+): Promise<void> {
+  for (const id of ids) await closeTabSafely(editor, id);
 }

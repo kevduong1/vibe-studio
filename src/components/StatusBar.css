@@ -46,6 +46,12 @@
   color: var(--fg-faint);
 }
 
+/* Markdown preview badge while the rendered view is showing. */
+.statusbar-md-on,
+.statusbar-md-on:hover {
+  color: var(--accent);
+}
+
 .statusbar-error {
   color: var(--danger);
   max-width: 45vw;

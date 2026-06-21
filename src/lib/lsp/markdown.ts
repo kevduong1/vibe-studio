@@ -23,8 +23,9 @@ import type { LspMarkupContent } from "./types";
     swapped for highlighted spans. oneDarkHighlightStyle's classes are mounted
     by every editor view (editorTheme), so tooltip spans pick up the editor's
     own token colors. Sanitization discipline holds: spans are built with
-    createElement/textContent only. */
-function highlightInto(pre: HTMLElement, code: string, fenceTag: string) {
+    createElement/textContent only. (Also reused by lib/markdownDoc.ts — the
+    full-document preview renderer, which mounts the classes itself.) */
+export function highlightInto(pre: HTMLElement, code: string, fenceTag: string) {
   const desc = LanguageDescription.matchLanguageName(languages, fenceTag, true);
   if (!desc) return;
   desc.load().then(

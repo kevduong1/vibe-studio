@@ -223,6 +223,12 @@ export const IcGear = (props: IconProps) => (
     <path d="M8 1.9v2M8 12.1v2M14.1 8h-2M3.9 8h-2M12.3 3.7l-1.4 1.4M5.1 10.9l-1.4 1.4M12.3 12.3l-1.4-1.4M5.1 5.1L3.7 3.7" />
   </Svg>
 );
+export const IcEye = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8 11.9 12.2 8 12.2 1.8 8 1.8 8Z" />
+    <circle cx="8" cy="8" r="2" />
+  </Svg>
+);
 export const IcChevronRight = (props: IconProps) => (
   <Svg {...props}>
     <path d="m5.7 3 5 5-5 5" />

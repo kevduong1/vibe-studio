@@ -16,6 +16,7 @@ import {
   type DiffPayload,
 } from "../lib/ipc";
 import { basename } from "../lib/path";
+import { changeRuler } from "../lib/cmChangeRuler";
 import type { Tab } from "../stores/editor";
 import {
   BannerDismiss,
@@ -167,7 +168,15 @@ export default function DiffViewer({ tab }: { tab: DiffTab }) {
     if (!host) return;
 
     let disposed = false;
-    const shared: CmExtension[] = [basicSetup, editorTheme, editorSearch, lang ?? []];
+    // changeRuler("merge") follows the merge chunks in both split sides and
+    // the unified view (scrollbar change blips).
+    const shared: CmExtension[] = [
+      basicSetup,
+      editorTheme,
+      editorSearch,
+      changeRuler("merge"),
+      lang ?? [],
+    ];
     const editable = diff.kind === "worktree";
     const savePath = `${diff.repoPath}/${diff.path}`;
     // Track the b side's doc so refetches can tell unsaved edits apart.

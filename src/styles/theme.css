@@ -56,6 +56,13 @@
   --diff-del-gutter: rgba(229, 83, 75, 0.4);
   --diff-change-bg: rgba(47, 129, 247, 0.12);
 
+  /* overview-ruler blips (scrollbar change markers; lib/cmChangeRuler.ts) —
+     modified is fixed blue: NOT --git-modified (yellow) and not var(--accent)
+     (project-tinted) */
+  --ruler-add: #3fb950;
+  --ruler-del: #e5534b;
+  --ruler-mod: #2f81f7;
+
   /* per-project accent palette (assignment cycled by lib/projectColors.ts;
      index 0 = the default blue, so the first project looks like today) */
   --project-0: #2f81f7;

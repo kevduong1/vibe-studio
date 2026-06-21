@@ -323,15 +323,16 @@
   background-color: var(--diff-add-bg);
 }
 
-/* intra-line changed text (ins/del marks) */
+/* intra-line changed text (ins/del marks) — solid fill, darker than the
+   0.14-alpha line band, replacing merge's default 2px underline */
 .diff-host .cm-editor.cm-merge-a .cm-changedText,
 .diff-host .cm-editor .cm-deletedChunk .cm-deletedText {
-  background: linear-gradient(var(--diff-del-gutter), var(--diff-del-gutter))
-    bottom / 100% 2px no-repeat;
+  background: var(--diff-del-gutter);
+  border-radius: 2px;
 }
 .diff-host .cm-editor.cm-merge-b .cm-changedText {
-  background: linear-gradient(var(--diff-add-gutter), var(--diff-add-gutter))
-    bottom / 100% 2px no-repeat;
+  background: var(--diff-add-gutter);
+  border-radius: 2px;
 }
 .diff-host .cm-editor.cm-merge-b .cm-deletedText {
   background: var(--diff-del-bg);
@@ -351,4 +352,36 @@
   color: var(--fg-faint);
   background: var(--bg-app);
   font-size: 11px;
+}
+
+/* ----- overview ruler (scrollbar change blips, lib/cmChangeRuler.ts) ---------- */
+
+/* Overlays the native 10px scrollbar (theme.css) and replaces its track
+   interaction: pointer down/drag scrubs the editor to that spot (handlers in
+   lib/cmChangeRuler.ts). The native thumb stays visible beneath as the
+   viewport indicator. Blips fill the track's left lane so the thumb stays
+   findable (VS Code style). */
+.cm-change-ruler {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 2;
+}
+.cm-change-ruler-blip {
+  position: absolute;
+  left: 1px;
+  width: 4px;
+  border-radius: 1px;
+  pointer-events: none;
+}
+.cm-change-ruler-blip.add {
+  background: var(--ruler-add);
+}
+.cm-change-ruler-blip.del {
+  background: var(--ruler-del);
+}
+.cm-change-ruler-blip.mod {
+  background: var(--ruler-mod);
 }

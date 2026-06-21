@@ -9,11 +9,12 @@ import {
   useLspMode,
 } from "../lib/lsp/settings";
 import { serverLangForPath } from "../lib/lsp/types";
+import { isMarkdownPath } from "../lib/path";
 import { useActiveWorkspace, type Workspace } from "../stores/workspaces";
 import { useUiStore } from "../stores/ui";
 import { useAgentTerminalsStore } from "../stores/agentTerminals";
 import { aggregateActivity } from "../stores/terminal";
-import { IcBranch, IcGear, IcSidebar, IcTerminal } from "./icons";
+import { IcBranch, IcEye, IcGear, IcSidebar, IcTerminal } from "./icons";
 import "./StatusBar.css";
 
 /** Branch / sync / error readout for the active workspace. */
@@ -93,6 +94,32 @@ function LspStatusItem({ ws }: { ws: Workspace }) {
   );
 }
 
+/** Markdown preview switch — appears only while the active tab is a .md
+    file; EditorArea swaps the editor for the rendered view while it's on. */
+function MarkdownPreviewItem({ ws }: { ws: Workspace }) {
+  const on = useUiStore((s) => s.markdownPreview);
+  const toggle = useUiStore((s) => s.toggleMarkdownPreview);
+  const isMd = useStore(ws.editor, (s) => {
+    const tab = s.tabs.find((t) => t.id === s.activeTabId);
+    return tab?.kind === "file" && isMarkdownPath(tab.path);
+  });
+  if (!isMd) return null;
+  return (
+    <button
+      className={`statusbar-item statusbar-clickable${on ? " statusbar-md-on" : ""}`}
+      title={
+        on
+          ? "Showing rendered markdown — click to edit the source"
+          : "Show rendered markdown"
+      }
+      onClick={toggle}
+    >
+      <IcEye />
+      Preview
+    </button>
+  );
+}
+
 export default function StatusBar({
   onOpenSettings,
 }: {
@@ -115,6 +142,7 @@ export default function StatusBar({
       {ws && <RepoStatus key={ws.path} ws={ws} />}
 
       <div className="statusbar-right">
+        {ws && <MarkdownPreviewItem ws={ws} />}
         {ws && <LspStatusItem ws={ws} />}
         {ws && (
           <span className="truncate statusbar-path" title={ws.path}>

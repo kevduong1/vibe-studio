@@ -1,10 +1,12 @@
-//! Plain filesystem operations for the file explorer and editor.
+//! Plain filesystem operations for the file explorer and editor: directory
+//! listing, read/write, and the explorer's file management (create / rename /
+//! copy / move-to-Trash / reveal-in-Finder).
 //!
 //! All commands run their blocking I/O on the blocking thread pool so large
 //! files never stall the async runtime (which also serves terminal IPC).
 
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -161,4 +163,207 @@ fn write_file_impl(path: &str, text: &str) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
         e.to_string()
     })
+}
+
+// ---------------------------------------------------------------------------
+// Explorer file management
+// ---------------------------------------------------------------------------
+
+/// Last path segment, for error messages (io errors don't name the file).
+fn file_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
+}
+
+fn op_err(path: &str, e: std::io::Error) -> String {
+    format!("{}: {e}", file_name(path))
+}
+
+#[tauri::command]
+pub async fn fs_create_file(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        // create_new: never truncate something that already exists
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map(|_| ())
+            .map_err(|e| op_err(&path, e))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn fs_create_dir(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::create_dir(&path).map_err(|e| op_err(&path, e))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn fs_rename(from: String, to: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || rename_impl(&from, &to))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Rename/move that refuses to overwrite (std::fs::rename silently replaces
+/// an existing file). Case-only renames are allowed: on the default
+/// case-insensitive APFS the "existing" target is the source itself.
+fn rename_impl(from: &str, to: &str) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    if let Ok(dest) = std::fs::symlink_metadata(to) {
+        let same_file = std::fs::symlink_metadata(from)
+            .map(|src| src.dev() == dest.dev() && src.ino() == dest.ino())
+            .unwrap_or(false);
+        if !same_file {
+            return Err(format!("\"{}\" already exists", file_name(to)));
+        }
+    }
+    std::fs::rename(from, to).map_err(|e| op_err(from, e))
+}
+
+#[tauri::command]
+pub async fn fs_trash(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || trash_impl(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Move to the macOS Trash (recoverable, unlike fs::remove_*) via
+/// NSFileManager — works for files and directories, no Finder automation
+/// prompt. NSFileManager's shared instance is thread-safe for this.
+fn trash_impl(path: &str) -> Result<(), String> {
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, None)
+        .map_err(|e| e.localizedDescription().to_string())
+}
+
+#[tauri::command]
+pub async fn fs_copy(src: String, dest_dir: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || copy_impl(&src, &dest_dir))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Copy `src` into `dest_dir`, uniquifying the name Finder-style
+/// ("name copy.ext", "name copy 2.ext", ...) when it already exists there.
+/// Returns the created path.
+fn copy_impl(src: &str, dest_dir: &str) -> Result<String, String> {
+    let src_path = Path::new(src);
+    // recursing into the fresh copy would never terminate
+    if Path::new(dest_dir).starts_with(src_path) {
+        return Err("cannot copy a folder into itself".to_string());
+    }
+    let name = src_path
+        .file_name()
+        .ok_or_else(|| "invalid source path".to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let dest = unique_dest(Path::new(dest_dir), &name);
+    copy_recursive(src_path, &dest).map_err(|e| op_err(src, e))?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// First free path for `name` in `dir`: the name itself, then
+/// "stem copy.ext", "stem copy 2.ext", ... (extension preserved).
+fn unique_dest(dir: &Path, name: &str) -> PathBuf {
+    // symlink_metadata: broken symlinks still occupy the name
+    let exists = |p: &Path| std::fs::symlink_metadata(p).is_ok();
+    let first = dir.join(name);
+    if !exists(&first) {
+        return first;
+    }
+    let stem = Path::new(name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| name.to_string());
+    let ext = Path::new(name)
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    for n in 1.. {
+        let candidate = if n == 1 {
+            dir.join(format!("{stem} copy{ext}"))
+        } else {
+            dir.join(format!("{stem} copy {n}{ext}"))
+        };
+        if !exists(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+/// Depth-first copy. Symlinks are recreated as links (not followed) so
+/// copying a directory can't blow up on link cycles or huge link targets.
+fn copy_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
+    let ft = std::fs::symlink_metadata(src)?.file_type();
+    if ft.is_symlink() {
+        std::os::unix::fs::symlink(std::fs::read_link(src)?, dest)?;
+    } else if ft.is_dir() {
+        std::fs::create_dir(dest)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            copy_recursive(&entry.path(), &dest.join(entry.file_name()))?;
+        }
+    } else {
+        std::fs::copy(src, dest)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn fs_reveal(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || reveal_impl(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Select the entry in a Finder window (`open -R`).
+fn reveal_impl(path: &str) -> Result<(), String> {
+    let status = std::process::Command::new("/usr/bin/open")
+        .arg("-R")
+        .arg(path)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("could not reveal \"{}\" in Finder", file_name(path)))
+    }
+}
+
+/// Open an external URL in the default app (markdown-preview links). The
+/// scheme whitelist is the safety boundary: never hand arbitrary strings to
+/// `open` (file:/smb:/vnc:… would reach well beyond the browser).
+#[tauri::command]
+pub async fn open_url(url: String) -> Result<(), String> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://")
+        || lower.starts_with("http://")
+        || lower.starts_with("mailto:"))
+    {
+        return Err("unsupported URL scheme".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg(&url)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("could not open URL".to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

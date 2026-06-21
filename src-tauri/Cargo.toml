@@ -21,10 +21,11 @@ base64 = "0.22"
 parking_lot = "0.12"
 libc = "0.2"
 # UserNotifications bindings for notify.rs (banners; the notification plugin's
-# deprecated-API path never presents on current macOS — see notify.rs)
+# deprecated-API path never presents on current macOS — see notify.rs).
+# NSFileManager/NSURL serve fsops.rs' move-to-Trash.
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSBundle", "NSError", "NSString"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSBundle", "NSError", "NSFileManager", "NSString", "NSURL"] }
 objc2-user-notifications = { version = "0.3", features = [
   "UNNotification",
   "UNNotificationContent",

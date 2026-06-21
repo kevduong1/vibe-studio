@@ -59,6 +59,13 @@ fn main() {
             fsops::fs_read_dir,
             fsops::fs_read_file,
             fsops::fs_write_file,
+            fsops::fs_create_file,
+            fsops::fs_create_dir,
+            fsops::fs_rename,
+            fsops::fs_trash,
+            fsops::fs_copy,
+            fsops::fs_reveal,
+            fsops::open_url,
             // search
             search::list_workspace_files,
             search::search_workspace,

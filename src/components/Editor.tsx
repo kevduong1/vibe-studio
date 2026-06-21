@@ -12,7 +12,8 @@ import { LanguageDescription } from "@codemirror/language";
 import { setDiagnostics } from "@codemirror/lint";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { languages } from "@codemirror/language-data";
-import { fsReadFile, fsWriteFile, onRepoChanged } from "../lib/ipc";
+import { fsReadFile, fsWriteFile, gitDiffFile, onRepoChanged } from "../lib/ipc";
+import { changeRuler, computeRulerMarks, setRulerMarks } from "../lib/cmChangeRuler";
 import { lspExtension } from "../lib/lsp/cmLsp";
 import { getLspForFile, subscribeLspStatus, type WorkspaceLsp } from "../lib/lsp/servers";
 import { subscribeLspSettings } from "../lib/lsp/settings";
@@ -32,6 +33,9 @@ export type CmExtension = Extension;
 
 /** Debounce for re-reading the file after a repo watcher event. */
 const DISK_CHECK_DEBOUNCE_MS = 300;
+
+/** Debounce for rediffing the doc against the git baseline while typing. */
+const RULER_RECOMPUTE_MS = 250;
 
 // ---------------------------------------------------------------------------
 // Shared theme
@@ -160,6 +164,13 @@ const pruneDrafts = () => {
     }
   }
 };
+
+/** Latest unsaved text for a tab, if any — the markdown preview renders the
+    live draft rather than stale disk content. */
+export function peekDraft(wsPath: string, tabId: string): string | null {
+  const draft = draftCache.get(draftKeyFor(wsPath, tabId));
+  return draft ? draft.text.toString() : null;
+}
 
 // Subscribe each workspace's editor store (incl. ones created later) to the
 // pruner. Closed workspaces' subscriptions die with their stores.
@@ -308,6 +319,11 @@ export default function Editor({ tab }: { tab: FileTab }) {
     let unsubLspSettings: (() => void) | null = null;
     let unsubLspStatus: (() => void) | null = null;
     let diskTimer: ReturnType<typeof setTimeout> | null = null;
+    let rulerTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Git HEAD content for the overview ruler; null = no ruler. */
+    let rulerBaseline: Text | null = null;
+    /** Whether the view currently holds non-empty ruler marks. */
+    let rulerActive = false;
     setLoading(true);
     setBinary(false);
     setTruncated(false);
@@ -337,6 +353,57 @@ export default function Editor({ tab }: { tab: FileTab }) {
       } catch {
         // mid-write / deleted — the next event (or a save) will sort it out
       }
+    };
+
+    // ----- overview ruler (scrollbar change blips vs git HEAD) -----
+    // Files outside the workspace (go-to-def into node_modules) get no ruler.
+    const rulerRelPath = tab.path.startsWith(`${ws.path}/`)
+      ? tab.path.slice(ws.path.length + 1)
+      : null;
+
+    /** Rediff the LIVE doc against the baseline so blips track unsaved edits. */
+    const recomputeRuler = () => {
+      const v = viewRef.current;
+      if (disposed || !v) return;
+      const marks = rulerBaseline ? computeRulerMarks(rulerBaseline, v.state.doc) : [];
+      if (!marks.length && !rulerActive) return; // nothing shown, nothing to clear
+      rulerActive = marks.length > 0;
+      v.dispatch({ effects: setRulerMarks.of(marks) });
+    };
+
+    /** (Re)fetch the HEAD text — on mount and after repo events, so commits
+        and discards move the baseline. Baseline is HEAD (the "staged" diff
+        kind's old side), NOT the index: blips must cover ALL uncommitted
+        changes — an index baseline blanks the ruler the moment a file is
+        staged. */
+    const refreshRulerBaseline = async () => {
+      if (!rulerRelPath) return;
+      try {
+        const status = ws.repo.getState().status;
+        const entry = [...(status?.staged ?? []), ...(status?.unstaged ?? [])].find(
+          (f) => f.path === rulerRelPath,
+        );
+        if (entry?.status === "?") {
+          rulerBaseline = null; // untracked: an all-green ruler is just noise
+        } else {
+          const payload = await gitDiffFile(
+            ws.path,
+            rulerRelPath,
+            "staged",
+            undefined,
+            entry?.origPath,
+          );
+          if (disposed) return;
+          // Not in HEAD with no pending status = not tracked (ignored file).
+          rulerBaseline =
+            payload.binary || (!entry && payload.oldText === "")
+              ? null
+              : Text.of(payload.oldText.split(/\r\n?|\n/));
+        }
+      } catch {
+        rulerBaseline = null; // outside a repo / mid-change — no blips
+      }
+      recomputeRuler();
     };
 
     (async () => {
@@ -386,6 +453,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
         editorSearch,
         lang ?? [],
         lspCompartment.of(lspExt()),
+        changeRuler("field"),
         EditorView.updateListener.of((u) => {
           if (!u.docChanged) return;
           const dirty = !u.state.doc.eq(savedRef.current);
@@ -393,6 +461,9 @@ export default function Editor({ tab }: { tab: FileTab }) {
             draftCache.set(draftKey, { text: u.state.doc, savedText: savedRef.current });
           else draftCache.delete(draftKey);
           markDirty(tab.id, dirty);
+          // Keep the ruler blips tracking the buffer (debounced rediff).
+          if (rulerTimer) clearTimeout(rulerTimer);
+          rulerTimer = setTimeout(recomputeRuler, RULER_RECOMPUTE_MS);
         }),
         isTruncated
           ? readOnlyExtension
@@ -404,6 +475,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
       savedRef.current =
         typeof savedDoc === "string" ? view.state.toText(savedDoc) : savedDoc;
       setLoading(false);
+      void refreshRulerBaseline();
 
       // Consume a reveal requested before the view existed (fresh open from
       // a search result / quick open with a target line).
@@ -438,7 +510,10 @@ export default function Editor({ tab }: { tab: FileTab }) {
       const unlisten = await onRepoChanged((change) => {
         if (disposed || !tab.path.startsWith(`${change.repoPath}/`)) return;
         if (diskTimer) clearTimeout(diskTimer);
-        diskTimer = setTimeout(() => void checkDisk(), DISK_CHECK_DEBOUNCE_MS);
+        diskTimer = setTimeout(() => {
+          void checkDisk();
+          void refreshRulerBaseline();
+        }, DISK_CHECK_DEBOUNCE_MS);
       });
       if (disposed) unlisten();
       else unlistenRepo = unlisten;
@@ -452,6 +527,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
     return () => {
       disposed = true;
       if (diskTimer) clearTimeout(diskTimer);
+      if (rulerTimer) clearTimeout(rulerTimer);
       unlistenRepo?.();
       unsubLspSettings?.();
       unsubLspStatus?.();

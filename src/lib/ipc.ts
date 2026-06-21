@@ -325,6 +325,37 @@ export const fsReadFile = (path: string): Promise<FileContent> =>
 export const fsWriteFile = (path: string, text: string): Promise<void> =>
   invoke("fs_write_file", { path, text });
 
+/** Creates an empty file; rejects when the path already exists. */
+export const fsCreateFile = (path: string): Promise<void> =>
+  invoke("fs_create_file", { path });
+
+/** Creates a directory; rejects when the path already exists. */
+export const fsCreateDir = (path: string): Promise<void> =>
+  invoke("fs_create_dir", { path });
+
+/** Rename/move; rejects instead of overwriting an existing target
+ *  (case-only renames excepted). */
+export const fsRename = (from: string, to: string): Promise<void> =>
+  invoke("fs_rename", { from, to });
+
+/** Move a file or directory to the macOS Trash (recoverable). */
+export const fsTrash = (path: string): Promise<void> =>
+  invoke("fs_trash", { path });
+
+/** Copy `src` into `destDir` (recursive; symlinks kept as links), with
+ *  Finder-style "name copy.ext" uniquifying on collision. Resolves with
+ *  the created path. */
+export const fsCopy = (src: string, destDir: string): Promise<string> =>
+  invoke("fs_copy", { src, destDir });
+
+/** Select the entry in a Finder window. */
+export const fsReveal = (path: string): Promise<void> =>
+  invoke("fs_reveal", { path });
+
+/** Open an http(s)/mailto URL in the default app (other schemes reject). */
+export const openUrl = (url: string): Promise<void> =>
+  invoke("open_url", { url });
+
 // ---------------------------------------------------------------------------
 // Search commands
 // ---------------------------------------------------------------------------

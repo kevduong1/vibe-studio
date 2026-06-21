@@ -20,6 +20,10 @@ interface UiState {
   /** Bumped by showSearch (⌘⇧F); the active workspace's SearchPanel focuses
       its input on change — a counter so repeat presses refocus. */
   searchFocusNonce: number;
+  /** Markdown tabs render as a preview instead of source (status-bar badge,
+      shown only while the active tab is a .md file). App-wide, not per-tab:
+      "reading mode" tends to be a moment, not a per-file choice. */
+  markdownPreview: boolean;
 
   setSidebarTab: (tab: SidebarTab) => void;
   /** ⌘⇧F: reveal the sidebar on the search tab and focus the query input.
@@ -34,6 +38,7 @@ interface UiState {
   setPanelGroup: (g: PanelGroup) => void;
   togglePanelMaximized: () => void;
   setPanelMaximized: (v: boolean) => void;
+  toggleMarkdownPreview: () => void;
 }
 
 const clamp = (v: number, min: number, max: number) =>
@@ -48,6 +53,7 @@ export const useUiStore = create<UiState>((set) => ({
   panelGroup: "terminal",
   panelMaximized: false,
   searchFocusNonce: 0,
+  markdownPreview: false,
 
   setSidebarTab: (tab) =>
     set((s) =>
@@ -77,6 +83,8 @@ export const useUiStore = create<UiState>((set) => ({
     ),
   setPanelMaximized: (v) =>
     set(v ? { panelMaximized: true, panelVisible: true } : { panelMaximized: false }),
+  toggleMarkdownPreview: () =>
+    set((s) => ({ markdownPreview: !s.markdownPreview })),
 }));
 
 /**
