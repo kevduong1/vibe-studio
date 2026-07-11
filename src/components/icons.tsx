@@ -229,6 +229,29 @@ export const IcEye = (props: IconProps) => (
     <circle cx="8" cy="8" r="2" />
   </Svg>
 );
+/** Claude's radiating mark, simplified for the 16px status-bar grid. */
+export const IcClaude = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M8 1.5v4M8 10.5v4M1.5 8h4M10.5 8h4" />
+    <path d="m3.4 3.4 2.8 2.8M9.8 9.8l2.8 2.8M12.6 3.4 9.8 6.2M6.2 9.8l-2.8 2.8" />
+    <circle cx="8" cy="8" r="1.15" fill="currentColor" stroke="none" />
+  </Svg>
+);
+/** Codex terminal-prompt mark — the crisp center of the app icon at 16px. */
+export const IcCodex = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="m3 4.3 3.7 3.7L3 11.7" strokeWidth={1.7} />
+    <path d="M8.5 11.7H13" strokeWidth={1.7} />
+  </Svg>
+);
+/** Brain — project memories (Claude + Codex per-project auto-memories). */
+export const IcBrain = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M8 3.2v9.6" />
+    <path d="M8 4c-.7-1.3-2.9-1.2-3.5.2-1.3-.2-2.1 1.1-1.4 2.2-1 .8-.5 2.4.8 2.5-.2 1.5 1.9 2.2 2.9 1.1" />
+    <path d="M8 4c.7-1.3 2.9-1.2 3.5.2 1.3-.2 2.1 1.1 1.4 2.2 1 .8.5 2.4-.8 2.5.2 1.5-1.9 2.2-2.9 1.1" />
+  </Svg>
+);
 export const IcChevronRight = (props: IconProps) => (
   <Svg {...props}>
     <path d="m5.7 3 5 5-5 5" />

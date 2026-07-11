@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { useWorkspacesStore } from "./workspaces";
 
-export type SidebarTab = "explorer" | "search" | "scm";
-/** Bottom-panel groups: per-workspace terminals vs the global agent dock. */
+export type SidebarTab = "explorer" | "search" | "scm" | "memories";
+/** Bottom-panel sides: per-workspace terminals vs the global terminal
+ *  groupings (which grouping is in front lives in stores/agentTerminals). */
 export type PanelGroup = "terminal" | "agent";
 
 interface UiState {

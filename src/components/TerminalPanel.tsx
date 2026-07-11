@@ -14,9 +14,10 @@ import { getSession } from "../lib/termSessions";
 import {
   closeWorkspaceTerminal,
   getOrCreateWorkspaceSession,
+  openWorkspaceTerminal,
 } from "../lib/workspaceSessions";
 import { Dock, type DockPaneProps } from "./Dock";
-import { IcTerminal } from "./icons";
+import { IcSparkle, IcTerminal } from "./icons";
 import "@xterm/xterm/css/xterm.css";
 import "./TerminalPanel.css";
 
@@ -55,8 +56,8 @@ const TerminalPane = memo(function TerminalPane({
   );
 });
 
-function TerminalTabIcon() {
-  return <IcTerminal />;
+function TerminalTabIcon({ terminal }: { terminal: WorkspaceTerminal }) {
+  return terminal.kind === "shell" ? <IcTerminal /> : <IcSparkle />;
 }
 
 function TerminalEmpty() {
@@ -64,12 +65,26 @@ function TerminalEmpty() {
   return (
     <div className="terminal-empty">
       <div className="terminal-empty-text">No terminals</div>
-      <button
-        className="primary-btn"
-        onClick={() => ws.terminal.getState().newTerminal()}
-      >
-        New Terminal
-      </button>
+      <div className="terminal-empty-actions">
+        <button
+          className="primary-btn"
+          onClick={() => openWorkspaceTerminal(ws, "shell")}
+        >
+          <IcTerminal /> New Shell
+        </button>
+        <button
+          className="primary-btn"
+          onClick={() => openWorkspaceTerminal(ws, "claude")}
+        >
+          <IcSparkle /> Claude Agent
+        </button>
+        <button
+          className="primary-btn"
+          onClick={() => openWorkspaceTerminal(ws, "codex")}
+        >
+          <IcSparkle /> Codex Agent
+        </button>
+      </div>
     </div>
   );
 }

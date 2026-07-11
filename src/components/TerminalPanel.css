@@ -43,3 +43,7 @@
   height: 13px;
   flex-shrink: 0;
 }
+.terminal-empty-actions {
+  display: flex;
+  gap: 8px;
+}

@@ -15,9 +15,8 @@
 //! emitted-but-unacknowledged bytes and parks above FLOW_HIGH_WATER; the
 //! frontend acks via `pty_ack` from xterm's write-completion callback.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -56,8 +55,6 @@ pub struct PtySession {
     flow: Arc<Flow>,
     /// Shell pid — doubles as its process-group id (spawned via setsid).
     pid: Option<u32>,
-    /// Set by the reader thread once the child has been reaped.
-    exited: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -147,7 +144,6 @@ pub async fn pty_spawn(
     let killer = child.clone_killer();
     let pid = child.process_id();
     let flow = Arc::new(Flow::default());
-    let exited = Arc::new(AtomicBool::new(false));
 
     // Register the session before the reader thread starts so an immediate
     // exit can't race the insertion.
@@ -159,7 +155,6 @@ pub async fn pty_spawn(
             killer,
             flow: flow.clone(),
             pid,
-            exited: exited.clone(),
         },
     );
 
@@ -191,7 +186,6 @@ pub async fn pty_spawn(
         }
         // Reap the child (kill() alone leaves a zombie until wait()).
         let code: Option<i32> = child.wait().ok().map(|status| status.exit_code() as i32);
-        exited.store(true, Ordering::Release);
         let _ = app.emit(&format!("pty-exit:{id}"), code);
         app.state::<PtyState>().sessions.lock().remove(&id);
     });
@@ -260,35 +254,101 @@ pub async fn pty_resize(
         .map_err(|e| e.to_string())
 }
 
-/// Tear a session down: unpark its reader, SIGHUP the shell, escalate.
-fn kill_session(mut session: PtySession) {
+/// Process-group ids to SIGKILL when tearing a shell down: the shell's own
+/// group plus the group of every descendant process. An interactive login
+/// shell runs each job (`npm run dev`, a next/webpack dev server, ...) in its
+/// OWN process group via job control, so signalling only the shell's group
+/// (`-shell_pid`) leaves those jobs alive — and when the shell then dies they
+/// reparent away and keep running after the app is gone. Snapshot the tree
+/// NOW, while it is still rooted at the shell; once the shell exits its jobs
+/// reparent and can no longer be found from its pid.
+fn descendant_pgids(shell_pid: u32) -> Vec<i32> {
+    // The shell is a setsid session leader, so its pid IS its group id —
+    // always include it, even if the ps snapshot below fails.
+    let mut pgids: Vec<i32> = vec![shell_pid as i32];
+
+    // One ps snapshot of (pid, ppid, pgid) for every process on the system.
+    let table: HashMap<u32, (u32, i32)> = match std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid=,pgid="])
+        .output()
+    {
+        Ok(out) => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut f = line.split_whitespace();
+                let pid = f.next()?.parse::<u32>().ok()?;
+                let ppid = f.next()?.parse::<u32>().ok()?;
+                let pgid = f.next()?.parse::<i32>().ok()?;
+                Some((pid, (ppid, pgid)))
+            })
+            .collect(),
+        Err(_) => return pgids,
+    };
+
+    // Children index, then BFS the shell's descendants collecting their groups.
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (&pid, &(ppid, _)) in &table {
+        children.entry(ppid).or_default().push(pid);
+    }
+    let mut seen = HashSet::new();
+    let mut stack = vec![shell_pid];
+    while let Some(pid) = stack.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        if let Some(&(_, pgid)) = table.get(&pid) {
+            if !pgids.contains(&pgid) {
+                pgids.push(pgid);
+            }
+        }
+        if let Some(kids) = children.get(&pid) {
+            stack.extend(kids);
+        }
+    }
+    pgids
+}
+
+/// SIGKILL whole process groups. A `pgid <= 1` is never signalled: `kill(-0)`
+/// hits the caller's own group and `kill(-1)` every process we can reach.
+fn sigkill_pgids(pgids: &[i32]) {
+    for &pgid in pgids {
+        if pgid > 1 {
+            // Negative target = the entire process group.
+            unsafe { libc::kill(-pgid, libc::SIGKILL) };
+        }
+    }
+}
+
+/// Phase 1 of teardown: unpark the reader, snapshot the process groups to
+/// sweep, then SIGHUP the shell. Returns the groups for the later SIGKILL.
+fn hangup_and_collect_pgids(session: &mut PtySession) -> Vec<i32> {
     // Unpark a flow-parked reader so it can wind down and reap.
     {
         let mut st = session.flow.state.lock();
         st.closed = true;
         session.flow.cond.notify_all();
     }
-    // SIGHUP first — the shell exits cleanly, HUPs its jobs, runs zlogout —
-    // which closes the child side of the PTY and ends the reader thread
-    // (EOF); the reader then reaps via wait(). But portable-pty's killer
-    // sends a single SIGHUP with no escalation, so a HUP-trapping foreground
-    // child (nginx, a HUP-ignoring daemon) would survive, keep the slave fd
-    // open, and wedge the reader forever: escalate to SIGKILL on the shell's
-    // process group after a grace period. The pid can't be recycled in the
-    // meantime — the child stays unreaped (a zombie at worst) until the
-    // reader thread wait()s it, and `exited` only flips after that.
+    // Snapshot BEFORE signalling — a dying shell's jobs reparent out of reach.
+    let pgids = session.pid.map(descendant_pgids).unwrap_or_default();
+    // SIGHUP first — the shell runs zlogout, HUPs its own jobs, and closes the
+    // slave fd so the reader hits EOF and reaps. portable-pty sends a single
+    // SIGHUP with no escalation, and it never touches the separate groups the
+    // shell's job-control children live in, so the SIGKILL sweep is what
+    // actually guarantees nothing outlives the teardown.
     let _ = session.killer.kill();
-    let pid = session.pid;
-    let exited = session.exited.clone();
+    pgids
+}
+
+/// Tear a session down: SIGHUP now, SIGKILL its process groups after a grace
+/// period. Deferred off-thread so a HUP-respecting child gets to exit cleanly
+/// first; used for single-pane kills and page reloads — NOT app exit, where
+/// the deferred task would never run (see `kill_all_blocking`).
+fn kill_session(mut session: PtySession) {
+    let pgids = hangup_and_collect_pgids(&mut session);
+    drop(session); // close master/writer/killer fds
     tauri::async_runtime::spawn_blocking(move || {
         std::thread::sleep(KILL_GRACE);
-        if let Some(pid) = pid {
-            if !exited.load(Ordering::Acquire) {
-                // The shell is a session leader (setsid), so its pid doubles
-                // as the process-group id; -pgid signals the whole group.
-                unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
-            }
-        }
+        sigkill_pgids(&pgids);
     });
 }
 
@@ -304,6 +364,30 @@ pub fn kill_all(state: &PtyState) {
     for session in sessions {
         kill_session(session);
     }
+}
+
+/// Synchronous teardown for app exit. SIGHUP every shell, wait one grace
+/// period, then SIGKILL every collected process group — all inline. The
+/// `RunEvent::Exit` callback returns straight into process teardown, so the
+/// off-thread escalation `kill_session` relies on would never run: only the
+/// SIGHUP (ineffective on job-control children) would land and dev servers
+/// would survive. Blocking the exit for one grace period is the price of
+/// guaranteeing nothing is orphaned.
+pub fn kill_all_blocking(state: &PtyState) {
+    let sessions: Vec<PtySession> = {
+        let mut map = state.sessions.lock();
+        map.drain().map(|(_, s)| s).collect()
+    };
+    let mut pgids: Vec<i32> = Vec::new();
+    for mut session in sessions {
+        pgids.extend(hangup_and_collect_pgids(&mut session));
+        // session dropped here → master/writer/killer fds closed
+    }
+    if pgids.is_empty() {
+        return;
+    }
+    std::thread::sleep(KILL_GRACE);
+    sigkill_pgids(&pgids);
 }
 
 #[tauri::command]

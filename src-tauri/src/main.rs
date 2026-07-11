@@ -4,9 +4,11 @@
 mod fsops;
 mod git;
 mod lsp;
+mod memories;
 mod notify;
 mod pty;
 mod search;
+mod usage;
 mod watcher;
 
 use tauri::Manager;
@@ -89,6 +91,11 @@ fn main() {
             notify::notification_send,
             notify::notification_dismiss,
             notify::play_sound,
+            // usage
+            usage::claude_usage,
+            usage::codex_usage,
+            // memories
+            memories::memories_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -96,9 +103,14 @@ fn main() {
             // Normal quit (⌘Q): explicitly tear down child processes instead
             // of relying on their own parent-death handling (stdin EOF /
             // initialize-processId watch — which still backstop the crash
-            // and force-quit paths this callback never sees).
+            // and force-quit paths this callback never sees). PTY teardown is
+            // SYNCHRONOUS here: this callback returns straight into process
+            // exit, so the off-thread SIGKILL escalation kill_all uses would
+            // never fire and dev servers (in their own job-control process
+            // groups) would survive. LSP servers self-exit on stdin EOF, so
+            // their async kill is fine.
             if let tauri::RunEvent::Exit = event {
-                pty::kill_all(&app_handle.state::<pty::PtyState>());
+                pty::kill_all_blocking(&app_handle.state::<pty::PtyState>());
                 lsp::kill_all(&app_handle.state::<lsp::LspState>());
             }
         });

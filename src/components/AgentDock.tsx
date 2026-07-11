@@ -1,5 +1,5 @@
 /**
- * The Agent Terminals flavor of the generic Dock: panes attach registry
+ * The Global Terminals flavor of the generic Dock: panes attach registry
  * sessions spawned in their bound project's directory (TERM_PROGRAM
  * masquerade + activity tracking), wear a session-summary badge (the live
  * OSC 0/2 title — Claude Code's auto-generated topic — hidden until one is
@@ -13,6 +13,7 @@
 import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   agentTitleBase,
+  groupingDockStore,
   useAgentTerminalsStore,
   type AgentTerminal,
 } from "../stores/agentTerminals";
@@ -21,14 +22,20 @@ import { switchToProject, useWorkspacesStore } from "../stores/workspaces";
 import {
   closeAgentTerminal,
   getOrCreateAgentSession,
-  openAgentTerminal,
+  openGlobalTerminal,
 } from "../lib/agentSessions";
 import { getSession } from "../lib/termSessions";
 import { setTerminalNotifications } from "../lib/agentNotifications";
 import { useProjectColorVar } from "../lib/projectColors";
 import { Dock, type DockPaneProps } from "./Dock";
 import { ContextMenu } from "./ContextMenu";
-import { ActivityGlyph, IcBell, IcDisconnected, IcSparkle } from "./icons";
+import {
+  ActivityGlyph,
+  IcBell,
+  IcDisconnected,
+  IcSparkle,
+  IcTerminal,
+} from "./icons";
 import "./AgentDock.css";
 
 const useConnected = (workspacePath: string): boolean =>
@@ -72,7 +79,6 @@ function AgentBadge({
 
 const AgentPane = memo(function AgentPane({
   terminal,
-  groupId,
   visible,
   focused,
 }: DockPaneProps<AgentTerminal>) {
@@ -104,7 +110,8 @@ const AgentPane = memo(function AgentPane({
         // Clicking an agent terminal pulls its project to the front
         // (reopening it when it was closed — fire-and-forget).
         void switchToProject(terminal.workspacePath);
-        useAgentTerminalsStore.getState().setActiveTerminal(groupId, terminal.id);
+        // By id — panes know their group but not their grouping.
+        useAgentTerminalsStore.getState().setActiveTerminalById(terminal.id);
         const session = getSession(terminal.id);
         session?.acknowledge();
         session?.focus();
@@ -126,7 +133,13 @@ function AgentTabIcon({ terminal }: { terminal: AgentTerminal }) {
   return (
     <ActivityGlyph
       activity={activity}
-      idle={<IcSparkle style={{ color: projectColor }} />}
+      idle={
+        terminal.kind === "shell" ? (
+          <IcTerminal style={{ color: projectColor }} />
+        ) : (
+          <IcSparkle style={{ color: projectColor }} />
+        )
+      }
       color={projectColor}
     />
   );
@@ -185,21 +198,39 @@ function AgentEmpty() {
     <div className="terminal-empty">
       <div className="terminal-empty-text">
         {activePath
-          ? "No agent terminals"
-          : "No agent terminals — open a project to create one"}
+          ? "No global terminals"
+          : "No global terminals — open a project to create one"}
       </div>
-      <button
-        className="primary-btn"
-        disabled={!activePath}
-        onClick={() => activePath && openAgentTerminal(activePath)}
-      >
-        <IcSparkle /> New Agent Terminal
-      </button>
+      <div className="terminal-empty-actions">
+        <button
+          className="primary-btn"
+          disabled={!activePath}
+          onClick={() => activePath && openGlobalTerminal(activePath, "shell")}
+        >
+          <IcTerminal /> New Shell
+        </button>
+        <button
+          className="primary-btn"
+          disabled={!activePath}
+          onClick={() => activePath && openGlobalTerminal(activePath, "claude")}
+        >
+          <IcSparkle /> Claude Agent
+        </button>
+        <button
+          className="primary-btn"
+          disabled={!activePath}
+          onClick={() => activePath && openGlobalTerminal(activePath, "codex")}
+        >
+          <IcSparkle /> Codex Agent
+        </button>
+      </div>
     </div>
   );
 }
 
-export default function AgentDock() {
+/** One grouping's dock body (the Panel mounts one per grouping, hidden with
+ *  display:none while another tab is in front — terminals stay alive). */
+export default function AgentDock({ groupingId }: { groupingId: string }) {
   const [tabMenu, setTabMenu] = useState<{
     id: string;
     x: number;
@@ -208,17 +239,20 @@ export default function AgentDock() {
   return (
     <>
       <Dock
-        store={useAgentTerminalsStore}
+        store={groupingDockStore(groupingId)}
         Pane={AgentPane}
         TabIcon={AgentTabIcon}
         TabBadge={AgentTabBadge}
         Empty={AgentEmpty}
-        tabTooltip={(t) => t.workspacePath}
+        tabTooltip={(t) =>
+          `${t.kind === "shell" ? "Shell" : t.kind === "claude" ? "Claude" : "Codex"} — ${t.workspacePath}`
+        }
         defaultTitle={(t) => agentTitleBase(t.workspacePath)}
         onSelectTerminal={(t) => void switchToProject(t.workspacePath)}
         onTabContextMenu={(t, e) => {
           e.preventDefault();
-          setTabMenu({ id: t.id, x: e.clientX, y: e.clientY });
+          if (t.kind !== "shell")
+            setTabMenu({ id: t.id, x: e.clientX, y: e.clientY });
         }}
         closeTerminal={closeAgentTerminal}
       />

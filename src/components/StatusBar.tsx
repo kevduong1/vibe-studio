@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { useStore } from "zustand";
+import type { CodexUsageLimit, UsageLimit } from "../lib/ipc";
 import { getWorkspaceLsp, useLspStatusVersionValue } from "../lib/lsp/servers";
 import {
   isLanguageEnabled,
@@ -14,7 +16,20 @@ import { useActiveWorkspace, type Workspace } from "../stores/workspaces";
 import { useUiStore } from "../stores/ui";
 import { useAgentTerminalsStore } from "../stores/agentTerminals";
 import { aggregateActivity } from "../stores/terminal";
-import { IcBranch, IcEye, IcGear, IcSidebar, IcTerminal } from "./icons";
+import { initUsagePolling, useUsageStore } from "../stores/usage";
+import {
+  initCodexUsagePolling,
+  useCodexUsageStore,
+} from "../stores/codexUsage";
+import {
+  IcBranch,
+  IcClaude,
+  IcCodex,
+  IcEye,
+  IcGear,
+  IcSidebar,
+  IcTerminal,
+} from "./icons";
 import "./StatusBar.css";
 
 /** Branch / sync / error readout for the active workspace. */
@@ -120,12 +135,305 @@ function MarkdownPreviewItem({ ws }: { ws: Workspace }) {
   );
 }
 
+type UsageTone = "low" | "mid" | "high";
+function usageTone(pct: number): UsageTone {
+  if (pct >= 80) return "high";
+  if (pct >= 50) return "mid";
+  return "low";
+}
+
+/** "2h 14m" / "3d 5h" until a reset instant, or null when it's absent/past. */
+function resetLabel(resetsAt: string | number | null): string | null {
+  if (!resetsAt) return null;
+  if (typeof resetsAt === "number") {
+    const ms = resetsAt * 1000 - Date.now();
+    if (ms <= 0) return "now";
+    const mins = Math.round(ms / 60000);
+    if (mins < 60) return `${mins}m`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) {
+      const rem = mins % 60;
+      return rem ? `${hrs}h ${rem}m` : `${hrs}h`;
+    }
+    const days = Math.floor(hrs / 24);
+    const remHrs = hrs % 24;
+    return remHrs ? `${days}d ${remHrs}h` : `${days}d`;
+  }
+  // Anthropic sends microsecond ISO strings; JSC (Safari) only reliably
+  // parses millisecond precision — trim extra fractional digits.
+  const norm = resetsAt.replace(/(\.\d{3})\d+/, "$1");
+  const ms = new Date(norm).getTime() - Date.now();
+  if (!isFinite(ms)) return null;
+  if (ms <= 0) return "now";
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) {
+    const rem = mins % 60;
+    return rem ? `${hrs}h ${rem}m` : `${hrs}h`;
+  }
+  const days = Math.floor(hrs / 24);
+  const remHrs = hrs % 24;
+  return remHrs ? `${days}d ${remHrs}h` : `${days}d`;
+}
+
+function UsageRow({
+  label,
+  limit,
+}: {
+  label: string;
+  limit: UsageLimit | CodexUsageLimit | null;
+}) {
+  if (!limit) return null;
+  const pct = Math.round(limit.utilization);
+  const reset = resetLabel(limit.resetsAt);
+  return (
+    <div className="usage-row">
+      <div className="usage-row-head">
+        <span className="usage-row-label">{label}</span>
+        <span className="usage-row-pct">{pct}%</span>
+      </div>
+      <div className="usage-bar">
+        <div
+          className={`usage-bar-fill usage-${usageTone(pct)}`}
+          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+        />
+      </div>
+      {reset && <div className="usage-row-reset">resets in {reset}</div>}
+    </div>
+  );
+}
+
+/** Codex rate-limit gauge queried through the local Codex CLI. */
+function CodexUsageStatusItem() {
+  const enabled = useCodexUsageStore((s) => s.enabled);
+  const state = useCodexUsageStore((s) => s.state);
+  const stale = useCodexUsageStore((s) => s.stale);
+  const refresh = useCodexUsageStore((s) => s.refresh);
+  const [open, setOpen] = useState(false);
+
+  if (!enabled || !state) return null;
+  if (state.status !== "ok") {
+    const text =
+      state.status === "unauthenticated"
+        ? "Codex: sign in"
+        : "Codex: usage error";
+    const title =
+      state.status === "unauthenticated"
+        ? "No Codex login found — run codex login"
+        : `Codex usage error: ${state.message}`;
+    return (
+      <button
+        className="statusbar-item statusbar-clickable statusbar-usage-muted"
+        title={`${title} (click to retry)`}
+        onClick={() => void refresh({ force: true })}
+      >
+        <IcCodex />
+        <span className="truncate">{text}</span>
+      </button>
+    );
+  }
+
+  const u = state.usage;
+  const segs = [
+    u.fiveHour && { label: "5h", pct: Math.round(u.fiveHour.utilization) },
+    u.sevenDay && { label: "7d", pct: Math.round(u.sevenDay.utilization) },
+  ].filter((s): s is { label: string; pct: number } => Boolean(s));
+
+  return (
+    <div className="statusbar-usage-wrap">
+      <button
+        className={`statusbar-item statusbar-clickable statusbar-usage${stale ? " statusbar-usage-stale" : ""}`}
+        title={`Codex usage${stale ? " (last reading — refresh failed)" : ""} — click for details`}
+        onClick={() =>
+          setOpen((o) => {
+            if (!o) void refresh({ force: true });
+            return !o;
+          })
+        }
+      >
+        <IcCodex />
+        <span>Codex</span>
+        {segs.map((s) => (
+          <span
+            key={s.label}
+            className={`statusbar-usage-seg usage-${usageTone(s.pct)}`}
+          >
+            {s.label} {s.pct}%
+          </span>
+        ))}
+        {u.resetCreditExpiries.length > 0 && (
+          <span className="statusbar-usage-seg usage-low">
+            {u.resetCreditExpiries.length} reset
+            {u.resetCreditExpiries.length > 1 ? "s" : ""}
+          </span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div
+            className="statusbar-usage-backdrop"
+            onClick={() => setOpen(false)}
+          />
+          <div className="statusbar-usage-popover" role="dialog">
+            <div className="statusbar-usage-head">
+              <span>
+                Codex usage
+                {u.planType
+                  ? ` · ${u.planType.replaceAll("_", " ")}`
+                  : ""}
+              </span>
+              <button
+                className="statusbar-usage-refresh"
+                title="Refresh now"
+                onClick={() => void refresh({ force: true })}
+              >
+                Refresh
+              </button>
+            </div>
+            <UsageRow label="5-hour" limit={u.fiveHour} />
+            <UsageRow label="Weekly" limit={u.sevenDay} />
+            {u.resetCreditExpiries.length > 0 && (
+              <div className="usage-row">
+                <div className="usage-row-head">
+                  <span className="usage-row-label">Reset credits</span>
+                  <span className="usage-row-pct">
+                    {u.resetCreditExpiries.length}
+                  </span>
+                </div>
+                {u.resetCreditExpiries.map((exp, i) => (
+                  <div key={i} className="usage-row-reset">
+                    #{i + 1} expires in {resetLabel(exp) ?? "—"}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Live Claude subscription gauge (opt-in via Settings). The chip shows the
+    primary 5-hour window; clicking opens a popover with every window. */
+function UsageStatusItem() {
+  const enabled = useUsageStore((s) => s.enabled);
+  const state = useUsageStore((s) => s.state);
+  const stale = useUsageStore((s) => s.stale);
+  const refresh = useUsageStore((s) => s.refresh);
+  const [open, setOpen] = useState(false);
+
+  // Nothing to render until enabled and the first fetch has resolved (avoids
+  // a flicker of empty/placeholder chrome on launch).
+  if (!enabled || !state) return null;
+
+  if (state.status !== "ok") {
+    const text =
+      state.status === "unauthenticated"
+        ? "Claude: sign in"
+        : state.status === "expired"
+          ? "Claude: token expired"
+          : "Claude: usage error";
+    const title =
+      state.status === "unauthenticated"
+        ? "No Claude Code login found — run Claude Code (claude) to sign in"
+        : state.status === "expired"
+          ? "Claude Code's access token expired — run Claude Code to refresh it"
+          : `Claude usage error: ${state.message}`;
+    return (
+      <button
+        className="statusbar-item statusbar-clickable statusbar-usage-muted"
+        title={`${title} (click to retry)`}
+        onClick={() => void refresh({ force: true })}
+      >
+        <IcClaude />
+        <span className="truncate">{text}</span>
+      </button>
+    );
+  }
+
+  const u = state.usage;
+  // The rolling 5-hour and the weekly (all-models) cap go straight in the bar
+  // — the two windows that actually gate work — each toned by its own load;
+  // the popover keeps the full per-model breakdown.
+  const segs: { label: string; pct: number }[] = [];
+  const push = (label: string, limit: UsageLimit | null) => {
+    if (limit) segs.push({ label, pct: Math.round(limit.utilization) });
+  };
+  push("5h", u.fiveHour);
+  push("7d", u.sevenDay);
+  // Degenerate response missing both common windows — show whatever exists.
+  if (!segs.length) push("wk", u.sevenDayOpus ?? u.sevenDaySonnet);
+
+  return (
+    <div className="statusbar-usage-wrap">
+      <button
+        className={`statusbar-item statusbar-clickable statusbar-usage${stale ? " statusbar-usage-stale" : ""}`}
+        title={
+          stale
+            ? "Claude subscription usage (last reading — refresh failed) — click for details"
+            : "Claude subscription usage — click for details"
+        }
+        onClick={() =>
+          setOpen((o) => {
+            // Opening the chip is the on-demand refresh (background polling is
+            // intentionally slow); don't re-pull when collapsing it.
+            if (!o) void refresh({ force: true });
+            return !o;
+          })
+        }
+      >
+        <IcClaude />
+        <span>Claude</span>
+        {segs.map((s) => (
+          <span
+            key={s.label}
+            className={`statusbar-usage-seg usage-${usageTone(s.pct)}`}
+          >
+            {s.label} {s.pct}%
+          </span>
+        ))}
+      </button>
+      {open && (
+        <>
+          <div
+            className="statusbar-usage-backdrop"
+            onClick={() => setOpen(false)}
+          />
+          <div className="statusbar-usage-popover" role="dialog">
+            <div className="statusbar-usage-head">
+              <span>Claude usage</span>
+              <button
+                className="statusbar-usage-refresh"
+                title="Refresh now"
+                onClick={() => void refresh({ force: true })}
+              >
+                Refresh
+              </button>
+            </div>
+            <UsageRow label="5-hour" limit={u.fiveHour} />
+            <UsageRow label="Weekly (all models)" limit={u.sevenDay} />
+            <UsageRow label="Weekly Opus" limit={u.sevenDayOpus} />
+            <UsageRow label="Weekly Sonnet" limit={u.sevenDaySonnet} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function StatusBar({
   onOpenSettings,
 }: {
   onOpenSettings: () => void;
 }) {
   const ws = useActiveWorkspace();
+  // Start the background poll once; every tick no-ops while usage is disabled.
+  useEffect(() => {
+    initUsagePolling();
+    initCodexUsagePolling();
+  }, []);
 
   const panelVisible = useUiStore((s) => s.panelVisible);
   const sidebarVisible = useUiStore((s) => s.sidebarVisible);
@@ -142,6 +450,8 @@ export default function StatusBar({
       {ws && <RepoStatus key={ws.path} ws={ws} />}
 
       <div className="statusbar-right">
+        <CodexUsageStatusItem />
+        <UsageStatusItem />
         {ws && <MarkdownPreviewItem ws={ws} />}
         {ws && <LspStatusItem ws={ws} />}
         {ws && (

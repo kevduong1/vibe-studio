@@ -20,12 +20,13 @@ import { copyText } from "../lib/clipboard";
 import { fsReveal } from "../lib/ipc";
 import { isMarkdownPath } from "../lib/path";
 import { ContextMenu } from "./ContextMenu";
-import { IcBranch, IcClose, IcDiff, IcFile } from "./icons";
+import { IcBranch, IcBrain, IcClose, IcDiff, IcFile } from "./icons";
 import "./EditorArea.css";
 
 const Editor = lazy(() => import("./Editor"));
 const DiffViewer = lazy(() => import("./DiffViewer"));
 const MarkdownPreview = lazy(() => import("./MarkdownPreview"));
+const MemoryPreview = lazy(() => import("./MemoryPreview"));
 
 function TabItem({
   tab,
@@ -55,7 +56,13 @@ function TabItem({
     <div
       ref={ref}
       className={`editor-tab ${active ? "active" : ""} ${dirty ? "dirty" : ""}`}
-      title={tab.kind === "file" ? tab.path : tab.diff.path}
+      title={
+        tab.kind === "file"
+          ? tab.path
+          : tab.kind === "diff"
+            ? tab.diff.path
+            : tab.memory.entry.description || tab.title
+      }
       onClick={() => setActive(tab.id)}
       onMouseDown={(e) => {
         // prevent middle-click autoscroll; close on aux click below
@@ -72,6 +79,8 @@ function TabItem({
       <span className="tab-icon">
         {tab.kind === "file" ? (
           <IcFile />
+        ) : tab.kind === "memory" ? (
+          <IcBrain />
         ) : (
           <IcDiff style={iconColor ? { color: iconColor } : undefined} />
         )}
@@ -239,6 +248,9 @@ export default function EditorArea() {
                 ))}
               {active?.kind === "diff" && (
                 <DiffViewer key={active.id} tab={active} />
+              )}
+              {active?.kind === "memory" && (
+                <MemoryPreview key={active.id} tab={active} />
               )}
             </Suspense>
           </div>

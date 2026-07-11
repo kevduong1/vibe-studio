@@ -43,13 +43,13 @@ WKWebView, no bundled Chromium — so it stays light on CPU and RAM.
 - A debounced file watcher keeps status, log, and graph live — including
   changes made by external `git` commands
 
-### 🤖 Agent terminal dock
+### 🤖 Global terminals
 
-A global dock purpose-built for AI coding agents (Claude Code & friends):
+A global dock for persistent shells and AI coding agents:
 
-- New agent terminals **launch `claude` automatically** in the project
-  root — quit the agent and you're in a plain shell
-- Agent terminals are pinned to a **project**, not a window — they keep
+- Start a plain shell, **Claude Code**, or **Codex** in the project root —
+  quit an agent and you're back in its shell
+- Global terminals are pinned to a **project**, not a window — they keep
   running when their workspace closes, and clicking one jumps straight to
   its project
 - **Busy / needs-attention indicators** surface what each agent is doing
@@ -59,10 +59,10 @@ A global dock purpose-built for AI coding agents (Claude Code & friends):
 - Drop a file or image from Finder onto a pane to paste its path — image
   drops work with Claude Code out of the box
 
-### ⌨️ Terminals
+### ⌨️ Project terminals
 
-- Real PTYs running your login shell, with tabs, side-by-side splits, and
-  drag-and-drop layout
+- Real PTYs running your login shell, Claude Code, or Codex, with tabs,
+  side-by-side splits, and drag-and-drop layout
 - WebGL-accelerated rendering (xterm.js 6) with backpressure-aware
   streaming, so `cat`-ing a huge file won't wedge the app
 - **⌘⇧B task runner**: VS Code-compatible `.vscode/tasks.json`, with a

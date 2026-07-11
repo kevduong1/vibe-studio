@@ -39,6 +39,14 @@ import { Resizer } from "./Resizer";
 import { IcClose } from "./icons";
 import "./Dock.css";
 
+/** The read side of a store — satisfied by real vanilla stores (workspace
+ *  docks) and by the per-grouping adapter over the global store
+ *  (stores/agentTerminals' groupingDockStore). */
+export type DockStoreApi<S> = Pick<
+  StoreApi<S>,
+  "getState" | "getInitialState" | "subscribe"
+>;
+
 /** What the Dock needs from its zustand store (both docks satisfy this). */
 export interface DockStoreState<T extends DockTerminalBase>
   extends DockState<T> {
@@ -62,7 +70,7 @@ export interface DockProps<
   T extends DockTerminalBase,
   S extends DockStoreState<T>,
 > {
-  store: StoreApi<S>;
+  store: DockStoreApi<S>;
   /** One terminal's live pane (session attach + flavor extras). */
   Pane: ComponentType<DockPaneProps<T>>;
   /** Tab glyph (activity-aware for agent tabs, plain icon otherwise). */

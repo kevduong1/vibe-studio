@@ -24,10 +24,11 @@ import StatusBar from "./components/StatusBar";
 import FileExplorer from "./components/FileExplorer";
 import SearchPanel from "./components/SearchPanel";
 import SourceControl from "./components/SourceControl";
+import MemoriesPanel from "./components/MemoriesPanel";
 import EditorArea from "./components/EditorArea";
 import Panel from "./components/Panel";
 import { Resizer } from "./components/Resizer";
-import { IcBranch, IcFile, IcSearch } from "./components/icons";
+import { IcBrain, IcBranch, IcFile, IcSearch } from "./components/icons";
 
 /** Slim far-left icon strip for switching sidebar panels. */
 function ActivityBar() {
@@ -60,6 +61,13 @@ function ActivityBar() {
       >
         <IcBranch />
         {ws && <ChangeCountBadge ws={ws} />}
+      </button>
+      <button
+        className={`activity-btn ${active("memories") ? "active" : ""}`}
+        title="Project Memories (Claude & Codex)"
+        onClick={() => setSidebarTab("memories")}
+      >
+        <IcBrain />
       </button>
     </div>
   );
@@ -139,6 +147,8 @@ function WorkspaceSidebarContent({ visible }: { visible: boolean }) {
         <FileExplorer />
       ) : sidebarTab === "search" ? (
         <SearchPanel />
+      ) : sidebarTab === "memories" ? (
+        <MemoriesPanel />
       ) : (
         <SourceControl />
       )}

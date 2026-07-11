@@ -115,6 +115,119 @@
   color: var(--fg);
 }
 
+/* Claude subscription usage chip + popover. */
+.statusbar-usage-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.statusbar-usage-muted {
+  color: var(--fg-faint);
+}
+/* Showing a retained reading after a failed refresh (e.g. a rate-limited
+   poll): dim it slightly rather than flashing an error over a good value. */
+.statusbar-usage-stale {
+  opacity: 0.6;
+}
+.statusbar-usage-muted .truncate {
+  max-width: 140px;
+}
+/* The 5h / weekly segments shown inline in the bar, each toned by its own
+   load; keep the tone on hover (like .statusbar-error). The low tone inherits
+   the chip's --fg-dim (and --fg on hover). */
+.statusbar-usage-seg {
+  font-variant-numeric: tabular-nums;
+}
+.statusbar-usage-seg.usage-mid,
+.statusbar-usage:hover .statusbar-usage-seg.usage-mid {
+  color: var(--warning);
+}
+.statusbar-usage-seg.usage-high,
+.statusbar-usage:hover .statusbar-usage-seg.usage-high {
+  color: var(--danger);
+}
+
+.statusbar-usage-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+}
+.statusbar-usage-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 60;
+  width: 230px;
+  padding: 10px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: default;
+}
+.statusbar-usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--fg);
+  font-weight: 600;
+}
+.statusbar-usage-refresh {
+  color: var(--fg-dim);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+}
+.statusbar-usage-refresh:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.usage-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.usage-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.usage-row-label {
+  color: var(--fg-dim);
+}
+.usage-row-pct {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.usage-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-active);
+  overflow: hidden;
+}
+.usage-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+.usage-bar-fill.usage-low {
+  background: var(--success);
+}
+.usage-bar-fill.usage-mid {
+  background: var(--warning);
+}
+.usage-bar-fill.usage-high {
+  background: var(--danger);
+}
+.usage-row-reset {
+  color: var(--fg-faint);
+  font-size: var(--font-size-sm);
+}
+
 /* Agent terminal waiting on the user while the panel is hidden. */
 .statusbar-attention-dot {
   position: absolute;

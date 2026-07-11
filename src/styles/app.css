@@ -31,7 +31,7 @@
   min-width: 0;
 }
 
-/* Global bottom panel (Terminal / Agent Terminals groups), under the editor
+/* Global bottom panel (Project Terminals / Global Terminals groups), under the editor
    column — the sidebar keeps the full app height beside it. */
 .app-panel {
   flex-shrink: 0;

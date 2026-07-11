@@ -1,6 +1,6 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import type { DiffKind, StatusCode } from "../lib/ipc";
+import type { DiffKind, MemoryEntry, StatusCode } from "../lib/ipc";
 import { basename } from "../lib/path";
 import { useUiStore } from "./ui";
 
@@ -20,9 +20,18 @@ export interface DiffRequest {
   status?: StatusCode;
 }
 
+/** Which agent a memory tab's entry came from (MemoriesPanel sidebar). */
+export type MemorySource = "claude" | "codex";
+
 export type Tab =
   | { id: string; kind: "file"; path: string; title: string }
-  | { id: string; kind: "diff"; title: string; diff: DiffRequest };
+  | { id: string; kind: "diff"; title: string; diff: DiffRequest }
+  | {
+      id: string;
+      kind: "memory";
+      title: string;
+      memory: { source: MemorySource; entry: MemoryEntry };
+    };
 
 export interface EditorState {
   tabs: Tab[];
@@ -36,6 +45,11 @@ export interface EditorState {
 
   openFile: (path: string, at?: { line: number; column?: number }) => void;
   openDiff: (req: DiffRequest) => void;
+  /** Open an agent memory as a read-only preview tab (MemoryPreview.tsx).
+      Reopening an already-open entry refreshes its snapshot in place — the
+      sidebar refetches from disk/sqlite, tabs just mirror what it handed
+      over. */
+  openMemory: (source: MemorySource, entry: MemoryEntry) => void;
   closeTab: (id: string) => void;
   /** Repoint open file tabs at/under `from` after it was renamed or moved to
       `to` (tab ids embed the path). Order and active tab are preserved;
@@ -99,6 +113,21 @@ export const createEditorStore = (): EditorStore =>
         });
       }
       set({ activeTabId: id });
+      revealEditor();
+    },
+
+    openMemory: (source, entry) => {
+      // Entry ids are stable across refetches (file path / Codex thread id).
+      const id = `memory:${source}:${entry.id}`;
+      set((s) => {
+        const tab: Tab = { id, kind: "memory", title: entry.title, memory: { source, entry } };
+        return {
+          tabs: s.tabs.some((t) => t.id === id)
+            ? s.tabs.map((t) => (t.id === id ? tab : t))
+            : [...s.tabs, tab],
+          activeTabId: id,
+        };
+      });
       revealEditor();
     },
 

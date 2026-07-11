@@ -1,8 +1,8 @@
 /**
  * Workspace-dock glue between the session registry (lib/termSessions) and a
- * workspace's terminal store: plain shells spawned at the workspace root (no
- * activity tracking, no TERM_PROGRAM masquerade), with the close path
- * disposing the PTY before the structural removal. Used by the pane host in
+ * workspace's terminal store: shells and optional agents spawned at the
+ * workspace root, with the close path disposing the PTY before structural
+ * removal. Used by the pane host in
  * components/TerminalPanel.tsx and by the task runner (lib/taskRunner.ts),
  * which needs the session before the new tab's pane has mounted.
  */
@@ -19,16 +19,31 @@ export function getOrCreateWorkspaceSession(
   ws: Workspace,
   id: string,
 ): TermSession {
+  const terminal = ws.terminal.getState().terminals[id];
   return getOrCreateSession({
     id,
     cwd: ws.path,
-    agent: false,
+    agent: terminal?.kind !== "shell",
     onExit: (_code, early) => {
       // Normal exit closes the tab; an early failure keeps the corpse
       // readable (spawn error, bad dotfiles) for the user to close.
       if (!early) closeWorkspaceTerminal(ws.terminal, id);
     },
   });
+}
+
+const AGENT_COMMAND = { claude: "claude", codex: "codex" } as const;
+
+/** Create a project-bound shell or agent terminal and start the selected
+ * agent inside its shell. */
+export function openWorkspaceTerminal(
+  ws: Workspace,
+  kind: "shell" | "claude" | "codex",
+): string {
+  const id = ws.terminal.getState().newTerminal(undefined, kind);
+  if (kind !== "shell")
+    getOrCreateWorkspaceSession(ws, id).sendText(`${AGENT_COMMAND[kind]}\r`);
+  return id;
 }
 
 /** UI-facing close: kill the PTY first, then remove the tab from the layout. */

@@ -202,7 +202,7 @@ export async function switchToProject(path: string): Promise<void> {
     await openWorkspace(path);
   } catch (e) {
     await message(`Cannot open project:\n${String(e)}`, {
-      title: "Agent Terminal",
+      title: "Global Terminal",
       kind: "error",
     });
   }

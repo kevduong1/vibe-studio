@@ -7,16 +7,18 @@
 import { getOrCreateSession, disposeSession, type TermSession } from "./termSessions";
 import { dismissAgentAttention, notifyAgentAttention } from "./agentNotifications";
 import {
+  groupingTerminalIds,
   useAgentTerminalsStore,
   type AgentTerminal,
 } from "../stores/agentTerminals";
+import type { TerminalKind } from "../stores/terminal";
 
 /** The (possibly already-running) session for an agent terminal. */
 export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
   return getOrCreateSession({
     id: t.id,
     cwd: t.workspacePath,
-    agent: true,
+    agent: t.kind !== "shell",
     onActivity: (activity) => {
       const store = useAgentTerminalsStore.getState();
       // Attention onset (false → true edge) fires the opt-in system
@@ -48,13 +50,29 @@ export function closeAgentTerminal(id: string): void {
   dismissAgentAttention(id);
 }
 
+/** UI-facing grouping close: kill every member PTY (and banner) first, then
+ *  drop the grouping — with its terminals — from the store in one step. */
+export function closeGlobalGrouping(groupingId: string): void {
+  const s = useAgentTerminalsStore.getState();
+  const grouping = s.groupings.find((g) => g.id === groupingId);
+  if (!grouping) return;
+  for (const id of groupingTerminalIds(grouping)) {
+    disposeSession(id);
+    dismissAgentAttention(id);
+  }
+  s.closeGrouping(groupingId);
+}
+
 /** Typed into fresh agent terminals: a new tab exists to run an agent, so
  *  start one. Typed (not exec'd as the PTY process) so quitting the agent
  *  leaves a normal shell in the project root. */
-const AGENT_COMMAND = "claude";
+const AGENT_COMMAND: Record<Exclude<TerminalKind, "shell">, string> = {
+  claude: "claude",
+  codex: "codex",
+};
 
 /**
- * UI-facing create: places the tab and queues `claude` into the new shell.
+ * UI-facing create: places the tab and queues the selected agent into the shell.
  * The session is created eagerly (the tab's pane host only mounts on the
  * NEXT render); its shell still spawns lazily on first attach, and sendText
  * queues until that spawn settles (same pattern as taskRunner). Restored
@@ -63,10 +81,21 @@ const AGENT_COMMAND = "claude";
  */
 export function openAgentTerminal(
   workspacePath: string,
-  opts?: { groupId?: string },
+  opts?: { groupId?: string; kind?: TerminalKind },
 ): string {
-  const id = useAgentTerminalsStore.getState().newTerminal(workspacePath, opts);
+  const kind = opts?.kind ?? "claude";
+  const id = useAgentTerminalsStore.getState().newTerminal(workspacePath, {
+    ...opts,
+    kind,
+  });
   const t = useAgentTerminalsStore.getState().terminals[id];
-  if (t) getOrCreateAgentSession(t).sendText(`${AGENT_COMMAND}\r`);
+  if (t && kind !== "shell")
+    getOrCreateAgentSession(t).sendText(`${AGENT_COMMAND[kind]}\r`);
   return id;
 }
+
+/** Create a global shell, Claude, or Codex terminal. */
+export const openGlobalTerminal = (
+  workspacePath: string,
+  kind: TerminalKind,
+): string => openAgentTerminal(workspacePath, { kind });

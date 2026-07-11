@@ -37,6 +37,8 @@ import {
 } from "../lib/lsp/settings";
 import type { ServerLang } from "../lib/lsp/types";
 import { useActiveWorkspace, type Workspace } from "../stores/workspaces";
+import { useUsageStore } from "../stores/usage";
+import { useCodexUsageStore } from "../stores/codexUsage";
 import { IcClose, IcPlay, IcRefresh } from "./icons";
 import "./SettingsModal.css";
 
@@ -229,6 +231,107 @@ function BannerModeRow() {
   );
 }
 
+/** Claude subscription usage: opt-in toggle. Off by default because fetching
+ *  reaches into Claude Code's credential store (a keychain prompt is possible)
+ *  and calls Anthropic. */
+function ClaudeUsageRow() {
+  const enabled = useUsageStore((s) => s.enabled);
+  const setEnabled = useUsageStore((s) => s.setEnabled);
+  const state = useUsageStore((s) => s.state);
+  const stale = useUsageStore((s) => s.stale);
+
+  const status = !enabled
+    ? "Off"
+    : !state
+      ? "Checking…"
+      : state.status === "ok"
+        ? stale
+          ? "Connected — showing last reading (refresh failed)"
+          : "Connected"
+        : state.status === "unauthenticated"
+          ? "No Claude Code login found"
+          : state.status === "expired"
+            ? "Token expired — run Claude Code to refresh"
+            : `Error — ${state.message}`;
+  const dot =
+    !enabled || !state
+      ? "idle"
+      : state.status === "ok"
+        ? "ok"
+        : state.status === "expired"
+          ? "idle"
+          : "crashed";
+
+  return (
+    <div className="settings-row">
+      <div className="settings-row-main">
+        <span className="settings-row-name">Claude usage meter</span>
+        <span
+          className="settings-row-status"
+          title={state?.status === "error" ? state.message : undefined}
+        >
+          <span className={`lsp-dot ${dot}`} />
+          {status}
+        </span>
+      </div>
+      <button
+        className={`settings-toggle ${enabled ? "on" : ""}`}
+        role="switch"
+        aria-checked={enabled}
+        title={`${enabled ? "Disable" : "Enable"} the Claude usage gauge`}
+        onClick={() => setEnabled(!enabled)}
+      />
+    </div>
+  );
+}
+
+function CodexUsageRow() {
+  const enabled = useCodexUsageStore((s) => s.enabled);
+  const setEnabled = useCodexUsageStore((s) => s.setEnabled);
+  const state = useCodexUsageStore((s) => s.state);
+  const stale = useCodexUsageStore((s) => s.stale);
+
+  const status = !enabled
+    ? "Off"
+    : !state
+      ? "Checking…"
+      : state.status === "ok"
+        ? stale
+          ? "Connected — showing last reading (refresh failed)"
+          : "Connected"
+        : state.status === "unauthenticated"
+          ? "No Codex login found"
+          : `Error — ${state.message}`;
+  const dot =
+    !enabled || !state
+      ? "idle"
+      : state.status === "ok"
+        ? "ok"
+        : "crashed";
+
+  return (
+    <div className="settings-row">
+      <div className="settings-row-main">
+        <span className="settings-row-name">Codex usage meter</span>
+        <span
+          className="settings-row-status"
+          title={state?.status === "error" ? state.message : undefined}
+        >
+          <span className={`lsp-dot ${dot}`} />
+          {status}
+        </span>
+      </div>
+      <button
+        className={`settings-toggle ${enabled ? "on" : ""}`}
+        role="switch"
+        aria-checked={enabled}
+        title={`${enabled ? "Disable" : "Enable"} the Codex usage gauge`}
+        onClick={() => setEnabled(!enabled)}
+      />
+    </div>
+  );
+}
+
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const ws = useActiveWorkspace();
   const enabled = useLspSettings();
@@ -332,7 +435,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             <h3>Agent Notifications</h3>
             <p className="settings-hint">
               Alerts for agent terminals with notifications enabled
-              (right-click a tab in the agent dock). The sound is played by
+              (right-click an agent tab in Global Terminals). The sound is played by
               the app itself — Focus modes and notification settings don't
               silence it. Banners need a bundled build and OS permission;
               "Show banners" decides whether they also appear while the app
@@ -340,6 +443,26 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             </p>
             <AttentionSoundRow />
             <BannerModeRow />
+          </section>
+          <section className="settings-section">
+            <h3>Claude Usage</h3>
+            <p className="settings-hint">
+              Shows your Claude subscription rate-limit gauges (the 5-hour and
+              weekly windows) in the status bar. Reuses the login token Claude
+              Code already stored on this machine — read-only, so it never
+              affects that login. The first read may prompt for keychain
+              access. Off by default.
+            </p>
+            <ClaudeUsageRow />
+          </section>
+          <section className="settings-section">
+            <h3>Codex Usage</h3>
+            <p className="settings-hint">
+              Shows Codex's 5-hour and weekly rate-limit gauges in the status
+              bar. The installed Codex CLI reads and refreshes its own login;
+              this app never accesses the token. Off by default.
+            </p>
+            <CodexUsageRow />
           </section>
         </div>
       </div>

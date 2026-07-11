@@ -9,15 +9,19 @@ import { type DropEdge } from "../lib/dockTree";
  * (lib/termSessions) — this store never touches xterm or IPC; UI code closes
  * terminals via the component glue that disposes the session first.
  *
- * Workspace terminals are plain shells: no activity tracking, no
- * TERM_PROGRAM masquerade. Agent terminals live in stores/agentTerminals,
- * which reuses the activity types below.
+ * Workspace terminals may be plain shells or launch an agent. Global
+ * terminals live in stores/agentTerminals and reuse the kind/activity types
+ * below.
  */
+export type TerminalKind = "shell" | "claude" | "codex";
+
 export interface WorkspaceTerminal {
   /** Doubles as the PTY id. */
   id: string;
   /** Tab label, e.g. "Terminal 1"; renameable. */
   title: string;
+  /** What was launched when this tab was created. */
+  kind: TerminalKind;
 }
 
 /** Live activity of one pane, reported by its tracker (lib/terminalActivity). */
@@ -59,7 +63,7 @@ export const prunePaneState = <V>(
 export interface TerminalState extends dock.DockState<WorkspaceTerminal> {
   /** New terminal as a tab of the active group (or a fresh root group).
    *  Default title "Terminal N"; the task runner passes the task label. */
-  newTerminal: (title?: string) => string;
+  newTerminal: (title?: string, kind?: TerminalKind) => string;
   /** New terminal in its own group, split right of the active group. */
   splitActive: () => string;
   /** Structural removal only — session disposal is the caller's job. */
@@ -97,14 +101,21 @@ export const createTerminalStore = (): TerminalStore =>
     root: null,
     activeGroupId: null,
 
-    newTerminal: (title) => {
+    newTerminal: (title, kind = "shell") => {
       const id = crypto.randomUUID();
       set((s) =>
         applied(
           s,
           dock.addTerminal(s, {
             id,
-            title: title?.trim() || `Terminal ${nextTitleNumber(s.terminals)}`,
+            title:
+              title?.trim() ||
+              (kind === "shell"
+                ? `Terminal ${nextTitleNumber(s.terminals)}`
+                : kind === "claude"
+                  ? "Claude"
+                  : "Codex"),
+            kind,
           }),
         ),
       );
@@ -120,6 +131,7 @@ export const createTerminalStore = (): TerminalStore =>
         let next = dock.addTerminal(s, {
           id,
           title: `Terminal ${nextTitleNumber(s.terminals)}`,
+          kind: "shell",
         });
         if (target) next = dock.splitGroup(next, id, target, "right");
         return applied(s, next);

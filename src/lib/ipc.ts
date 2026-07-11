@@ -589,3 +589,97 @@ export const notificationDismiss = (id: string): Promise<void> =>
  *  a corrupt-but-present file still just plays nothing. */
 export const playSound = (path: string): Promise<void> =>
   invoke("play_sound", { path });
+
+// ---------------------------------------------------------------------------
+// Claude usage (usage.rs)
+// ---------------------------------------------------------------------------
+
+export interface UsageLimit {
+  /** 0–100, may be fractional. */
+  utilization: number;
+  /** ISO-8601 reset instant, or null when the window hasn't started. */
+  resetsAt: string | null;
+}
+
+/** Live subscription rate-limit windows (any may be null when the account
+ *  lacks that window or it hasn't been touched this period). */
+export interface ClaudeUsage {
+  fiveHour: UsageLimit | null;
+  sevenDay: UsageLimit | null;
+  sevenDayOpus: UsageLimit | null;
+  sevenDaySonnet: UsageLimit | null;
+}
+
+/**
+ * Discriminated usage result. `unauthenticated` = no Claude Code login on
+ * this machine; `expired` = its access token lapsed (Claude Code refreshes it
+ * on next use — we never do, to avoid desyncing its login).
+ */
+export type UsageState =
+  | { status: "ok"; usage: ClaudeUsage }
+  | { status: "unauthenticated" }
+  | { status: "expired" }
+  | { status: "error"; message: string };
+
+/**
+ * Read Claude Code's existing OAuth access token and fetch the live
+ * subscription rate-limit gauges (5-hour / weekly windows) from Anthropic.
+ * Read-only: never refreshes or rewrites that token. The first keychain read
+ * may prompt for access.
+ */
+export const claudeUsage = (): Promise<UsageState> => invoke("claude_usage");
+
+export interface CodexUsageLimit {
+  utilization: number;
+  /** Unix timestamp in seconds. */
+  resetsAt: number | null;
+  windowMinutes: number | null;
+}
+
+export interface CodexUsage {
+  fiveHour: CodexUsageLimit | null;
+  sevenDay: CodexUsageLimit | null;
+  planType: string | null;
+  /** Expiry instants (unix seconds, ascending) of banked rate-limit reset
+   * credits still available to redeem. */
+  resetCreditExpiries: number[];
+}
+
+export type CodexUsageState =
+  | { status: "ok"; usage: CodexUsage }
+  | { status: "unauthenticated" }
+  | { status: "error"; message: string };
+
+/** Query the installed Codex CLI's app-server for the active account's
+ * rolling usage windows. Codex owns all credential access and refresh. */
+export const codexUsage = (): Promise<CodexUsageState> => invoke("codex_usage");
+
+// ---------------------------------------------------------------------------
+// Project memories (memories.rs)
+// ---------------------------------------------------------------------------
+
+export interface MemoryEntry {
+  /** Stable id for React keys (file path or Codex thread id). */
+  id: string;
+  title: string;
+  description: string;
+  /** Short source/type chip: memory type, "Auto-memory", or "AGENTS.md". */
+  kind: string;
+  /** Full markdown body (Claude frontmatter stripped). */
+  content: string;
+}
+
+export interface ProjectMemories {
+  /** Claude Code memories under ~/.claude/projects/<munged>/memory/. */
+  claude: MemoryEntry[];
+  /** Codex per-project auto-memories (sqlite) plus the repo's AGENTS.md. */
+  codex: MemoryEntry[];
+}
+
+/**
+ * Both agents' memories for the project at `projectPath` (a repo root). Read
+ * fresh from disk / sqlite on every call — no watcher. Never rejects for a
+ * missing store; absent sources come back as empty arrays.
+ */
+export const memoriesList = (projectPath: string): Promise<ProjectMemories> =>
+  invoke("memories_list", { projectPath });
