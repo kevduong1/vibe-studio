@@ -41,6 +41,7 @@ class PreviewSessionImpl implements PreviewSession {
   private visible = false;
   private closed = false;
   private generation = 0;
+  private visibilityGeneration = 0;
   private queue: Promise<void> = Promise.resolve();
   private closePromise: Promise<void> | null = null;
 
@@ -83,25 +84,28 @@ class PreviewSessionImpl implements PreviewSession {
   }
 
   setVisible(visible: boolean): Promise<void> {
-    return this.enqueue(async (isCurrent) => {
-      if (!visible) {
-        if (!this.visible) return;
-        await previewSetVisible(this.id, false);
-        if (isCurrent()) this.visible = false;
+    this.visibilityGeneration += 1;
+    const generation = this.generation;
+    const visibilityGeneration = this.visibilityGeneration;
+
+    if (!visible) return this.hide();
+
+    // Keep this out of the per-session queue: the coordinator enqueues peer
+    // hides on their own queues, then enqueues this target's show. Putting
+    // the coordinator inside this queue would recreate the A↔B wait cycle.
+    return enqueueVisibility(async () => {
+      if (!this.isVisibilityRequestCurrent(generation, visibilityGeneration)) {
         return;
       }
-
-      await enqueueVisibility(async () => {
-        if (!isCurrent()) return;
-        await Promise.all(
-          [...sessions.entries()]
-            .filter(([id]) => id !== this.id)
-            .map(([, session]) => session.hideForVisibilityCoordinator()),
-        );
-        if (!isCurrent()) return;
-        await previewSetVisible(this.id, true);
-        if (isCurrent()) this.visible = true;
-      });
+      await Promise.all(
+        [...sessions.entries()]
+          .filter(([id]) => id !== this.id)
+          .map(([, session]) => session.hideForVisibilityCoordinator()),
+      );
+      if (!this.isVisibilityRequestCurrent(generation, visibilityGeneration)) {
+        return;
+      }
+      await this.showForVisibilityCoordinator(generation, visibilityGeneration);
     });
   }
 
@@ -137,17 +141,47 @@ class PreviewSessionImpl implements PreviewSession {
     return result;
   }
 
-  /**
-   * The registry visibility coordinator calls this directly rather than
-   * enqueueing behind a peer's active show. That avoids a cycle where A's
-   * show waits for B to hide while B's show waits for A to hide.
-   */
-  private async hideForVisibilityCoordinator(): Promise<void> {
-    const generation = this.generation;
-    if (this.closed || !this.visible) return;
+  private hide(): Promise<void> {
+    return this.enqueue(async (isCurrent) => {
+      if (!this.visible) return;
+      await previewSetVisible(this.id, false);
+      if (isCurrent()) this.visible = false;
+    });
+  }
 
-    await previewSetVisible(this.id, false);
-    if (!this.closed && this.generation === generation) this.visible = false;
+  /** The registry coordinator waits for this ordinary queued hide. */
+  private hideForVisibilityCoordinator(): Promise<void> {
+    return this.hide();
+  }
+
+  /** The registry coordinator queues the target show only after peer hides. */
+  private showForVisibilityCoordinator(
+    generation: number,
+    visibilityGeneration: number,
+  ): Promise<void> {
+    return this.enqueue(async (isCurrent) => {
+      const requestCurrent = this.isVisibilityRequestCurrent(
+        generation,
+        visibilityGeneration,
+      );
+      if (!isCurrent() || !requestCurrent) return;
+      await previewSetVisible(this.id, true);
+      if (isCurrent() && this.isVisibilityRequestCurrent(
+        generation,
+        visibilityGeneration,
+      )) {
+        this.visible = true;
+      }
+    });
+  }
+
+  private isVisibilityRequestCurrent(
+    generation: number,
+    visibilityGeneration: number,
+  ): boolean {
+    return !this.closed
+      && this.generation === generation
+      && this.visibilityGeneration === visibilityGeneration;
   }
 }
 
