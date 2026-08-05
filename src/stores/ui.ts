@@ -25,6 +25,9 @@ interface UiState {
       shown only while the active tab is a .md file). App-wide, not per-tab:
       "reading mode" tends to be a moment, not a per-file choice. */
   markdownPreview: boolean;
+  /** Mounted native-overlay families. A counter keeps nested and StrictMode
+      unmounts from revealing previews too early. */
+  nativeOverlayDepth: number;
 
   setSidebarTab: (tab: SidebarTab) => void;
   /** ⌘⇧F: reveal the sidebar on the search tab and focus the query input.
@@ -40,6 +43,8 @@ interface UiState {
   togglePanelMaximized: () => void;
   setPanelMaximized: (v: boolean) => void;
   toggleMarkdownPreview: () => void;
+  pushNativeOverlay: () => void;
+  popNativeOverlay: () => void;
 }
 
 const clamp = (v: number, min: number, max: number) =>
@@ -55,6 +60,7 @@ export const useUiStore = create<UiState>((set) => ({
   panelMaximized: false,
   searchFocusNonce: 0,
   markdownPreview: false,
+  nativeOverlayDepth: 0,
 
   setSidebarTab: (tab) =>
     set((s) =>
@@ -86,6 +92,10 @@ export const useUiStore = create<UiState>((set) => ({
     set(v ? { panelMaximized: true, panelVisible: true } : { panelMaximized: false }),
   toggleMarkdownPreview: () =>
     set((s) => ({ markdownPreview: !s.markdownPreview })),
+  pushNativeOverlay: () =>
+    set((s) => ({ nativeOverlayDepth: s.nativeOverlayDepth + 1 })),
+  popNativeOverlay: () =>
+    set((s) => ({ nativeOverlayDepth: Math.max(0, s.nativeOverlayDepth - 1) })),
 }));
 
 /**

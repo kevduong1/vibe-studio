@@ -20,6 +20,7 @@ import {
   type BannerMode,
 } from "../lib/agentNotifications";
 import { copyText } from "../lib/clipboard";
+import { useNativeOverlay } from "../lib/nativeOverlays";
 import { basename } from "../lib/path";
 import {
   getWorkspaceLsp,
@@ -333,6 +334,7 @@ function CodexUsageRow() {
 }
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
+  useNativeOverlay();
   const ws = useActiveWorkspace();
   const enabled = useLspSettings();
   const modeOn = useLspMode() === "dynamic";

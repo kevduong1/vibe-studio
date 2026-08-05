@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listWorkspaceFiles } from "../lib/ipc";
 import { fuzzyMatch } from "../lib/fuzzy";
+import { useNativeOverlay } from "../lib/nativeOverlays";
 import { basename } from "../lib/path";
 import type { Workspace } from "../stores/workspaces";
 import "./QuickOpen.css";
@@ -57,6 +58,7 @@ export default function QuickOpen({
   ws: Workspace;
   onClose: () => void;
 }) {
+  useNativeOverlay();
   const [filter, setFilter] = useState("");
   const [index, setIndex] = useState(0);
   const [files, setFiles] = useState<FileEntry[] | null>(null); // null = loading

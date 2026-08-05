@@ -12,6 +12,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useNativeOverlay } from "../lib/nativeOverlays";
 import "./ContextMenu.css";
 
 export function ContextMenu({
@@ -25,6 +26,7 @@ export function ContextMenu({
   onClose: () => void;
   children: ReactNode;
 }) {
+  useNativeOverlay();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
 

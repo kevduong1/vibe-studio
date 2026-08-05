@@ -61,7 +61,9 @@ function TabItem({
           ? tab.path
           : tab.kind === "diff"
             ? tab.diff.path
-            : tab.memory.entry.description || tab.title
+            : tab.kind === "memory"
+              ? tab.memory.entry.description || tab.title
+              : tab.title
       }
       onClick={() => setActive(tab.id)}
       onMouseDown={(e) => {

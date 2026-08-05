@@ -12,11 +12,17 @@ import { createContext, useContext } from "react";
 import { create, useStore } from "zustand";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { gitOpen } from "../lib/ipc";
+import { disposePreviewSessions } from "../lib/previewSessions";
 import { projectDisplayName } from "../lib/projectNames";
 import { disposeWorkspaceLsp, setActiveLspWorkspace } from "../lib/lsp/servers";
 import { disposeSession } from "../lib/termSessions";
 import { createRepoStore, type RepoState, type RepoStore } from "./repo";
-import { createEditorStore, type EditorState, type EditorStore } from "./editor";
+import {
+  createEditorStore,
+  type EditorState,
+  type EditorStore,
+  type PreviewTab,
+} from "./editor";
 import { createSearchStore, type SearchState, type SearchStore } from "./search";
 import {
   createTerminalStore,
@@ -142,6 +148,10 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
       );
       if (!ok) return;
     }
+    const previewIds = ws.editor.getState().tabs
+      .filter((tab): tab is PreviewTab => tab.kind === "preview")
+      .map((tab) => tab.id);
+    await disposePreviewSessions(previewIds);
     ws.repo.getState().dispose();
     // Kill this workspace's terminal shells explicitly: registry sessions
     // outlive React unmounts by design (drag-and-drop survival). Agent

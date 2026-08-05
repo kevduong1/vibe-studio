@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TaskDef } from "../lib/tasks";
+import { useNativeOverlay } from "../lib/nativeOverlays";
 import "./TaskPicker.css";
 
 export default function TaskPicker({
@@ -20,6 +21,7 @@ export default function TaskPicker({
   onRun: (task: TaskDef) => void;
   onClose: () => void;
 }) {
+  useNativeOverlay();
   const [filter, setFilter] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);

@@ -2,6 +2,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import type { DiffKind, MemoryEntry, StatusCode } from "../lib/ipc";
 import { basename } from "../lib/path";
+import { disposePreviewSession } from "../lib/previewSessions";
 import { useUiStore } from "./ui";
 
 /** Opening a tab must actually show it: a maximized bottom panel covers the
@@ -23,6 +24,15 @@ export interface DiffRequest {
 /** Which agent a memory tab's entry came from (MemoriesPanel sidebar). */
 export type MemorySource = "claude" | "codex";
 
+export type PreviewOrientation = "portrait" | "landscape";
+
+export interface PreviewTab {
+  id: string;
+  kind: "preview";
+  title: string;
+  preview: { url: string; orientation: PreviewOrientation };
+}
+
 export type Tab =
   | { id: string; kind: "file"; path: string; title: string }
   | { id: string; kind: "diff"; title: string; diff: DiffRequest }
@@ -31,7 +41,8 @@ export type Tab =
       kind: "memory";
       title: string;
       memory: { source: MemorySource; entry: MemoryEntry };
-    };
+    }
+  | PreviewTab;
 
 export interface EditorState {
   tabs: Tab[];
@@ -50,6 +61,9 @@ export interface EditorState {
       sidebar refetches from disk/sqlite, tabs just mirror what it handed
       over. */
   openMemory: (source: MemorySource, entry: MemoryEntry) => void;
+  openPreview: (url: string, title?: string) => void;
+  setPreviewUrl: (id: string, url: string) => void;
+  setPreviewOrientation: (id: string, orientation: PreviewOrientation) => void;
   closeTab: (id: string) => void;
   /** Repoint open file tabs at/under `from` after it was renamed or moved to
       `to` (tab ids embed the path). Order and active tab are preserved;
@@ -131,10 +145,41 @@ export const createEditorStore = (): EditorStore =>
       revealEditor();
     },
 
+    openPreview: (url, title = new URL(url).host) => {
+      const id = `preview:${crypto.randomUUID()}`;
+      const tab: PreviewTab = {
+        id,
+        kind: "preview",
+        title,
+        preview: { url, orientation: "portrait" },
+      };
+      set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
+      revealEditor();
+    },
+
+    setPreviewUrl: (id, url) =>
+      set((s) => ({
+        tabs: s.tabs.map((tab) =>
+          tab.id === id && tab.kind === "preview"
+            ? { ...tab, preview: { ...tab.preview, url } }
+            : tab,
+        ),
+      })),
+
+    setPreviewOrientation: (id, orientation) =>
+      set((s) => ({
+        tabs: s.tabs.map((tab) =>
+          tab.id === id && tab.kind === "preview"
+            ? { ...tab, preview: { ...tab.preview, orientation } }
+            : tab,
+        ),
+      })),
+
     closeTab: (id) => {
       const { tabs, activeTabId, dirty } = get();
       const idx = tabs.findIndex((t) => t.id === id);
       if (idx === -1) return;
+      if (tabs[idx].kind === "preview") void disposePreviewSession(id);
       const next = tabs.filter((t) => t.id !== id);
       const { [id]: _removed, ...restDirty } = dirty;
       let nextActive = activeTabId;
@@ -172,7 +217,11 @@ export const createEditorStore = (): EditorStore =>
 
     setActive: (id) => set({ activeTabId: id }),
     markDirty: (id, d) =>
-      set((s) => (s.dirty[id] === d ? s : { dirty: { ...s.dirty, [id]: d } })),
+      set((s) => {
+        if (s.tabs.find((tab) => tab.id === id)?.kind === "preview" || s.dirty[id] === d)
+          return s;
+        return { dirty: { ...s.dirty, [id]: d } };
+      }),
     clearReveal: (nonce) =>
       set((s) => (s.reveal?.nonce === nonce ? { reveal: null } : s)),
   }));
