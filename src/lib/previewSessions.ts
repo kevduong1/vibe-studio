@@ -26,6 +26,14 @@ export interface PreviewSession {
 
 const sessions = new Map<string, PreviewSessionImpl>();
 
+let visibilityQueue: Promise<void> = Promise.resolve();
+
+const enqueueVisibility = (operation: () => Promise<void>): Promise<void> => {
+  const result = visibilityQueue.then(operation, operation);
+  visibilityQueue = result.catch(() => undefined);
+  return result;
+};
+
 class PreviewSessionImpl implements PreviewSession {
   readonly id: string;
 
@@ -76,15 +84,24 @@ class PreviewSessionImpl implements PreviewSession {
 
   setVisible(visible: boolean): Promise<void> {
     return this.enqueue(async (isCurrent) => {
-      if (this.visible === visible) return;
-
-      if (visible) {
-        await hideAllPreviewSessions(this.id);
-        if (!isCurrent()) return;
+      if (!visible) {
+        if (!this.visible) return;
+        await previewSetVisible(this.id, false);
+        if (isCurrent()) this.visible = false;
+        return;
       }
 
-      await previewSetVisible(this.id, visible);
-      if (isCurrent()) this.visible = visible;
+      await enqueueVisibility(async () => {
+        if (!isCurrent()) return;
+        await Promise.all(
+          [...sessions.entries()]
+            .filter(([id]) => id !== this.id)
+            .map(([, session]) => session.hideForVisibilityCoordinator()),
+        );
+        if (!isCurrent()) return;
+        await previewSetVisible(this.id, true);
+        if (isCurrent()) this.visible = true;
+      });
     });
   }
 
@@ -118,6 +135,19 @@ class PreviewSessionImpl implements PreviewSession {
     const result = this.queue.then(run, run);
     this.queue = result.catch(() => undefined);
     return result;
+  }
+
+  /**
+   * The registry visibility coordinator calls this directly rather than
+   * enqueueing behind a peer's active show. That avoids a cycle where A's
+   * show waits for B to hide while B's show waits for A to hide.
+   */
+  private async hideForVisibilityCoordinator(): Promise<void> {
+    const generation = this.generation;
+    if (this.closed || !this.visible) return;
+
+    await previewSetVisible(this.id, false);
+    if (!this.closed && this.generation === generation) this.visible = false;
   }
 }
 
