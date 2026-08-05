@@ -68,6 +68,13 @@ fn emit_external(app: &AppHandle, id: &str, url: &url::Url) {
     );
 }
 
+fn is_allowed_top_level_url(url: &url::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+        && is_loopback_url(url)
+        && url.username().is_empty()
+        && url.password().is_none()
+}
+
 fn hide_or_rollback(
     hide: impl FnOnce() -> Result<(), String>,
     rollback: impl FnOnce(),
@@ -108,7 +115,7 @@ pub(crate) fn preview_create(
     let load_id = id.clone();
     let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         .on_navigation(move |url| {
-            if is_loopback_url(url) {
+            if is_allowed_top_level_url(url) {
                 true
             } else {
                 emit_external(&navigation_app, &navigation_id, url);
@@ -116,7 +123,7 @@ pub(crate) fn preview_create(
             }
         })
         .on_new_window(move |url, _features| {
-            if is_loopback_url(&url) {
+            if is_allowed_top_level_url(&url) {
                 if let Some(webview) = new_window_app.get_webview(&new_window_label) {
                     let _ = webview.navigate(url);
                 }
@@ -289,5 +296,26 @@ mod tests {
 
         assert_eq!(result.unwrap_err(), "hide failed");
         assert!(closed.get());
+    }
+
+    #[test]
+    fn allows_only_credential_free_loopback_http_urls_for_top_level_navigation() {
+        for allowed in [
+            "http://localhost:3000/app",
+            "https://127.0.0.1:4443/path",
+            "http://[::1]:8081/",
+        ] {
+            let url = url::Url::parse(allowed).unwrap();
+            assert!(is_allowed_top_level_url(&url), "{allowed}");
+        }
+
+        for rejected in [
+            "tauri://localhost/app",
+            "ftp://localhost/app",
+            "http://user:pass@localhost:3000/app",
+        ] {
+            let url = url::Url::parse(rejected).unwrap();
+            assert!(!is_allowed_top_level_url(&url), "{rejected}");
+        }
     }
 }
