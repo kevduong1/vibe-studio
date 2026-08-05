@@ -10,6 +10,92 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 // ---------------------------------------------------------------------------
+// Localhost preview types
+// ---------------------------------------------------------------------------
+
+export interface PreviewBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PreviewServer {
+  url: string;
+  port: number;
+  pid: number | null;
+  process: string;
+  cwd: string | null;
+  framework: string | null;
+  projectMatch: boolean;
+}
+
+export interface PreviewLoadEvent {
+  id: string;
+  url: string;
+  phase: "started" | "finished";
+}
+
+export interface PreviewExternalEvent {
+  id: string;
+  url: string;
+}
+
+// ---------------------------------------------------------------------------
+// Localhost preview commands
+// ---------------------------------------------------------------------------
+
+export const previewServers = (workspacePath: string): Promise<PreviewServer[]> =>
+  invoke("preview_servers", { workspacePath });
+
+export const previewCreate = (
+  id: string,
+  url: string,
+  bounds: PreviewBounds,
+): Promise<void> => invoke("preview_create", { id, url, bounds });
+
+export const previewNavigate = (id: string, url: string): Promise<void> =>
+  invoke("preview_navigate", { id, url });
+
+export const previewBack = (id: string): Promise<void> =>
+  invoke("preview_back", { id });
+
+export const previewForward = (id: string): Promise<void> =>
+  invoke("preview_forward", { id });
+
+export const previewReload = (id: string): Promise<void> =>
+  invoke("preview_reload", { id });
+
+export const previewSetBounds = (
+  id: string,
+  bounds: PreviewBounds,
+): Promise<void> => invoke("preview_set_bounds", { id, bounds });
+
+export const previewSetVisible = (
+  id: string,
+  visible: boolean,
+): Promise<void> => invoke("preview_set_visible", { id, visible });
+
+export const previewFocus = (id: string): Promise<void> =>
+  invoke("preview_focus", { id });
+
+export const previewClose = (id: string): Promise<void> =>
+  invoke("preview_close", { id });
+
+export const previewCloseMany = (ids: string[]): Promise<void> =>
+  invoke("preview_close_many", { ids });
+
+export const onPreviewLoad = (
+  cb: (value: PreviewLoadEvent) => void,
+): Promise<UnlistenFn> =>
+  listen<PreviewLoadEvent>("preview-load", (event) => cb(event.payload));
+
+export const onPreviewExternal = (
+  cb: (value: PreviewExternalEvent) => void,
+): Promise<UnlistenFn> =>
+  listen<PreviewExternalEvent>("preview-external", (event) => cb(event.payload));
+
+// ---------------------------------------------------------------------------
 // Git types
 // ---------------------------------------------------------------------------
 

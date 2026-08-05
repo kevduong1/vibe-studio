@@ -14,6 +14,8 @@ const LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
 const STORAGE_KEY = "vibe-studio:zoom";
 
+const listeners = new Set<() => void>();
+
 const loadLevel = (): number => {
   const parsed = Number(localStorage.getItem(STORAGE_KEY));
   return LEVELS.includes(parsed) ? parsed : 1;
@@ -25,11 +27,17 @@ const apply = (next: number) => {
   level = next;
   localStorage.setItem(STORAGE_KEY, String(next));
   void getCurrentWebview().setZoom(next);
+  for (const listener of [...listeners]) listener();
 };
 
 /** Current page-zoom factor — lib/termFileDrop.ts divides native drag
     coordinates (webview points) by this to get CSS viewport px. */
 export const currentZoom = (): number => level;
+
+export const onZoomChange = (listener: () => void): (() => void) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+};
 
 export const zoomIn = (): void => {
   const i = LEVELS.indexOf(level);
