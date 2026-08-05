@@ -1,6 +1,11 @@
 mod discovery;
 mod url;
 
-pub(crate) use discovery::__cmd__preview_servers;
-pub(crate) use discovery::__tauri_command_name_preview_servers;
-pub(crate) use discovery::preview_servers;
+#[tauri::command]
+pub(crate) async fn preview_servers(
+    workspace_path: String,
+) -> Result<Vec<discovery::PreviewServer>, String> {
+    tauri::async_runtime::spawn_blocking(move || discovery::discover(&workspace_path))
+        .await
+        .map_err(|e| format!("Preview discovery task failed: {e}"))?
+}

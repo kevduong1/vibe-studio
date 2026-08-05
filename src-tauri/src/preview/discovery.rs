@@ -29,14 +29,7 @@ struct ParsedListener {
     port: u16,
 }
 
-#[tauri::command]
-pub(crate) async fn preview_servers(workspace_path: String) -> Result<Vec<PreviewServer>, String> {
-    tauri::async_runtime::spawn_blocking(move || discover(&workspace_path))
-        .await
-        .map_err(|e| format!("Preview discovery task failed: {e}"))?
-}
-
-fn discover(workspace_path: &str) -> Result<Vec<PreviewServer>, String> {
+pub(super) fn discover(workspace_path: &str) -> Result<Vec<PreviewServer>, String> {
     let output = Command::new("/usr/sbin/lsof")
         .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"])
         .output()
@@ -48,10 +41,7 @@ fn discover(workspace_path: &str) -> Result<Vec<PreviewServer>, String> {
 
     let workspace = Path::new(workspace_path);
     let mut servers = Vec::new();
-    for listener in parse_lsof_listeners(&String::from_utf8_lossy(&output.stdout))
-        .into_iter()
-        .take(MAX_LISTENERS)
-    {
+    for listener in parse_lsof_listeners(&String::from_utf8_lossy(&output.stdout)) {
         let cwd = cwd_for(listener.pid);
         let process = command_for(listener.pid).unwrap_or(listener.process);
         let Some(response) = probe_http(listener.port) else {
@@ -98,6 +88,9 @@ fn parse_lsof_listeners(raw: &str) -> Vec<ParsedListener> {
                         process: process.clone(),
                         port,
                     });
+                    if listeners.len() == MAX_LISTENERS {
+                        break;
+                    }
                 }
             }
             _ => {}
@@ -252,6 +245,16 @@ mod tests {
         assert_eq!(got.len(), 2);
         assert_eq!((got[0].pid, got[0].port), (101, 3000));
         assert_eq!((got[1].pid, got[1].port), (202, 5000));
+    }
+
+    #[test]
+    fn caps_parsed_listeners_at_128_unique_records() {
+        let raw = (0..129)
+            .map(|index| format!("p{}\ncnode\nn*:{}\n", index + 1, index + 3000))
+            .collect::<String>();
+        let got = parse_lsof_listeners(&raw);
+        assert_eq!(got.len(), MAX_LISTENERS);
+        assert_eq!(got.last().map(|listener| listener.port), Some(3127));
     }
 
     #[test]

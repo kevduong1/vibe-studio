@@ -23,8 +23,8 @@ pub(crate) fn normalize_loopback_url(input: &str) -> Result<url::Url, String> {
 pub(crate) fn is_loopback_url(url: &url::Url) -> bool {
     match url.host() {
         Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv4(ip)) => ip == std::net::Ipv4Addr::LOCALHOST,
+        Some(url::Host::Ipv6(ip)) => ip == std::net::Ipv6Addr::LOCALHOST,
         None => false,
     }
 }
@@ -59,6 +59,7 @@ mod tests {
         for input in [
             "file:///tmp/index.html",
             "http://localhost.example.com:3000",
+            "http://127.0.0.2:3000",
             "http://192.168.1.4:3000",
             "http://user:pass@localhost:3000",
         ] {
