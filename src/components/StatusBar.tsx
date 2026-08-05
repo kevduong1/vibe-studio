@@ -354,6 +354,15 @@ function UsageStatusItem() {
   }
 
   const u = state.usage;
+  // New model buckets (including Fable) arrive in a generic server-supplied
+  // array. Keep the legacy Opus/Sonnet fields for older responses and avoid a
+  // duplicate row if Anthropic emits a model through both shapes.
+  const legacyModelNames = new Set<string>();
+  if (u.sevenDayOpus) legacyModelNames.add("opus");
+  if (u.sevenDaySonnet) legacyModelNames.add("sonnet");
+  const modelScoped = u.modelScoped.filter(
+    (limit) => !legacyModelNames.has(limit.displayName.trim().toLowerCase()),
+  );
   // The rolling 5-hour and the weekly (all-models) cap go straight in the bar
   // — the two windows that actually gate work — each toned by its own load;
   // the popover keeps the full per-model breakdown.
@@ -364,7 +373,10 @@ function UsageStatusItem() {
   push("5h", u.fiveHour);
   push("7d", u.sevenDay);
   // Degenerate response missing both common windows — show whatever exists.
-  if (!segs.length) push("wk", u.sevenDayOpus ?? u.sevenDaySonnet);
+  if (!segs.length) {
+    const fallback = u.sevenDayOpus ?? u.sevenDaySonnet ?? modelScoped[0];
+    if (fallback) push("wk", fallback);
+  }
 
   return (
     <div className="statusbar-usage-wrap">
@@ -416,6 +428,13 @@ function UsageStatusItem() {
             <UsageRow label="Weekly (all models)" limit={u.sevenDay} />
             <UsageRow label="Weekly Opus" limit={u.sevenDayOpus} />
             <UsageRow label="Weekly Sonnet" limit={u.sevenDaySonnet} />
+            {modelScoped.map((limit) => (
+              <UsageRow
+                key={limit.displayName}
+                label={`Weekly ${limit.displayName}`}
+                limit={limit}
+              />
+            ))}
           </div>
         </>
       )}

@@ -45,6 +45,17 @@ pub struct UsageLimit {
     resets_at: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsageLimit {
+    /// Server-supplied model-bucket label (for example, "Fable").
+    display_name: String,
+    /// 0–100, may be fractional.
+    utilization: f64,
+    /// ISO-8601 reset instant.
+    resets_at: Option<String>,
+}
+
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeUsage {
@@ -52,6 +63,9 @@ pub struct ClaudeUsage {
     seven_day: Option<UsageLimit>,
     seven_day_opus: Option<UsageLimit>,
     seven_day_sonnet: Option<UsageLimit>,
+    /// Newer usage responses put model-specific weekly buckets such as Fable
+    /// in the generic `limits` array instead of adding another top-level key.
+    model_scoped: Vec<ModelUsageLimit>,
 }
 
 /// Discriminated result the status-bar chip renders directly.
@@ -228,9 +242,10 @@ fn codex_usage_impl() -> CodexUsageState {
         };
     }
     if let Some(snapshot) = response.get("result").and_then(|r| r.get("rateLimits")) {
+        let (five_hour, seven_day) = parse_codex_windows(snapshot);
         let usage = CodexUsage {
-            five_hour: parse_codex_limit(snapshot.get("primary")),
-            seven_day: parse_codex_limit(snapshot.get("secondary")),
+            five_hour,
+            seven_day,
             plan_type: snapshot
                 .get("planType")
                 .and_then(|p| p.as_str())
@@ -324,6 +339,38 @@ fn parse_codex_limit(v: Option<&serde_json::Value>) -> Option<CodexUsageLimit> {
         resets_at: v.get("resetsAt").and_then(|r| r.as_i64()),
         window_minutes: v.get("windowDurationMins").and_then(|w| w.as_i64()),
     })
+}
+
+/// Codex historically returned 5-hour as `primary` and weekly as `secondary`.
+/// The service may omit the 5-hour window and move weekly into `primary`, so
+/// use the reported duration when present and retain the old positions only
+/// as a compatibility fallback for responses without `windowDurationMins`.
+fn parse_codex_windows(
+    snapshot: &serde_json::Value,
+) -> (Option<CodexUsageLimit>, Option<CodexUsageLimit>) {
+    const FIVE_HOUR_MINS: i64 = 5 * 60;
+    const SEVEN_DAY_MINS: i64 = 7 * 24 * 60;
+
+    let mut five_hour = None;
+    let mut seven_day = None;
+    for (position, limit) in [
+        parse_codex_limit(snapshot.get("primary")),
+        parse_codex_limit(snapshot.get("secondary")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let Some(limit) = limit else { continue };
+        match limit.window_minutes {
+            Some(FIVE_HOUR_MINS) if five_hour.is_none() => five_hour = Some(limit),
+            Some(SEVEN_DAY_MINS) if seven_day.is_none() => seven_day = Some(limit),
+            // Old app-server responses did not report a duration.
+            None if position == 0 && five_hour.is_none() => five_hour = Some(limit),
+            None if position == 1 && seven_day.is_none() => seven_day = Some(limit),
+            _ => {}
+        }
+    }
+    (five_hour, seven_day)
 }
 
 fn usage_impl() -> UsageState {
@@ -459,6 +506,7 @@ fn parse_usage(body: &str) -> Option<ClaudeUsage> {
         seven_day: parse_limit(v.get("seven_day")),
         seven_day_opus: parse_limit(v.get("seven_day_opus")),
         seven_day_sonnet: parse_limit(v.get("seven_day_sonnet")),
+        model_scoped: parse_model_scoped_limits(v.get("limits")),
     };
     // A well-formed-but-unrecognized body (e.g. an error envelope) parses as
     // JSON yet yields no windows — surface it as an error instead of a blank.
@@ -466,10 +514,43 @@ fn parse_usage(body: &str) -> Option<ClaudeUsage> {
         && usage.seven_day.is_none()
         && usage.seven_day_opus.is_none()
         && usage.seven_day_sonnet.is_none()
+        && usage.model_scoped.is_empty()
     {
         return None;
     }
     Some(usage)
+}
+
+fn parse_model_scoped_limits(v: Option<&serde_json::Value>) -> Vec<ModelUsageLimit> {
+    v.and_then(|limits| limits.as_array())
+        .map(|limits| {
+            limits
+                .iter()
+                .filter(|limit| {
+                    limit.get("kind").and_then(|kind| kind.as_str()) == Some("weekly_scoped")
+                })
+                .filter_map(|limit| {
+                    let display_name = limit
+                        .get("scope")?
+                        .get("model")?
+                        .get("display_name")?
+                        .as_str()?
+                        .trim();
+                    if display_name.is_empty() {
+                        return None;
+                    }
+                    Some(ModelUsageLimit {
+                        display_name: display_name.to_string(),
+                        utilization: limit.get("percent")?.as_f64()?,
+                        resets_at: limit
+                            .get("resets_at")
+                            .and_then(|reset| reset.as_str())
+                            .map(str::to_string),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_limit(v: Option<&serde_json::Value>) -> Option<UsageLimit> {
@@ -508,6 +589,67 @@ fn short_detail(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_usage_parses_model_scoped_weekly_limits() {
+        let usage = parse_usage(
+            r#"{
+                "five_hour": {"utilization": 3, "resets_at": "2026-07-20T18:00:00Z"},
+                "seven_day": {"utilization": 0, "resets_at": "2026-07-25T06:00:00Z"},
+                "limits": [
+                    {
+                        "kind": "weekly_scoped",
+                        "group": "model",
+                        "percent": 1.25,
+                        "resets_at": "2026-07-25T06:00:00Z",
+                        "scope": {"model": {"display_name": "Fable"}}
+                    },
+                    {
+                        "kind": "weekly_scoped",
+                        "percent": 9,
+                        "scope": {"surface": {"display_name": "Claude Code"}}
+                    }
+                ]
+            }"#,
+        )
+        .expect("recognized usage response");
+
+        assert_eq!(usage.model_scoped.len(), 1);
+        assert_eq!(usage.model_scoped[0].display_name, "Fable");
+        assert_eq!(usage.model_scoped[0].utilization, 1.25);
+        assert_eq!(
+            usage.model_scoped[0].resets_at.as_deref(),
+            Some("2026-07-25T06:00:00Z")
+        );
+    }
+
+    #[test]
+    fn codex_windows_are_classified_by_duration() {
+        let snapshot = serde_json::json!({
+            "primary": {
+                "usedPercent": 23,
+                "windowDurationMins": 10080,
+                "resetsAt": 1785163733
+            },
+            "secondary": null
+        });
+
+        let (five_hour, seven_day) = parse_codex_windows(&snapshot);
+        assert!(five_hour.is_none());
+        assert_eq!(seven_day.expect("weekly window").utilization, 23.0);
+    }
+
+    #[test]
+    fn codex_windows_keep_legacy_positional_fallback() {
+        let snapshot = serde_json::json!({
+            "primary": {"usedPercent": 4},
+            "secondary": {"usedPercent": 12}
+        });
+
+        let (five_hour, seven_day) = parse_codex_windows(&snapshot);
+        assert_eq!(five_hour.expect("five-hour window").utilization, 4.0);
+        assert_eq!(seven_day.expect("weekly window").utilization, 12.0);
+    }
 
     #[test]
     fn codex_response_reader_ignores_notifications_and_other_ids() {

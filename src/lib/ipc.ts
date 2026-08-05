@@ -601,6 +601,11 @@ export interface UsageLimit {
   resetsAt: string | null;
 }
 
+export interface ModelUsageLimit extends UsageLimit {
+  /** Server-supplied model-bucket label (for example, "Fable"). */
+  displayName: string;
+}
+
 /** Live subscription rate-limit windows (any may be null when the account
  *  lacks that window or it hasn't been touched this period). */
 export interface ClaudeUsage {
@@ -608,6 +613,8 @@ export interface ClaudeUsage {
   sevenDay: UsageLimit | null;
   sevenDayOpus: UsageLimit | null;
   sevenDaySonnet: UsageLimit | null;
+  /** Model-specific weekly windows from the endpoint's generic limits array. */
+  modelScoped: ModelUsageLimit[];
 }
 
 /**
