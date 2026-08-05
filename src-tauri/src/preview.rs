@@ -1,5 +1,32 @@
 mod discovery;
 mod url;
+pub(crate) mod webviews;
+
+pub(crate) use webviews::close_all;
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreviewBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreviewLoadEvent {
+    pub id: String,
+    pub url: String,
+    pub phase: &'static str,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreviewExternalEvent {
+    pub id: String,
+    pub url: String,
+}
 
 #[tauri::command]
 pub(crate) async fn preview_servers(

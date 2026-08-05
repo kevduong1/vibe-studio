@@ -26,7 +26,9 @@ fn main() {
         // be acked again and freeze its child mid-write, and live language
         // servers would be unreachable garbage. No-op on the initial load.
         .on_page_load(|webview, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Started {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Started
+            {
                 pty::kill_all(&webview.app_handle().state::<pty::PtyState>());
                 lsp::kill_all(&webview.app_handle().state::<lsp::LspState>());
             }
@@ -74,6 +76,16 @@ fn main() {
             search::search_workspace,
             // previews
             preview::preview_servers,
+            preview::webviews::preview_create,
+            preview::webviews::preview_navigate,
+            preview::webviews::preview_back,
+            preview::webviews::preview_forward,
+            preview::webviews::preview_reload,
+            preview::webviews::preview_set_bounds,
+            preview::webviews::preview_set_visible,
+            preview::webviews::preview_focus,
+            preview::webviews::preview_close,
+            preview::webviews::preview_close_many,
             // watcher
             watcher::watch_repo,
             watcher::unwatch_repo,
@@ -113,6 +125,7 @@ fn main() {
             // groups) would survive. LSP servers self-exit on stdin EOF, so
             // their async kill is fine.
             if let tauri::RunEvent::Exit = event {
+                preview::close_all(&app_handle);
                 pty::kill_all_blocking(&app_handle.state::<pty::PtyState>());
                 lsp::kill_all(&app_handle.state::<lsp::LspState>());
             }
