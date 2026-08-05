@@ -159,69 +159,76 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
     // its own prompt. Only the first caller owns teardown.
     if (editor.getState().closing) return;
     editor.getState().beginClosing();
-    // The first prompt was open while the editor was still interactive. Once
-    // gated, obtain confirmation for any dirty tab that appeared in between.
-    const newlyDirtyIds = dirtyIds().filter((id) => !confirmedDirtyIds.includes(id));
-    if (!(await confirmDirty(newlyDirtyIds))) {
-      editor.getState().cancelClosing();
-      return;
-    }
-    const previewIds = [
-      ...new Set([
-        ...editor
-          .getState()
-          .tabs.filter((tab): tab is PreviewTab => tab.kind === "preview")
-          .map((tab) => tab.id),
-        ...Object.keys(editor.getState().pendingPreviewDisposals),
-      ]),
-    ];
-    const previewCleanup = await disposePreviewsWithFallback(previewIds);
-    const failedPreviewCloses = previewCleanup.filter(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
-    for (const [index, result] of previewCleanup.entries()) {
-      if (result.status === "fulfilled") {
-        editor.getState().completePreviewDisposal(previewIds[index]);
+    let removed = false;
+    try {
+      // The first prompt was open while the editor was still interactive. Once
+      // gated, obtain confirmation for any dirty tab that appeared in between.
+      const newlyDirtyIds = dirtyIds().filter((id) => !confirmedDirtyIds.includes(id));
+      if (!(await confirmDirty(newlyDirtyIds))) return;
+      const previewIds = [
+        ...new Set([
+          ...editor
+            .getState()
+            .tabs.filter((tab): tab is PreviewTab => tab.kind === "preview")
+            .map((tab) => tab.id),
+          ...Object.keys(editor.getState().pendingPreviewDisposals),
+        ]),
+      ];
+      const previewCleanup = await disposePreviewsWithFallback(previewIds);
+      const failedPreviewCloses = previewCleanup.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      for (const [index, result] of previewCleanup.entries()) {
+        if (result.status === "fulfilled") {
+          editor.getState().completePreviewDisposal(previewIds[index]);
+        }
       }
-    }
-    if (failedPreviewCloses.length > 0) {
-      // Do not remove the workspace while a native preview could still exist.
-      // Re-enable it so the user can retry close after seeing the error.
-      editor.getState().cancelClosing();
-      const details = failedPreviewCloses.map((result) => String(result.reason)).join("\n");
-      console.error("Failed to close workspace previews", failedPreviewCloses);
-      void message(
-        `Could not close ${failedPreviewCloses.length} preview${
-          failedPreviewCloses.length === 1 ? "" : "s"
-        }. The workspace remains open so you can retry.\n\n${details}`,
-        { title: "Close Workspace", kind: "error" },
-      ).catch((dialogError) => console.error("Failed to show workspace-close error", dialogError));
-      return;
-    }
-    ws.repo.getState().dispose();
-    // Kill this workspace's terminal shells explicitly: registry sessions
-    // outlive React unmounts by design (drag-and-drop survival). Agent
-    // terminals are NOT touched — they live in the global dock, keep
-    // running, and just show as disconnected.
-    for (const id of Object.keys(ws.terminal.getState().terminals)) {
-      disposeSession(id);
-    }
-    // Same registry discipline for language servers (lib/lsp/servers.ts).
-    disposeWorkspaceLsp(path);
-    set((s) => {
-      const idx = s.workspaces.findIndex((w) => w.path === path);
-      if (idx === -1) return s;
-      const workspaces = s.workspaces.filter((w) => w.path !== path);
-      let activePath = s.activePath;
-      if (activePath === path) {
-        activePath = workspaces.length
-          ? workspaces[Math.min(idx, workspaces.length - 1)].path
-          : null;
+      if (failedPreviewCloses.length > 0) {
+        // Do not remove the workspace while a native preview could still exist.
+        const details = failedPreviewCloses.map((result) => String(result.reason)).join("\n");
+        console.error("Failed to close workspace previews", failedPreviewCloses);
+        void message(
+          `Could not close ${failedPreviewCloses.length} preview${
+            failedPreviewCloses.length === 1 ? "" : "s"
+          }. The workspace remains open so you can retry.\n\n${details}`,
+          { title: "Close Workspace", kind: "error" },
+        ).catch((dialogError) => console.error("Failed to show workspace-close error", dialogError));
+        return;
       }
-      const next = { workspaces, activePath };
-      saveSession(next);
-      return next;
-    });
+      ws.repo.getState().dispose();
+      // Kill this workspace's terminal shells explicitly: registry sessions
+      // outlive React unmounts by design (drag-and-drop survival). Agent
+      // terminals are NOT touched — they live in the global dock, keep
+      // running, and just show as disconnected.
+      for (const id of Object.keys(ws.terminal.getState().terminals)) {
+        disposeSession(id);
+      }
+      // Same registry discipline for language servers (lib/lsp/servers.ts).
+      disposeWorkspaceLsp(path);
+      set((s) => {
+        const idx = s.workspaces.findIndex((w) => w.path === path);
+        if (idx === -1) return s;
+        const workspaces = s.workspaces.filter((w) => w.path !== path);
+        let activePath = s.activePath;
+        if (activePath === path) {
+          activePath = workspaces.length
+            ? workspaces[Math.min(idx, workspaces.length - 1)].path
+            : null;
+        }
+        const next = { workspaces, activePath };
+        saveSession(next);
+        return next;
+      });
+      removed = true;
+    } catch (error) {
+      console.error("Failed to close workspace", error);
+      void message(`Workspace close failed. The workspace remains open.\n\n${String(error)}`, {
+        title: "Close Workspace",
+        kind: "error",
+      }).catch((dialogError) => console.error("Failed to show workspace-close error", dialogError));
+    } finally {
+      if (!removed) editor.getState().cancelClosing();
+    }
   },
 
   setActive: (path) =>

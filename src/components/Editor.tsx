@@ -197,6 +197,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
   const ws = useWorkspace();
   const markDirty = useEditor((s) => s.markDirty);
   const reveal = useEditor((s) => s.reveal);
+  const closing = useEditor((s) => s.closing);
   const draftKey = draftKeyFor(ws.path, tab.id);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -215,6 +216,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
   /** Write the buffer out; unless `force`, refuse when the disk changed. */
   const save = useCallback(
     async (view: EditorView, force: boolean) => {
+      if (ws.editor.getState().closing) return;
       const doc = view.state.doc;
       try {
         if (!force) {
@@ -225,14 +227,15 @@ export default function Editor({ tab }: { tab: FileTab }) {
           } catch {
             // unreadable / deleted on disk — writing recreates it
           }
-          if (viewRef.current !== view) return;
+          if (viewRef.current !== view || ws.editor.getState().closing) return;
           if (onDisk !== null && onDisk !== savedRef.current.toString()) {
             setSaveConflict(true);
             return;
           }
         }
+        if (ws.editor.getState().closing) return;
         await fsWriteFile(tab.path, doc.toString());
-        if (viewRef.current !== view) return;
+        if (viewRef.current !== view || ws.editor.getState().closing) return;
         savedRef.current = doc;
         const now = view.state.doc;
         const dirty = !now.eq(doc);
@@ -246,7 +249,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
         if (viewRef.current === view) setSaveError(String(e));
       }
     },
-    [tab.id, tab.path, draftKey, markDirty],
+    [tab.id, tab.path, draftKey, markDirty, ws.editor],
   );
 
   /** Go-to-definition jump target. Longest-prefix match over open workspaces
@@ -293,10 +296,11 @@ export default function Editor({ tab }: { tab: FileTab }) {
 
   /** Replace the buffer with the on-disk content and mark it clean. */
   const reloadFromDisk = useCallback(async () => {
+    if (ws.editor.getState().closing) return;
     try {
       const file = await fsReadFile(tab.path);
       const view = viewRef.current;
-      if (!view || file.binary) return;
+      if (!view || file.binary || ws.editor.getState().closing) return;
       // Update `saved` first so the updateListener sees a clean buffer.
       const fresh = view.state.toText(file.text);
       savedRef.current = fresh;
@@ -310,7 +314,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
     } catch {
       // mid-write / deleted — keep the banner so the user can retry
     }
-  }, [tab.id, tab.path, draftKey, markDirty]);
+  }, [tab.id, tab.path, draftKey, markDirty, ws.editor]);
 
   useEffect(() => {
     let disposed = false;
@@ -318,6 +322,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
     let unlistenRepo: (() => void) | null = null;
     let unsubLspSettings: (() => void) | null = null;
     let unsubLspStatus: (() => void) | null = null;
+    let unsubClosing: (() => void) | null = null;
     let diskTimer: ReturnType<typeof setTimeout> | null = null;
     let rulerTimer: ReturnType<typeof setTimeout> | null = null;
     /** Git HEAD content for the overview ruler; null = no ruler. */
@@ -338,7 +343,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
       try {
         const file = await fsReadFile(tab.path);
         const v = viewRef.current;
-        if (disposed || !v || file.binary) return;
+        if (disposed || !v || file.binary || ws.editor.getState().closing) return;
         if (file.text === savedRef.current.toString()) return; // our own write
         if (v.state.doc.eq(savedRef.current)) {
           const fresh = v.state.toText(file.text);
@@ -439,6 +444,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
       // garbage). DiffViewer deliberately has NO LSP: its worktree side is a
       // synthetic buffer that would fight this tab over the same document.
       const lspCompartment = new Compartment();
+      const editabilityCompartment = new Compartment();
       let lspHandle: WorkspaceLsp | null = isTruncated
         ? null
         : getLspForFile(ws.path, tab.path);
@@ -455,7 +461,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
         lspCompartment.of(lspExt()),
         changeRuler("field"),
         EditorView.updateListener.of((u) => {
-          if (!u.docChanged) return;
+          if (!u.docChanged || ws.editor.getState().closing) return;
           const dirty = !u.state.doc.eq(savedRef.current);
           if (dirty)
             draftCache.set(draftKey, { text: u.state.doc, savedText: savedRef.current });
@@ -465,9 +471,11 @@ export default function Editor({ tab }: { tab: FileTab }) {
           if (rulerTimer) clearTimeout(rulerTimer);
           rulerTimer = setTimeout(recomputeRuler, RULER_RECOMPUTE_MS);
         }),
-        isTruncated
-          ? readOnlyExtension
-          : editKeymap((v) => void save(v, false)),
+        editabilityCompartment.of(
+          isTruncated || ws.editor.getState().closing
+            ? readOnlyExtension
+            : editKeymap((v) => void save(v, false)),
+        ),
       ];
 
       view = new EditorView({ doc, extensions, parent: hostRef.current! });
@@ -476,6 +484,24 @@ export default function Editor({ tab }: { tab: FileTab }) {
         typeof savedDoc === "string" ? view.state.toText(savedDoc) : savedDoc;
       setLoading(false);
       void refreshRulerBaseline();
+
+      // Zustand subscribers run synchronously in beginClosing(), so this
+      // compartment reconfiguration rejects CodeMirror edits before the
+      // workspace-close function reaches its next await.
+      const setEditableForClose = (isClosing: boolean) => {
+        const v = viewRef.current;
+        if (disposed || !v) return;
+        v.dispatch({
+          effects: editabilityCompartment.reconfigure(
+            isClosing || isTruncated
+              ? readOnlyExtension
+              : editKeymap((current) => void save(current, false)),
+          ),
+        });
+      };
+      unsubClosing = ws.editor.subscribe((state, previous) => {
+        if (state.closing !== previous.closing) setEditableForClose(state.closing);
+      });
 
       // Consume a reveal requested before the view existed (fresh open from
       // a search result / quick open with a target line).
@@ -531,6 +557,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
       unlistenRepo?.();
       unsubLspSettings?.();
       unsubLspStatus?.();
+      unsubClosing?.();
       viewRef.current = null;
       // destroy() runs the LSP plugin's destroy → didClose; never close the
       // document anywhere else (a second close would desync the server's
@@ -551,7 +578,11 @@ export default function Editor({ tab }: { tab: FileTab }) {
           <span className="truncate">
             File changed on disk — saving will overwrite it
           </span>
-          <button className="banner-action" onClick={() => void reloadFromDisk()}>
+          <button
+            className="banner-action"
+            disabled={closing}
+            onClick={() => void reloadFromDisk()}
+          >
             Reload
           </button>
           <BannerDismiss onClick={() => setDiskChanged(false)} />
@@ -564,6 +595,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
           </span>
           <button
             className="banner-action"
+            disabled={closing}
             onClick={() => {
               const v = viewRef.current;
               if (v) void save(v, true);
