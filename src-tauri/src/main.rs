@@ -6,6 +6,7 @@ mod git;
 mod lsp;
 mod memories;
 mod notify;
+mod preview;
 mod pty;
 mod search;
 mod usage;
@@ -71,6 +72,8 @@ fn main() {
             // search
             search::list_workspace_files,
             search::search_workspace,
+            // previews
+            preview::preview_servers,
             // watcher
             watcher::watch_repo,
             watcher::unwatch_repo,
