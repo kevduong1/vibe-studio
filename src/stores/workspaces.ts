@@ -138,29 +138,52 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
     if (!ws) return;
     const editor = ws.editor;
     if (editor.getState().closing) return;
-    const dirtyCount = Object.values(editor.getState().dirty).filter(
-      Boolean,
-    ).length;
-    if (dirtyCount > 0) {
-      const ok = await confirm(
-        `"${projectDisplayName(ws.path)}" has ${dirtyCount} unsaved ${
-          dirtyCount === 1 ? "file" : "files"
+    const dirtyIds = () =>
+      Object.entries(editor.getState().dirty)
+        .filter(([, dirty]) => dirty)
+        .map(([id]) => id);
+    const confirmDirty = async (ids: string[]) => {
+      if (ids.length === 0) return true;
+      return confirm(
+        `"${projectDisplayName(ws.path)}" has ${ids.length} unsaved ${
+          ids.length === 1 ? "file" : "files"
         } whose changes will be lost.`,
         { title: "Close Workspace?", kind: "warning" },
       );
-      if (!ok) return;
+    };
+    const confirmedDirtyIds = dirtyIds();
+    if (!(await confirmDirty(confirmedDirtyIds))) {
+      return;
     }
     // Another close may have passed its dirty prompt while this one awaited
     // its own prompt. Only the first caller owns teardown.
     if (editor.getState().closing) return;
     editor.getState().beginClosing();
-    const previewIds = editor.getState().tabs
-      .filter((tab): tab is PreviewTab => tab.kind === "preview")
-      .map((tab) => tab.id);
+    // The first prompt was open while the editor was still interactive. Once
+    // gated, obtain confirmation for any dirty tab that appeared in between.
+    const newlyDirtyIds = dirtyIds().filter((id) => !confirmedDirtyIds.includes(id));
+    if (!(await confirmDirty(newlyDirtyIds))) {
+      editor.getState().cancelClosing();
+      return;
+    }
+    const previewIds = [
+      ...new Set([
+        ...editor
+          .getState()
+          .tabs.filter((tab): tab is PreviewTab => tab.kind === "preview")
+          .map((tab) => tab.id),
+        ...Object.keys(editor.getState().pendingPreviewDisposals),
+      ]),
+    ];
     const previewCleanup = await disposePreviewsWithFallback(previewIds);
     const failedPreviewCloses = previewCleanup.filter(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
+    for (const [index, result] of previewCleanup.entries()) {
+      if (result.status === "fulfilled") {
+        editor.getState().completePreviewDisposal(previewIds[index]);
+      }
+    }
     if (failedPreviewCloses.length > 0) {
       // Do not remove the workspace while a native preview could still exist.
       // Re-enable it so the user can retry close after seeing the error.

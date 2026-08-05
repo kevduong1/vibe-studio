@@ -194,8 +194,12 @@ export function getOrCreatePreviewSession(id: string): PreviewSession {
   return session;
 }
 
-export async function disposePreviewSession(id: string): Promise<void> {
-  await sessions.get(id)?.close();
+/** Returns whether this call awaited a tracked registry session's close. */
+export async function disposePreviewSession(id: string): Promise<boolean> {
+  const session = sessions.get(id);
+  if (!session) return false;
+  await session.close();
+  return true;
 }
 
 export async function disposePreviewSessions(ids: string[]): Promise<void> {

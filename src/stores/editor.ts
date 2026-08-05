@@ -50,6 +50,9 @@ export interface EditorState {
   /** Workspace close sets this synchronously before taking its preview
       snapshot, so no later preview tab can outlive that workspace. */
   closing: boolean;
+  /** Preview ids whose tabs closed but whose native teardown has not yet
+      succeeded. They remain workspace-owned until confirmed closed. */
+  pendingPreviewDisposals: Record<string, true>;
   /** Tab ids with unsaved changes. */
   dirty: Record<string, boolean>;
   /** Pending cursor reveal (search "open at line"), consumed by Editor.tsx.
@@ -69,6 +72,8 @@ export interface EditorState {
   setPreviewOrientation: (id: string, orientation: PreviewOrientation) => void;
   beginClosing: () => void;
   cancelClosing: () => void;
+  beginPreviewDisposal: (id: string) => void;
+  completePreviewDisposal: (id: string) => void;
   closeTab: (id: string) => void;
   /** Repoint open file tabs at/under `from` after it was renamed or moved to
       `to` (tab ids embed the path). Order and active tab are preserved;
@@ -95,10 +100,12 @@ export const createEditorStore = (): EditorStore =>
     tabs: [],
     activeTabId: null,
     closing: false,
+    pendingPreviewDisposals: {},
     dirty: {},
     reveal: null,
 
     openFile: (path, at) => {
+      if (get().closing) return;
       const id = `file:${path}`;
       const { tabs } = get();
       if (!tabs.some((t) => t.id === id)) {
@@ -116,6 +123,7 @@ export const createEditorStore = (): EditorStore =>
     },
 
     openDiff: (req) => {
+      if (get().closing) return;
       const id = diffTabId(req);
       const { tabs } = get();
       if (!tabs.some((t) => t.id === id)) {
@@ -137,6 +145,7 @@ export const createEditorStore = (): EditorStore =>
     },
 
     openMemory: (source, entry) => {
+      if (get().closing) return;
       // Entry ids are stable across refetches (file path / Codex thread id).
       const id = `memory:${source}:${entry.id}`;
       set((s) => {
@@ -165,38 +174,62 @@ export const createEditorStore = (): EditorStore =>
     },
 
     setPreviewUrl: (id, url) =>
-      set((s) => ({
-        tabs: s.tabs.map((tab) =>
-          tab.id === id && tab.kind === "preview"
-            ? { ...tab, preview: { ...tab.preview, url } }
-            : tab,
-        ),
-      })),
+      set((s) =>
+        s.closing
+          ? s
+          : {
+              tabs: s.tabs.map((tab) =>
+                tab.id === id && tab.kind === "preview"
+                  ? { ...tab, preview: { ...tab.preview, url } }
+                  : tab,
+              ),
+            },
+      ),
 
     setPreviewOrientation: (id, orientation) =>
-      set((s) => ({
-        tabs: s.tabs.map((tab) =>
-          tab.id === id && tab.kind === "preview"
-            ? { ...tab, preview: { ...tab.preview, orientation } }
-            : tab,
-        ),
-      })),
+      set((s) =>
+        s.closing
+          ? s
+          : {
+              tabs: s.tabs.map((tab) =>
+                tab.id === id && tab.kind === "preview"
+                  ? { ...tab, preview: { ...tab.preview, orientation } }
+                  : tab,
+              ),
+            },
+      ),
 
     beginClosing: () => set((s) => (s.closing ? s : { closing: true })),
     cancelClosing: () => set((s) => (s.closing ? { closing: false } : s)),
+    beginPreviewDisposal: (id) =>
+      set((s) =>
+        s.pendingPreviewDisposals[id]
+          ? s
+          : { pendingPreviewDisposals: { ...s.pendingPreviewDisposals, [id]: true } },
+      ),
+    completePreviewDisposal: (id) =>
+      set((s) => {
+        if (!s.pendingPreviewDisposals[id]) return s;
+        const { [id]: _closed, ...pendingPreviewDisposals } = s.pendingPreviewDisposals;
+        return { pendingPreviewDisposals };
+      }),
 
     closeTab: (id) => {
+      if (get().closing) return;
       const { tabs, activeTabId, dirty } = get();
       const idx = tabs.findIndex((t) => t.id === id);
       if (idx === -1) return;
       if (tabs[idx].kind === "preview") {
-        void disposePreviewWithFallback(id).catch((error) => {
-          console.error(`Failed to close preview ${id}`, error);
-          void message(
-            `The preview could not be closed. It may remain visible until you close the workspace.\n\n${String(error)}`,
-            { title: "Close Preview", kind: "error" },
-          ).catch((dialogError) => console.error("Failed to show preview-close error", dialogError));
-        });
+        get().beginPreviewDisposal(id);
+        void disposePreviewWithFallback(id)
+          .then(() => get().completePreviewDisposal(id))
+          .catch((error) => {
+            console.error(`Failed to close preview ${id}`, error);
+            void message(
+              `The preview could not be closed. It remains owned by this workspace and will be retried when you close it.\n\n${String(error)}`,
+              { title: "Close Preview", kind: "error" },
+            ).catch((dialogError) => console.error("Failed to show preview-close error", dialogError));
+          });
       }
       const next = tabs.filter((t) => t.id !== id);
       const { [id]: _removed, ...restDirty } = dirty;
@@ -208,6 +241,7 @@ export const createEditorStore = (): EditorStore =>
     },
 
     retargetFileTabs: (from, to) => {
+      if (get().closing) return;
       const prefix = from + "/";
       set((s) => {
         let changed = false;
@@ -233,10 +267,16 @@ export const createEditorStore = (): EditorStore =>
       });
     },
 
-    setActive: (id) => set({ activeTabId: id }),
+    setActive: (id) => {
+      if (!get().closing) set({ activeTabId: id });
+    },
     markDirty: (id, d) =>
       set((s) => {
-        if (s.tabs.find((tab) => tab.id === id)?.kind === "preview" || s.dirty[id] === d)
+        if (
+          s.closing ||
+          s.tabs.find((tab) => tab.id === id)?.kind === "preview" ||
+          s.dirty[id] === d
+        )
           return s;
         return { dirty: { ...s.dirty, [id]: d } };
       }),

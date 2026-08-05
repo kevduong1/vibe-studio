@@ -7,16 +7,20 @@ import { disposePreviewSession } from "./previewSessions";
  * retry once through the idempotent native close command.
  */
 export async function disposePreviewWithFallback(id: string): Promise<void> {
+  let initialError: unknown;
   try {
-    await disposePreviewSession(id);
-  } catch (initialError) {
-    try {
-      await previewClose(id);
-    } catch (retryError) {
-      throw new Error(
-        `Preview ${id} could not be closed (${String(initialError)}; retry: ${String(retryError)})`,
-      );
-    }
+    // A fulfilled registry close proves this call awaited previewClose. An
+    // absent registry entry does not: a prior rejected close deletes it.
+    if (await disposePreviewSession(id)) return;
+  } catch (error) {
+    initialError = error;
+  }
+  try {
+    await previewClose(id);
+  } catch (retryError) {
+    throw new Error(
+      `Preview ${id} could not be closed (${initialError === undefined ? "registry entry absent" : String(initialError)}; retry: ${String(retryError)})`,
+    );
   }
 }
 
