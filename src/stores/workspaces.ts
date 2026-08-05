@@ -12,7 +12,7 @@ import { createContext, useContext } from "react";
 import { create, useStore } from "zustand";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { gitOpen } from "../lib/ipc";
-import { disposePreviewSessions } from "../lib/previewSessions";
+import { disposePreviewsWithFallback } from "../lib/previewDisposal";
 import { projectDisplayName } from "../lib/projectNames";
 import { disposeWorkspaceLsp, setActiveLspWorkspace } from "../lib/lsp/servers";
 import { disposeSession } from "../lib/termSessions";
@@ -136,7 +136,9 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
   closeWorkspace: async (path) => {
     const ws = get().workspaces.find((w) => w.path === path);
     if (!ws) return;
-    const dirtyCount = Object.values(ws.editor.getState().dirty).filter(
+    const editor = ws.editor;
+    if (editor.getState().closing) return;
+    const dirtyCount = Object.values(editor.getState().dirty).filter(
       Boolean,
     ).length;
     if (dirtyCount > 0) {
@@ -148,10 +150,31 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
       );
       if (!ok) return;
     }
-    const previewIds = ws.editor.getState().tabs
+    // Another close may have passed its dirty prompt while this one awaited
+    // its own prompt. Only the first caller owns teardown.
+    if (editor.getState().closing) return;
+    editor.getState().beginClosing();
+    const previewIds = editor.getState().tabs
       .filter((tab): tab is PreviewTab => tab.kind === "preview")
       .map((tab) => tab.id);
-    await disposePreviewSessions(previewIds);
+    const previewCleanup = await disposePreviewsWithFallback(previewIds);
+    const failedPreviewCloses = previewCleanup.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failedPreviewCloses.length > 0) {
+      // Do not remove the workspace while a native preview could still exist.
+      // Re-enable it so the user can retry close after seeing the error.
+      editor.getState().cancelClosing();
+      const details = failedPreviewCloses.map((result) => String(result.reason)).join("\n");
+      console.error("Failed to close workspace previews", failedPreviewCloses);
+      void message(
+        `Could not close ${failedPreviewCloses.length} preview${
+          failedPreviewCloses.length === 1 ? "" : "s"
+        }. The workspace remains open so you can retry.\n\n${details}`,
+        { title: "Close Workspace", kind: "error" },
+      ).catch((dialogError) => console.error("Failed to show workspace-close error", dialogError));
+      return;
+    }
     ws.repo.getState().dispose();
     // Kill this workspace's terminal shells explicitly: registry sessions
     // outlive React unmounts by design (drag-and-drop survival). Agent

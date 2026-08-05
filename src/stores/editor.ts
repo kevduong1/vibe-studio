@@ -1,8 +1,8 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirm, message } from "@tauri-apps/plugin-dialog";
 import type { DiffKind, MemoryEntry, StatusCode } from "../lib/ipc";
 import { basename } from "../lib/path";
-import { disposePreviewSession } from "../lib/previewSessions";
+import { disposePreviewWithFallback } from "../lib/previewDisposal";
 import { useUiStore } from "./ui";
 
 /** Opening a tab must actually show it: a maximized bottom panel covers the
@@ -47,6 +47,9 @@ export type Tab =
 export interface EditorState {
   tabs: Tab[];
   activeTabId: string | null;
+  /** Workspace close sets this synchronously before taking its preview
+      snapshot, so no later preview tab can outlive that workspace. */
+  closing: boolean;
   /** Tab ids with unsaved changes. */
   dirty: Record<string, boolean>;
   /** Pending cursor reveal (search "open at line"), consumed by Editor.tsx.
@@ -64,6 +67,8 @@ export interface EditorState {
   openPreview: (url: string, title?: string) => void;
   setPreviewUrl: (id: string, url: string) => void;
   setPreviewOrientation: (id: string, orientation: PreviewOrientation) => void;
+  beginClosing: () => void;
+  cancelClosing: () => void;
   closeTab: (id: string) => void;
   /** Repoint open file tabs at/under `from` after it was renamed or moved to
       `to` (tab ids embed the path). Order and active tab are preserved;
@@ -89,6 +94,7 @@ export const createEditorStore = (): EditorStore =>
   createStore<EditorState>((set, get) => ({
     tabs: [],
     activeTabId: null,
+    closing: false,
     dirty: {},
     reveal: null,
 
@@ -145,12 +151,13 @@ export const createEditorStore = (): EditorStore =>
       revealEditor();
     },
 
-    openPreview: (url, title = new URL(url).host) => {
+    openPreview: (url, title) => {
+      if (get().closing) return;
       const id = `preview:${crypto.randomUUID()}`;
       const tab: PreviewTab = {
         id,
         kind: "preview",
-        title,
+        title: title ?? new URL(url).host,
         preview: { url, orientation: "portrait" },
       };
       set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
@@ -175,11 +182,22 @@ export const createEditorStore = (): EditorStore =>
         ),
       })),
 
+    beginClosing: () => set((s) => (s.closing ? s : { closing: true })),
+    cancelClosing: () => set((s) => (s.closing ? { closing: false } : s)),
+
     closeTab: (id) => {
       const { tabs, activeTabId, dirty } = get();
       const idx = tabs.findIndex((t) => t.id === id);
       if (idx === -1) return;
-      if (tabs[idx].kind === "preview") void disposePreviewSession(id);
+      if (tabs[idx].kind === "preview") {
+        void disposePreviewWithFallback(id).catch((error) => {
+          console.error(`Failed to close preview ${id}`, error);
+          void message(
+            `The preview could not be closed. It may remain visible until you close the workspace.\n\n${String(error)}`,
+            { title: "Close Preview", kind: "error" },
+          ).catch((dialogError) => console.error("Failed to show preview-close error", dialogError));
+        });
+      }
       const next = tabs.filter((t) => t.id !== id);
       const { [id]: _removed, ...restDirty } = dirty;
       let nextActive = activeTabId;
