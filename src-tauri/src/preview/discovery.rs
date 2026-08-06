@@ -60,10 +60,12 @@ pub(super) fn discover(workspace_path: &str) -> Result<Vec<PreviewServer>, Strin
         .collect::<Vec<_>>();
     pids.sort_unstable();
     pids.dedup();
-    let metadata = run_bounded_jobs(pids, DISCOVERY_WORKERS, |pid| ProcessMetadata {
-        pid,
-        cwd: cwd_for(pid),
-        command: command_for(pid),
+    let metadata = run_bounded_jobs(pids, DISCOVERY_WORKERS, |pid| {
+        Some(ProcessMetadata {
+            pid,
+            cwd: cwd_for(pid),
+            command: command_for(pid),
+        })
     })
     .into_iter()
     .flatten()
@@ -96,11 +98,7 @@ pub(super) fn discover(workspace_path: &str) -> Result<Vec<PreviewServer>, Strin
             project_match,
         })
     });
-    let mut servers = discovered
-        .into_iter()
-        .flatten()
-        .flatten()
-        .collect::<Vec<_>>();
+    let mut servers = discovered.into_iter().flatten().collect::<Vec<_>>();
     rank_servers(&mut servers, workspace);
     Ok(servers)
 }
@@ -109,14 +107,16 @@ fn bounded_worker_count(job_count: usize, max_workers: usize) -> usize {
     job_count.min(max_workers.max(1))
 }
 
-/// Run blocking jobs on a small scoped worker pool. Each output occupies the
-/// same index as its input; a panicking job leaves only its own slot empty and
-/// does not abort the scan or strand the remaining work.
+/// Run explicitly fallible blocking jobs on a small scoped worker pool. Each
+/// output occupies the same index as its input. If the OS cannot create every
+/// requested worker, queued work is completed synchronously after the workers
+/// that did start have joined. An unexpectedly failed join leaves that job's
+/// result absent without changing result order.
 fn run_bounded_jobs<T, R, F>(jobs: Vec<T>, max_workers: usize, work: F) -> Vec<Option<R>>
 where
     T: Send,
     R: Send,
-    F: Fn(T) -> R + Sync,
+    F: Fn(T) -> Option<R> + Sync,
 {
     let job_count = jobs.len();
     if job_count == 0 {
@@ -131,30 +131,55 @@ where
     ));
 
     std::thread::scope(|scope| {
+        let mut workers = Vec::new();
         for _ in 0..bounded_worker_count(job_count, max_workers) {
             let queue = Arc::clone(&queue);
             let results = Arc::clone(&results);
             let work = &work;
-            scope.spawn(move || loop {
+            match std::thread::Builder::new().spawn_scoped(scope, move || loop {
                 let job = queue
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .pop_front();
                 let Some((index, job)) = job else { break };
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(job)));
-                if let Ok(result) = result {
+                if let Some(result) = work(job) {
                     results
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())[index] = Some(result);
                 }
-            });
+            }) {
+                Ok(worker) => workers.push(worker),
+                Err(_) => break,
+            }
+        }
+
+        for worker in workers {
+            // Production uses panic = "abort". This Result only provides a
+            // safe degraded outcome in unwind-enabled development builds; no
+            // panic recovery guarantee is part of the worker contract.
+            let _ = worker.join();
+        }
+
+        // Normally empty. This is the bounded fallback for worker creation
+        // failure, and also finishes jobs not claimed before a failed join.
+        loop {
+            let job = queue
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .pop_front();
+            let Some((index, job)) = job else { break };
+            if let Some(result) = work(job) {
+                results
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())[index] = Some(result);
+            }
         }
     });
 
-    Arc::try_unwrap(results)
-        .unwrap_or_else(|_| unreachable!("all scoped workers have joined"))
-        .into_inner()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    let mut results = results
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    std::mem::take(&mut *results)
 }
 
 fn parse_lsof_listeners(raw: &str) -> Vec<ParsedListener> {
@@ -351,12 +376,9 @@ mod tests {
     }
 
     #[test]
-    fn bounded_jobs_preserve_input_order_and_isolate_panics() {
+    fn bounded_jobs_preserve_input_order_and_explicit_failures() {
         let got = run_bounded_jobs(vec![3, 2, 1, 0], 2, |value| {
-            if value == 2 {
-                panic!("one failed job");
-            }
-            value * 10
+            (value != 2).then_some(value * 10)
         });
         assert_eq!(got, vec![Some(30), None, Some(10), Some(0)]);
     }

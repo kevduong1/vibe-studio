@@ -131,14 +131,18 @@ class PreviewSessionImpl implements PreviewSession {
     this.visibilityGeneration += 1;
     const generation = this.generation;
     this.created = false;
-    this.visible = false;
-    this.nativeMayBeVisible = false;
 
     const reset = this.queue.then(async () => {
       if (this.closed || this.generation !== generation) return;
       // Native close is idempotent. Keeping this same registry object avoids
       // an old asynchronous close ever targeting a replacement with this id.
       await previewClose(this.id);
+      if (!this.closed && this.generation === generation) {
+        // Like hide(), only a successful native operation proves the old
+        // child cannot still cover the error card or another native overlay.
+        this.visible = false;
+        this.nativeMayBeVisible = false;
+      }
     });
     this.queue = reset.catch(() => undefined);
     return reset;
