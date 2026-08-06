@@ -80,6 +80,19 @@ A global dock for persistent shells and AI coding agents:
   and diff
 - Lazy file explorer, whole-app zoom (**⌘+ / ⌘− / ⌘0**)
 
+### 📱 Localhost phone previews
+
+- Click the editor tab strip **+** and choose **Open Preview…** to open a
+  phone-sized, interactive preview in its own editor tab
+- Enter a localhost URL manually, or choose a detected server grouped under
+  **This project** or **Other local servers**; every invocation creates a new
+  preview tab that lasts only for the current app session
+- Use the preview toolbar to go back or forward, reload, change the address,
+  open the page externally, and rotate between portrait and landscape
+- Expo projects must run their web target (for example,
+  `npx expo start --web`) before they can appear as an interactive preview;
+  native-only app behavior still requires Apple Simulator or a physical device
+
 ### 🔍 Diff viewer
 
 - Side-by-side or unified, syntax-highlighted, unchanged regions collapsed
