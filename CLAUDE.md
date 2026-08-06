@@ -7,8 +7,9 @@ drag-and-drop agent-terminal dock, a CodeMirror 6 diff viewer/editor, and
 TypeScript/Python LSP support (squiggles, hover, completion, go-to-def; off
 at every launch — opt-in per session via the status-bar LSP button or the
 ⌘, settings modal). Rust backend in `src-tauri/`, React 19 + TypeScript
-frontend in `src/` (Vite, zustand). No tests; correctness relies on typecheck
-+ manual verification.
+frontend in `src/` (Vite, zustand). There is no frontend/JavaScript test
+framework; the Rust backend has focused unit tests (including preview
+coverage), while GUI behavior still requires manual verification.
 
 ## Architecture map
 
