@@ -39,6 +39,12 @@ class PreviewSessionImpl implements PreviewSession {
 
   private created = false;
   private visible = false;
+  /**
+   * Conservative native-state bit. Set before a show IPC starts because the
+   * command may reach native even when its completion becomes stale (or its
+   * promise rejects). Only a successful queued hide can prove it false.
+   */
+  private nativeMayBeVisible = false;
   private closed = false;
   private generation = 0;
   private visibilityGeneration = 0;
@@ -143,9 +149,12 @@ class PreviewSessionImpl implements PreviewSession {
 
   private hide(): Promise<void> {
     return this.enqueue(async (isCurrent) => {
-      if (!this.visible) return;
+      if (!this.visible && !this.nativeMayBeVisible) return;
       await previewSetVisible(this.id, false);
-      if (isCurrent()) this.visible = false;
+      if (isCurrent()) {
+        this.visible = false;
+        this.nativeMayBeVisible = false;
+      }
     });
   }
 
@@ -165,6 +174,10 @@ class PreviewSessionImpl implements PreviewSession {
         visibilityGeneration,
       );
       if (!isCurrent() || !requestCurrent) return;
+      // Mark this before invoking native. A hide can be requested while the
+      // promise is pending; if the show then reaches native, that queued hide
+      // must not trust the still-false `visible` cache and short-circuit.
+      this.nativeMayBeVisible = true;
       await previewSetVisible(this.id, true);
       if (isCurrent() && this.isVisibilityRequestCurrent(
         generation,

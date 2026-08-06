@@ -91,6 +91,7 @@ export default function PreviewPane({
   const [listenerRetryNonce, setListenerRetryNonce] = useState(0);
 
   const hostRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const frame = useRef<number | null>(null);
   const syncGeneration = useRef(0);
   const mountedRef = useRef(true);
@@ -195,9 +196,14 @@ export default function PreviewPane({
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    const stage = stageRef.current;
+    if (!host && !stage) return;
     const observer = new ResizeObserver(syncBounds);
-    observer.observe(host);
+    if (host) observer.observe(host);
+    // The capped device can retain the same dimensions while a sidebar or
+    // panel resize moves its centered position. The stage changes size in
+    // those layouts, so observing it makes the host's new left/top measurable.
+    if (stage) observer.observe(stage);
     window.addEventListener("resize", syncBounds);
     const stopZoomListener = onZoomChange(syncBounds);
     return () => {
@@ -342,7 +348,10 @@ export default function PreviewPane({
           <IcRotate />
         </button>
       </div>
-      <div className={`preview-stage ${tab.preview.orientation}`}>
+      <div
+        ref={stageRef}
+        className={`preview-stage ${tab.preview.orientation}`}
+      >
         <div
           className="preview-device"
           onPointerDown={() => {
