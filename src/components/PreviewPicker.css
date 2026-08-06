@@ -1,0 +1,123 @@
+/* Localhost preview picker — shares Quick Open's top-centered overlay shell. */
+.preview-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.preview-picker {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 560px;
+  max-width: calc(100vw - 80px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+.preview-picker-input-row {
+  display: flex;
+  gap: 6px;
+}
+.preview-picker-input-row .primary-btn {
+  width: auto;
+  padding: 0 12px;
+}
+
+.preview-picker-error {
+  padding: 2px 8px;
+  color: var(--danger);
+  font-size: var(--font-size-sm);
+}
+
+.preview-picker-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.preview-picker-list-header {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 4px 0 8px;
+  color: var(--fg-dim);
+  font-size: var(--font-size-sm);
+}
+.preview-picker-list-header .icon-btn {
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+}
+.preview-picker-list-header .icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.preview-picker-group + .preview-picker-group {
+  margin-top: 4px;
+}
+.preview-picker-heading {
+  padding: 5px 8px 3px;
+  color: var(--fg-faint);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.preview-picker-server {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  text-align: left;
+}
+.preview-picker-server:hover {
+  background: var(--bg-selected);
+}
+.preview-picker-server-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.preview-picker-server-main svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.preview-picker-server-meta {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 21px;
+  color: var(--fg-dim);
+  font-size: var(--font-size-sm);
+}
+.preview-picker-server-meta > :first-child {
+  min-width: 0;
+}
+.preview-picker-server-meta > :last-child {
+  flex-shrink: 0;
+}
+.preview-picker-server-cwd {
+  padding-left: 21px;
+  color: var(--fg-faint);
+  font-size: var(--font-size-sm);
+}
+.preview-picker-empty {
+  padding: 10px;
+  color: var(--fg-faint);
+  text-align: center;
+  user-select: text;
+}

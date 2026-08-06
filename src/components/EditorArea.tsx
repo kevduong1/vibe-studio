@@ -20,7 +20,8 @@ import { copyText } from "../lib/clipboard";
 import { fsReveal } from "../lib/ipc";
 import { isMarkdownPath } from "../lib/path";
 import { ContextMenu } from "./ContextMenu";
-import { IcBranch, IcBrain, IcClose, IcDiff, IcFile } from "./icons";
+import PreviewPicker from "./PreviewPicker";
+import { IcBranch, IcBrain, IcBrowser, IcClose, IcDiff, IcFile, IcPlus } from "./icons";
 import "./EditorArea.css";
 
 const Editor = lazy(() => import("./Editor"));
@@ -63,7 +64,7 @@ function TabItem({
             ? tab.diff.path
             : tab.kind === "memory"
               ? tab.memory.entry.description || tab.title
-              : tab.title
+              : tab.preview.url
       }
       onClick={() => setActive(tab.id)}
       onMouseDown={(e) => {
@@ -83,6 +84,8 @@ function TabItem({
           <IcFile />
         ) : tab.kind === "memory" ? (
           <IcBrain />
+        ) : tab.kind === "preview" ? (
+          <IcBrowser />
         ) : (
           <IcDiff style={iconColor ? { color: iconColor } : undefined} />
         )}
@@ -182,11 +185,14 @@ function TabMenu({
   );
 }
 
-function EmptyState() {
+function EmptyState({ onOpenPreview }: { onOpenPreview: () => void }) {
   return (
     <div className="editor-empty">
       <IcBranch className="empty-icon" />
       <div className="empty-title">Open a file or select a change</div>
+      <button className="primary-btn empty-preview-action" onClick={onOpenPreview}>
+        <IcBrowser /> Open Preview…
+      </button>
       <div className="empty-hints">
         <div className="hint-row">
           <span className="kbd">⌘ `</span>
@@ -206,6 +212,7 @@ function EmptyState() {
 }
 
 export default function EditorArea() {
+  const workspace = useWorkspace();
   const tabs = useEditor((s) => s.tabs);
   const activeTabId = useEditor((s) => s.activeTabId);
   const dirty = useEditor((s) => s.dirty);
@@ -216,6 +223,7 @@ export default function EditorArea() {
     x: number;
     y: number;
   } | null>(null);
+  const [previewPickerOpen, setPreviewPickerOpen] = useState(false);
   const markdownPreview = useUiStore((s) => s.markdownPreview);
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
@@ -223,7 +231,7 @@ export default function EditorArea() {
   return (
     <div className="editor-area">
       {tabs.length === 0 ? (
-        <EmptyState />
+        <EmptyState onOpenPreview={() => setPreviewPickerOpen(true)} />
       ) : (
         <>
           <div className="editor-tabs">
@@ -239,6 +247,13 @@ export default function EditorArea() {
                 }}
               />
             ))}
+            <button
+              className="icon-btn editor-tab-add"
+              title="Open Preview"
+              onClick={() => setPreviewPickerOpen(true)}
+            >
+              <IcPlus />
+            </button>
           </div>
           <div className="editor-content">
             <Suspense fallback={<div className="editor-msg dim">Loading…</div>}>
@@ -264,6 +279,12 @@ export default function EditorArea() {
           x={tabMenu.x}
           y={tabMenu.y}
           onClose={() => setTabMenu(null)}
+        />
+      )}
+      {previewPickerOpen && (
+        <PreviewPicker
+          workspace={workspace}
+          onClose={() => setPreviewPickerOpen(false)}
         />
       )}
     </div>

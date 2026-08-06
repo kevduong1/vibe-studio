@@ -229,6 +229,47 @@ export const IcEye = (props: IconProps) => (
     <circle cx="8" cy="8" r="2" />
   </Svg>
 );
+/** Browser window — local web preview tabs. */
+export const IcBrowser = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="1.5" y="2.5" width="13" height="11" rx="1.2" />
+    <path d="M1.5 5.5h13" />
+    <circle cx="4" cy="4" r="0.45" fill="currentColor" stroke="none" />
+    <circle cx="5.75" cy="4" r="0.45" fill="currentColor" stroke="none" />
+    <circle cx="7.5" cy="4" r="0.45" fill="currentColor" stroke="none" />
+  </Svg>
+);
+/** Phone outline — device preview orientation controls. */
+export const IcPhone = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="4.5" y="1.5" width="7" height="13" rx="1.4" />
+    <path d="M7 3.4h2" />
+    <path d="M7.4 12.5h1.2" />
+  </Svg>
+);
+export const IcRotate = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M12.8 5.3A5.5 5.5 0 1 0 13 9" />
+    <path d="M13 2v3.3H9.7" />
+  </Svg>
+);
+export const IcBack = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="m9.8 3.2-4.6 4.8 4.6 4.8" />
+  </Svg>
+);
+export const IcForward = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="m6.2 3.2 4.6 4.8-4.6 4.8" />
+  </Svg>
+);
+export const IcExternal = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M8.5 2.5h5v5" />
+    <path d="m13.5 2.5-7 7" />
+    <path d="M12 8.5v4a1 1 0 0 1-1 1h-7.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h4" />
+  </Svg>
+);
 /** Claude's radiating mark, simplified for the 16px status-bar grid. */
 export const IcClaude = (props: IconProps) => (
   <Svg {...props}>

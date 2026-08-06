@@ -50,6 +50,18 @@
   background: var(--bg-editor);
 }
 
+.editor-tab-add {
+  width: 34px;
+  height: 33px;
+  min-width: 34px;
+  border-right: 1px solid var(--border-subtle);
+  border-radius: 0;
+}
+.editor-tab-add svg {
+  width: 14px;
+  height: 14px;
+}
+
 .editor-tab .tab-icon {
   display: inline-flex;
   flex-shrink: 0;
@@ -133,6 +145,17 @@
 }
 .editor-empty .empty-title {
   font-size: var(--font-size);
+}
+.editor-empty .empty-preview-action {
+  width: auto;
+  height: 26px;
+  margin-top: 2px;
+  padding: 0 10px;
+  font-size: var(--font-size-sm);
+}
+.editor-empty .empty-preview-action svg {
+  width: 13px;
+  height: 13px;
 }
 .editor-empty .empty-hints {
   margin-top: 14px;
