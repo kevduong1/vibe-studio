@@ -20,6 +20,7 @@ import { copyText } from "../lib/clipboard";
 import { fsReveal } from "../lib/ipc";
 import { isMarkdownPath } from "../lib/path";
 import { ContextMenu } from "./ContextMenu";
+import PreviewPane from "./PreviewPane";
 import PreviewPicker from "./PreviewPicker";
 import { IcBranch, IcBrain, IcBrowser, IcClose, IcDiff, IcFile, IcPlus } from "./icons";
 import "./EditorArea.css";
@@ -211,7 +212,11 @@ function EmptyState({ onOpenPreview }: { onOpenPreview: () => void }) {
   );
 }
 
-export default function EditorArea() {
+export default function EditorArea({
+  workspaceVisible,
+}: {
+  workspaceVisible: boolean;
+}) {
   const workspace = useWorkspace();
   const tabs = useEditor((s) => s.tabs);
   const activeTabId = useEditor((s) => s.activeTabId);
@@ -268,6 +273,13 @@ export default function EditorArea() {
               )}
               {active?.kind === "memory" && (
                 <MemoryPreview key={active.id} tab={active} />
+              )}
+              {active?.kind === "preview" && (
+                <PreviewPane
+                  key={active.id}
+                  tab={active}
+                  workspaceVisible={workspaceVisible}
+                />
               )}
             </Suspense>
           </div>

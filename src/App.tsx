@@ -162,7 +162,7 @@ function WorkspaceEditor({ visible }: { visible: boolean }) {
       className="workspace-editor"
       style={{ display: visible ? undefined : "none" }}
     >
-      <EditorArea />
+      <EditorArea workspaceVisible={visible} />
     </div>
   );
 }
