@@ -208,7 +208,12 @@ export default function PreviewPicker({
             <button
               className="icon-btn"
               title="Refresh local servers"
-              onClick={() => setRefreshNonce((nonce) => nonce + 1)}
+              disabled={servers === null}
+              onClick={() => {
+                if (servers === null) return;
+                setServers(null);
+                setRefreshNonce((nonce) => nonce + 1);
+              }}
             >
               <IcRefresh />
             </button>

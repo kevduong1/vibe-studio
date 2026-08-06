@@ -1,12 +1,14 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{Ipv6Addr, SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const MAX_LISTENERS: usize = 128;
+const DISCOVERY_WORKERS: usize = 8;
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const MAX_RESPONSE_BYTES: usize = 32 * 1024;
 
@@ -22,11 +24,18 @@ pub(crate) struct PreviewServer {
     pub project_match: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct ParsedListener {
     pid: u32,
     process: String,
     port: u16,
+}
+
+#[derive(Debug)]
+struct ProcessMetadata {
+    pid: u32,
+    cwd: Option<String>,
+    command: Option<String>,
 }
 
 pub(super) fn discover(workspace_path: &str) -> Result<Vec<PreviewServer>, String> {
@@ -40,17 +49,44 @@ pub(super) fn discover(workspace_path: &str) -> Result<Vec<PreviewServer>, Strin
     }
 
     let workspace = Path::new(workspace_path);
-    let mut servers = Vec::new();
-    for listener in parse_lsof_listeners(&String::from_utf8_lossy(&output.stdout)) {
-        let cwd = cwd_for(listener.pid);
-        let process = command_for(listener.pid).unwrap_or(listener.process);
-        let Some(response) = probe_http(listener.port) else {
-            continue;
-        };
-        let url = super::url::normalize_loopback_url(&listener.port.to_string())?.to_string();
+    let listeners = parse_lsof_listeners(&String::from_utf8_lossy(&output.stdout));
+
+    // A process may own several listeners. Collect its cwd/command once, with
+    // the same fixed-size pool used for probes, instead of launching duplicate
+    // subprocesses or one thread per listener.
+    let mut pids = listeners
+        .iter()
+        .map(|listener| listener.pid)
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    let metadata = run_bounded_jobs(pids, DISCOVERY_WORKERS, |pid| ProcessMetadata {
+        pid,
+        cwd: cwd_for(pid),
+        command: command_for(pid),
+    })
+    .into_iter()
+    .flatten()
+    .map(|metadata| (metadata.pid, metadata))
+    .collect::<HashMap<_, _>>();
+
+    // Silent listeners can consume both 500 ms address attempts. Probe them
+    // concurrently, but cap the worker count so discovery stays bounded even
+    // when lsof returns MAX_LISTENERS entries. Result slots preserve lsof
+    // order until the explicit deterministic rank below.
+    let discovered = run_bounded_jobs(listeners, DISCOVERY_WORKERS, |listener| {
+        let metadata = metadata.get(&listener.pid);
+        let cwd = metadata.and_then(|metadata| metadata.cwd.clone());
+        let process = metadata
+            .and_then(|metadata| metadata.command.clone())
+            .unwrap_or(listener.process);
+        let response = probe_http(listener.port)?;
+        let url = super::url::normalize_loopback_url(&listener.port.to_string())
+            .ok()?
+            .to_string();
         let framework = framework_label(&process, &response, cwd.as_deref());
         let project_match = project_matches(cwd.as_deref(), workspace);
-        servers.push(PreviewServer {
+        Some(PreviewServer {
             url,
             port: listener.port,
             pid: Some(listener.pid),
@@ -58,10 +94,67 @@ pub(super) fn discover(workspace_path: &str) -> Result<Vec<PreviewServer>, Strin
             cwd,
             framework,
             project_match,
-        });
-    }
+        })
+    });
+    let mut servers = discovered
+        .into_iter()
+        .flatten()
+        .flatten()
+        .collect::<Vec<_>>();
     rank_servers(&mut servers, workspace);
     Ok(servers)
+}
+
+fn bounded_worker_count(job_count: usize, max_workers: usize) -> usize {
+    job_count.min(max_workers.max(1))
+}
+
+/// Run blocking jobs on a small scoped worker pool. Each output occupies the
+/// same index as its input; a panicking job leaves only its own slot empty and
+/// does not abort the scan or strand the remaining work.
+fn run_bounded_jobs<T, R, F>(jobs: Vec<T>, max_workers: usize, work: F) -> Vec<Option<R>>
+where
+    T: Send,
+    R: Send,
+    F: Fn(T) -> R + Sync,
+{
+    let job_count = jobs.len();
+    if job_count == 0 {
+        return Vec::new();
+    }
+
+    let queue = Arc::new(Mutex::new(
+        jobs.into_iter().enumerate().collect::<VecDeque<_>>(),
+    ));
+    let results = Arc::new(Mutex::new(
+        (0..job_count).map(|_| None).collect::<Vec<Option<R>>>(),
+    ));
+
+    std::thread::scope(|scope| {
+        for _ in 0..bounded_worker_count(job_count, max_workers) {
+            let queue = Arc::clone(&queue);
+            let results = Arc::clone(&results);
+            let work = &work;
+            scope.spawn(move || loop {
+                let job = queue
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .pop_front();
+                let Some((index, job)) = job else { break };
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(job)));
+                if let Ok(result) = result {
+                    results
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())[index] = Some(result);
+                }
+            });
+        }
+    });
+
+    Arc::try_unwrap(results)
+        .unwrap_or_else(|_| unreachable!("all scoped workers have joined"))
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn parse_lsof_listeners(raw: &str) -> Vec<ParsedListener> {
@@ -255,6 +348,25 @@ mod tests {
         let got = parse_lsof_listeners(&raw);
         assert_eq!(got.len(), MAX_LISTENERS);
         assert_eq!(got.last().map(|listener| listener.port), Some(3127));
+    }
+
+    #[test]
+    fn bounded_jobs_preserve_input_order_and_isolate_panics() {
+        let got = run_bounded_jobs(vec![3, 2, 1, 0], 2, |value| {
+            if value == 2 {
+                panic!("one failed job");
+            }
+            value * 10
+        });
+        assert_eq!(got, vec![Some(30), None, Some(10), Some(0)]);
+    }
+
+    #[test]
+    fn worker_count_is_never_unbounded_or_zero_for_work() {
+        assert_eq!(bounded_worker_count(0, DISCOVERY_WORKERS), 0);
+        assert_eq!(bounded_worker_count(3, DISCOVERY_WORKERS), 3);
+        assert_eq!(bounded_worker_count(128, DISCOVERY_WORKERS), 8);
+        assert_eq!(bounded_worker_count(4, 0), 1);
     }
 
     #[test]

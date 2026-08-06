@@ -45,8 +45,25 @@ export interface PreviewExternalEvent {
 // Localhost preview commands
 // ---------------------------------------------------------------------------
 
-export const previewServers = (workspacePath: string): Promise<PreviewServer[]> =>
-  invoke("preview_servers", { workspacePath });
+// React StrictMode and repeated refresh gestures can overlap effect lifetimes.
+// Share an in-flight scan per workspace so each one owns only one bounded
+// native worker pool; a completed request is immediately refreshable.
+const previewServerRequests = new Map<string, Promise<PreviewServer[]>>();
+
+export const previewServers = (workspacePath: string): Promise<PreviewServer[]> => {
+  const existing = previewServerRequests.get(workspacePath);
+  if (existing) return existing;
+
+  const request = invoke<PreviewServer[]>("preview_servers", { workspacePath });
+  previewServerRequests.set(workspacePath, request);
+  const clear = () => {
+    if (previewServerRequests.get(workspacePath) === request) {
+      previewServerRequests.delete(workspacePath);
+    }
+  };
+  void request.then(clear, clear);
+  return request;
+};
 
 export const previewCreate = (
   id: string,

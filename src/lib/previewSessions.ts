@@ -21,6 +21,8 @@ export interface PreviewSession {
   setBounds(bounds: PreviewBounds): Promise<void>;
   setVisible(visible: boolean): Promise<void>;
   focus(): Promise<void>;
+  /** Forget a disappeared native child view without changing tab ownership. */
+  reset(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -117,6 +119,29 @@ class PreviewSessionImpl implements PreviewSession {
 
   focus(): Promise<void> {
     return this.enqueue(() => previewFocus(this.id));
+  }
+
+  reset(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+
+    // Invalidate queued controls and visibility-coordinator work first. The
+    // close itself remains ordered after any native operation already in
+    // flight, and ensure() calls made after this reset queue behind it.
+    this.generation += 1;
+    this.visibilityGeneration += 1;
+    const generation = this.generation;
+    this.created = false;
+    this.visible = false;
+    this.nativeMayBeVisible = false;
+
+    const reset = this.queue.then(async () => {
+      if (this.closed || this.generation !== generation) return;
+      // Native close is idempotent. Keeping this same registry object avoids
+      // an old asynchronous close ever targeting a replacement with this id.
+      await previewClose(this.id);
+    });
+    this.queue = reset.catch(() => undefined);
+    return reset;
   }
 
   close(): Promise<void> {

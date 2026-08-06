@@ -280,10 +280,20 @@ export default function PreviewPane({
   };
 
   const retry = () => {
-    errorRef.current = null;
-    setControlError(null);
-    setListenerRetryNonce((nonce) => nonce + 1);
-    syncBounds();
+    const generation = ++syncGeneration.current;
+    // A control failure may mean WKWebView disappeared while the registry's
+    // cached `created` bit remained true. Reset the same owned session before
+    // clearing the error; the next bounds sync will ensure a fresh native
+    // child and cannot race an old same-id session close.
+    void session
+      .reset()
+      .then(() => {
+        if (!mountedRef.current || generation !== syncGeneration.current) return;
+        errorRef.current = null;
+        setControlError(null);
+        setListenerRetryNonce((nonce) => nonce + 1);
+      })
+      .catch((error) => hideAfterFailure(error, generation));
   };
 
   return (

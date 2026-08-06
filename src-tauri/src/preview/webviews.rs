@@ -195,14 +195,25 @@ pub(crate) fn preview_set_bounds(
     bounds: PreviewBounds,
 ) -> Result<(), String> {
     validate_bounds(bounds)?;
-    preview_webview(&app, &id)?
+    let label = webview_label(&id)?;
+    let Some(webview) = app.get_webview(label) else {
+        return Ok(());
+    };
+    webview
         .set_bounds(logical_rect(bounds))
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub(crate) fn preview_set_visible(app: AppHandle, id: String, visible: bool) -> Result<(), String> {
-    let webview = preview_webview(&app, &id)?;
+    let label = webview_label(&id)?;
+    let Some(webview) = app.get_webview(label) else {
+        return if visible {
+            Err(format!("Preview webview not found: {label}"))
+        } else {
+            Ok(())
+        };
+    };
     let result = if visible {
         webview.show()
     } else {
@@ -213,9 +224,11 @@ pub(crate) fn preview_set_visible(app: AppHandle, id: String, visible: bool) -> 
 
 #[tauri::command]
 pub(crate) fn preview_focus(app: AppHandle, id: String) -> Result<(), String> {
-    preview_webview(&app, &id)?
-        .set_focus()
-        .map_err(|error| error.to_string())
+    let label = webview_label(&id)?;
+    let Some(webview) = app.get_webview(label) else {
+        return Ok(());
+    };
+    webview.set_focus().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
