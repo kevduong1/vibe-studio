@@ -32,7 +32,7 @@ export function getOrCreateWorkspaceSession(
   });
 }
 
-const AGENT_COMMAND = { claude: "claude", codex: "codex" } as const;
+const AGENT_COMMAND = { claude: "claude", codex: "codex --yolo" } as const;
 
 /** Create a project-bound shell or agent terminal and start the selected
  * agent inside its shell. */

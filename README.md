@@ -130,9 +130,14 @@ A global dock for persistent shells and AI coding agents:
 
 ```sh
 pnpm install
-pnpm tauri dev      # run the app in dev mode
-pnpm tauri build    # produce .app / .dmg in src-tauri/target/release/bundle
+pnpm tauri dev            # run with the orange DEV icon
+pnpm tauri build --debug  # package a debug .app with the DEV icon
+pnpm tauri build          # package a release .app / .dmg with the release icon
 ```
+
+The `pnpm tauri` wrapper automatically applies `src-tauri/tauri.dev.conf.json`
+to `dev` and `build --debug`. Release builds continue to use only the base
+Tauri config, so they keep the normal app name, bundle identifier, and icon.
 
 ## Installing / updating the release build
 

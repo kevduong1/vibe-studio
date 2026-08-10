@@ -68,7 +68,7 @@ export function closeGlobalGrouping(groupingId: string): void {
  *  leaves a normal shell in the project root. */
 const AGENT_COMMAND: Record<Exclude<TerminalKind, "shell">, string> = {
   claude: "claude",
-  codex: "codex",
+  codex: "codex --yolo",
 };
 
 /**
