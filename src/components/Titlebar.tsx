@@ -109,7 +109,7 @@ function WorkspaceTab({
   onRenameStart,
   onRenameEnd,
   activity,
-  groupCount,
+  groupWorkspaces,
   title,
 }: {
   ws: Workspace;
@@ -120,7 +120,7 @@ function WorkspaceTab({
   onRenameStart: () => void;
   onRenameEnd: () => void;
   activity: ActivityLevel;
-  groupCount?: number;
+  groupWorkspaces?: Workspace[];
   title?: string;
 }) {
   const setActive = useWorkspacesStore((s) => s.setActive);
@@ -160,14 +160,25 @@ function WorkspaceTab({
       onDoubleClick={onRenameStart}
       onContextMenu={(e) => onContext(ws.path, e)}
     >
-      {/* All three glyph states tinted in the project's color (identity
-          carrier). The inline styles outrank Titlebar.css's .ws-tab > svg
-          fg-dim rule and the activity classes' default colors. */}
-      <ActivityGlyph
-        activity={activity}
-        idle={<IcFolder style={{ color: paletteColor(colorIndex) }} />}
-        color={paletteColor(colorIndex)}
-      />
+      {groupWorkspaces ? (
+        <>
+          <GroupFolderBadge workspaces={groupWorkspaces} activePath={ws.path} />
+          <ActivityGlyph
+            activity={activity}
+            idle={null}
+            color={paletteColor(colorIndex)}
+          />
+        </>
+      ) : (
+        /* All three glyph states tinted in the project's color (identity
+           carrier). The inline styles outrank Titlebar.css's .ws-tab > svg
+           fg-dim rule and the activity classes' default colors. */
+        <ActivityGlyph
+          activity={activity}
+          idle={<IcFolder style={{ color: paletteColor(colorIndex) }} />}
+          color={paletteColor(colorIndex)}
+        />
+      )}
       {renaming ? (
         <input
           className="ws-tab-rename"
@@ -199,11 +210,6 @@ function WorkspaceTab({
           {ambiguous && <span className="ws-tab-dir"> · {parentDir(ws.path)}</span>}
         </span>
       )}
-      {!renaming && groupCount && groupCount > 1 && (
-        <span className="ws-tab-group-count" title={`${groupCount} related workspaces`}>
-          {groupCount}
-        </span>
-      )}
       {!renaming && (
         <button
           className="ws-tab-close"
@@ -218,6 +224,55 @@ function WorkspaceTab({
         </button>
       )}
     </div>
+  );
+}
+
+const MAX_GROUP_FOLDERS = 4;
+
+function GroupFolderIcon({
+  workspace,
+  active,
+}: {
+  workspace: Workspace;
+  active: boolean;
+}) {
+  const colorIndex = useProjectColorIndex(workspace.path);
+  return (
+    <IcFolder
+      className={`ws-tab-folder-icon ${active ? "active" : ""}`}
+      style={{ color: paletteColor(colorIndex) }}
+    />
+  );
+}
+
+function GroupFolderBadge({
+  workspaces,
+  activePath,
+}: {
+  workspaces: Workspace[];
+  activePath: string;
+}) {
+  // Keep the active member visible even when a large family is capped.
+  const ordered = [
+    ...workspaces.filter((workspace) => workspace.path === activePath),
+    ...workspaces.filter((workspace) => workspace.path !== activePath),
+  ];
+  const visible = ordered.slice(0, MAX_GROUP_FOLDERS);
+  const hidden = workspaces.length - visible.length;
+  return (
+    <span
+      className="ws-tab-folder-stack"
+      title={`${workspaces.length} related workspaces`}
+    >
+      {visible.map((workspace) => (
+        <GroupFolderIcon
+          key={workspace.path}
+          workspace={workspace}
+          active={workspace.path === activePath}
+        />
+      ))}
+      {hidden > 0 && <span className="ws-tab-folder-overflow">+{hidden}</span>}
+    </span>
   );
 }
 
@@ -291,7 +346,7 @@ function WorkspaceTabFamily({
           onRenameStart={() => props.onRenameStart(representative.path)}
           onRenameEnd={props.onRenameEnd}
           activity={familyActivity}
-          groupCount={workspaces.length}
+          groupWorkspaces={workspaces}
           title={familyTitle}
         />
       )}
