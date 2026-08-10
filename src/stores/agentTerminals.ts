@@ -680,3 +680,43 @@ export const selectWorkspacePathsActivity = (
   }
   return busy ? "busy" : "idle";
 };
+
+export interface GroupingWorkspaceActivity {
+  workspacePath: string;
+  activity: Exclude<ActivityLevel, "idle">;
+}
+
+/**
+ * One non-idle indicator per project in a large terminal grouping. Attention
+ * replaces busy for the same project and sorts ahead of all busy projects;
+ * dock order remains stable within each priority.
+ */
+export const selectGroupingWorkspaceActivities = (
+  s: AgentTerminalsState,
+  groupingId: string,
+): GroupingWorkspaceActivity[] => {
+  const grouping = s.groupings.find((item) => item.id === groupingId);
+  if (!grouping) return [];
+  const byWorkspace = new Map<string, Exclude<ActivityLevel, "idle">>();
+  for (const terminalId of groupingTerminalIds(grouping)) {
+    const terminal = s.terminals[terminalId];
+    const pane = s.paneActivity[terminalId];
+    if (!terminal || (!pane?.attention && !pane?.busy)) continue;
+    const activity = pane.attention ? "attention" : "busy";
+    if (
+      activity === "attention" ||
+      !byWorkspace.has(terminal.workspacePath)
+    ) {
+      byWorkspace.set(terminal.workspacePath, activity);
+    }
+  }
+  return [...byWorkspace]
+    .map(([workspacePath, activity]) => ({ workspacePath, activity }))
+    .sort((left, right) =>
+      left.activity === right.activity
+        ? 0
+        : left.activity === "attention"
+          ? -1
+          : 1,
+    );
+};

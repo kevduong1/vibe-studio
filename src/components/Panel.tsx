@@ -9,6 +9,7 @@
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { useShallow } from "zustand/react/shallow";
 import {
   switchToProject,
   useActiveWorkspace,
@@ -22,22 +23,28 @@ import {
 } from "../stores/ui";
 import {
   groupingTerminalIds,
+  selectGroupingWorkspaceActivities,
   useAgentTerminalsStore,
+  type GroupingWorkspaceActivity,
   type GlobalTermGrouping,
 } from "../stores/agentTerminals";
-import { aggregateActivity } from "../stores/terminal";
 import { closeGlobalGrouping, openGlobalTerminal } from "../lib/agentSessions";
-import { paletteColor, PROJECT_COLOR_NAMES } from "../lib/projectColors";
+import {
+  paletteColor,
+  PROJECT_COLOR_NAMES,
+  useProjectColorVar,
+} from "../lib/projectColors";
+import { projectDisplayName } from "../lib/projectNames";
 import { openWorkspaceTerminal } from "../lib/workspaceSessions";
 import TerminalPanel from "./TerminalPanel";
 import AgentDock from "./AgentDock";
 import { Resizer } from "./Resizer";
 import { ContextMenu } from "./ContextMenu";
 import {
+  ActivityGlyph,
   IcChevronDown,
   IcChevronsDown,
   IcChevronsUp,
-  IcDot,
   IcPlus,
   IcSplit,
 } from "./icons";
@@ -96,6 +103,23 @@ const activateGrouping = (groupingId: string): void => {
   restoreGroupingWorkspace(groupingId);
 };
 
+function GroupActivityGlyph({
+  item,
+}: {
+  item: GroupingWorkspaceActivity;
+}) {
+  const color = useProjectColorVar(item.workspacePath);
+  const state = item.activity === "attention" ? "Waiting for response" : "Working";
+  return (
+    <span
+      className="panel-group-activity-glyph"
+      title={`${projectDisplayName(item.workspacePath)} — ${state}`}
+    >
+      <ActivityGlyph activity={item.activity} idle={null} color={color} />
+    </span>
+  );
+}
+
 /** One grouping's panel tab: click fronts it, double-click renames inline.
  *  The right-click menu lives in PanelHeader (ContextMenu must be a sibling
  *  of the tab — its backdrop clicks would bubble into these handlers). */
@@ -115,11 +139,10 @@ function GroupingTab({
   onMenu: (e: React.MouseEvent) => void;
 }) {
   const cancelled = useRef(false);
-  // Surface a waiting agent in this grouping while another tab is in front.
-  const attention = useAgentTerminalsStore(
-    (s) =>
-      aggregateActivity(s.paneActivity, groupingTerminalIds(grouping)) ===
-      "attention",
+  const activities = useAgentTerminalsStore(
+    useShallow((state) =>
+      selectGroupingWorkspaceActivities(state, grouping.id),
+    ),
   );
 
   const commit = (value: string) => {
@@ -172,8 +195,12 @@ function GroupingTab({
         <>
           <span className="panel-group-color" />
           {grouping.name}
-          {!front && attention && (
-            <IcDot className="activity-attention panel-group-dot" />
+          {activities.length > 0 && (
+            <span className="panel-group-activities">
+              {activities.map((item) => (
+                <GroupActivityGlyph key={item.workspacePath} item={item} />
+              ))}
+            </span>
           )}
         </>
       )}
