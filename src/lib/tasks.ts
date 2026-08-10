@@ -4,10 +4,11 @@
  * re-read from disk on every use (⌘⇧B) so edits apply without a watcher;
  * execution glue lives in lib/taskRunner.ts.
  *
- * Supported subset: "shell" / "process" tasks (other types are skipped),
+ * Supported subset: "shell" / "process" tasks,
  * label/command/args/options.{cwd,env}/group/detail,
- * presentation.{reveal,panel}, and the `osx` platform override (always
- * merged — this is a macOS app). problemMatcher and dependsOn are ignored.
+ * presentation.{reveal,panel}, dependency DAG metadata, and the `osx`
+ * platform override (always merged — this is a macOS app). Unsupported and
+ * malformed entries are retained as parse diagnostics for review pipelines.
  */
 import { fsReadFile } from "./ipc";
 import { basename } from "./path";
@@ -15,8 +16,15 @@ import type { Workspace } from "../stores/workspaces";
 
 export interface TaskDef {
   label: string;
-  command: string;
+  command: string | null;
   args: string[];
+  taskType: string;
+  supported: boolean;
+  dependsOn: string[];
+  dependsOrder: "parallel" | "sequence";
+  isBackground: boolean;
+  /** Entry-local parse/normalization diagnostics. */
+  diagnostics: string[];
   /** Working directory (may be ${}-templated; relative = workspace root). */
   cwd: string | null;
   env: Record<string, string>;
@@ -27,6 +35,17 @@ export interface TaskDef {
   detail: string | null;
   reveal: "always" | "silent" | "never";
   panel: "shared" | "dedicated" | "new";
+}
+
+export interface TaskParseDiagnostic {
+  index: number;
+  label: string | null;
+  message: string;
+}
+
+export interface TaskDocument {
+  tasks: TaskDef[];
+  diagnostics: TaskParseDiagnostic[];
 }
 
 /**
@@ -47,9 +66,14 @@ const str = (v: unknown): string | null =>
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 
-/** One raw tasks.json entry → TaskDef (null = unsupported or malformed). */
-const normalizeTask = (raw: unknown): TaskDef | null => {
-  if (!raw || typeof raw !== "object") return null;
+/** One raw tasks.json entry. Compound tasks may omit command. */
+const normalizeTask = (
+  raw: unknown,
+  index: number,
+): { task?: TaskDef; diagnostics: TaskParseDiagnostic[] } => {
+  if (!raw || typeof raw !== "object") {
+    return { diagnostics: [{ index, label: null, message: "Task must be an object" }] };
+  }
   const base = raw as Record<string, unknown>;
   const osx = obj(base.osx);
   const t = { ...base, ...osx };
@@ -57,7 +81,31 @@ const normalizeTask = (raw: unknown): TaskDef | null => {
   const type = str(t.type) ?? "shell";
   const label = str(t.label);
   const command = str(t.command);
-  if ((type !== "shell" && type !== "process") || !label || !command) return null;
+  if (!label) {
+    return { diagnostics: [{ index, label: null, message: "Task is missing a label" }] };
+  }
+  const diagnostics: TaskParseDiagnostic[] = [];
+  let dependsOn: string[] = [];
+  if (Object.prototype.hasOwnProperty.call(t, "dependsOn")) {
+    if (typeof t.dependsOn === "string" && t.dependsOn.length > 0) {
+      dependsOn = [t.dependsOn];
+    } else if (
+      Array.isArray(t.dependsOn) &&
+      t.dependsOn.every((value) => typeof value === "string" && value.length > 0)
+    ) {
+      dependsOn = t.dependsOn;
+    } else {
+      diagnostics.push({
+        index,
+        label,
+        message: "dependsOn must be a non-empty string or an array of non-empty strings",
+      });
+    }
+  }
+  const supported = type === "shell" || type === "process";
+  if (!command && dependsOn.length === 0) {
+    diagnostics.push({ index, label, message: "Task needs a command or dependency" });
+  }
 
   const options = { ...obj(base.options), ...obj(osx.options) };
   // env merges per-KEY across the osx override (VS Code semantics), unlike
@@ -89,9 +137,15 @@ const normalizeTask = (raw: unknown): TaskDef | null => {
     t.presentation && typeof t.presentation === "object" ? t.presentation : {}
   ) as Record<string, unknown>;
 
-  return {
+  return { task: {
     label,
     command,
+    taskType: type,
+    supported,
+    dependsOn,
+    dependsOrder: t.dependsOrder === "sequence" ? "sequence" : "parallel",
+    isBackground: t.isBackground === true,
+    diagnostics: diagnostics.map((diagnostic) => diagnostic.message),
     args: Array.isArray(t.args)
       ? t.args.filter((a): a is string => typeof a === "string")
       : [],
@@ -104,7 +158,7 @@ const normalizeTask = (raw: unknown): TaskDef | null => {
       pres.reveal === "silent" || pres.reveal === "never" ? pres.reveal : "always",
     panel:
       pres.panel === "dedicated" || pres.panel === "new" ? pres.panel : "shared",
-  };
+  }, diagnostics };
 };
 
 /**
@@ -112,7 +166,7 @@ const normalizeTask = (raw: unknown): TaskDef | null => {
  * ([]); a present but unreadable/unparseable file throws so the picker can
  * surface it instead of claiming the file doesn't exist.
  */
-export async function loadTasks(workspaceRoot: string): Promise<TaskDef[]> {
+export async function loadTaskDocument(workspaceRoot: string): Promise<TaskDocument> {
   let text: string;
   try {
     const f = await fsReadFile(`${workspaceRoot}/.vscode/tasks.json`);
@@ -123,7 +177,7 @@ export async function loadTasks(workspaceRoot: string): Promise<TaskDef[]> {
     // Only ENOENT means "no tasks" — fs_read_file gives us io::Error strings,
     // so match the stable "(os error 2)" suffix. Permission errors and the
     // size/encoding throw above propagate to the picker.
-    if (/os error 2\b/.test(String(e))) return [];
+    if (/os error 2\b/.test(String(e))) return { tasks: [], diagnostics: [] };
     throw e;
   }
   let doc: unknown;
@@ -134,8 +188,20 @@ export async function loadTasks(workspaceRoot: string): Promise<TaskDef[]> {
   }
   const list =
     doc && typeof doc === "object" ? (doc as { tasks?: unknown }).tasks : null;
-  if (!Array.isArray(list)) return [];
-  return list.map(normalizeTask).filter((t): t is TaskDef => t !== null);
+  if (!Array.isArray(list)) return { tasks: [], diagnostics: [] };
+  const normalized = list.map(normalizeTask);
+  return {
+    tasks: normalized.flatMap((item) => item.task ? [item.task] : []),
+    diagnostics: normalized.flatMap((item) => item.diagnostics),
+  };
+}
+
+export async function loadTasks(workspaceRoot: string): Promise<TaskDef[]> {
+  // The legacy ⌘⇧B runner executes one command directly; compound roots and
+  // unsupported types belong to the review-pipeline DAG engine.
+  return (await loadTaskDocument(workspaceRoot)).tasks.filter(
+    (task) => task.supported && !!task.command,
+  );
 }
 
 /** Picker order: default build first, then other build tasks, then the rest. */
@@ -241,6 +307,7 @@ const cwdWord = (raw: string, ws: Workspace): string => {
  * quoted — tasks.json commands are routinely full shell lines ("a && b").
  */
 export function shellCommandLine(task: TaskDef, ws: Workspace): string {
+  if (!task.command) throw new Error(`Task "${task.label}" has no command`);
   const command = [
     substitute(task.command, ws),
     ...task.args.map((a) => substituteWord(a, ws)),

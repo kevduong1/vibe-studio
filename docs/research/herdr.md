@@ -58,28 +58,28 @@ Current limits:
   shell tabs are not discovered.
 - Occupancy detection is macOS-first.
 - Screen profiles may need updates when agent CLIs change their interfaces.
-- There is no global inbox, agent-owned task/review model, worktree lifecycle,
-  launch-profile UI, native session identity, ACP integration, or external API.
+- There is no isolated worktree lifecycle, launch-profile UI, native session
+  identity, ACP integration, persistent task history, or external API.
 - PTYs still belong to the app process and do not survive application exit.
 
 ## Next: attention and review inbox
 
 This is the smallest feature that turns semantic state into a workflow.
 
-- [ ] Add a global inbox ordered by Needs Input, checks failed, Done/ready for
+- [x] Add a global inbox ordered by Needs Input, checks failed, Done/ready for
   review, Working, then idle.
-- [ ] Include both terminal docks and related-workspace families.
-- [ ] Show agent, project, current topic, reason, elapsed time, and current
+- [x] Include both terminal docks and related-workspace families.
+- [x] Show agent, project, current topic, reason, elapsed time, and current
   task/review state without exposing raw terminal output by default.
-- [ ] Click an item to switch workspace, reveal the correct dock/group, and
+- [x] Click an item to switch workspace, reveal the correct dock/group, and
   focus the exact terminal.
-- [ ] Add next-attention and previous-attention shortcuts.
-- [ ] Route macOS notification clicks to the exact terminal using the existing
+- [x] Add next-attention and previous-attention shortcuts.
+- [x] Route macOS notification clicks to the exact terminal using the existing
   terminal notification identifier.
-- [ ] Add a bounded, explicit terminal-tail peek for quick context.
+- [x] Add a bounded, explicit terminal-tail peek for quick context.
 - [ ] Allow a quick reply only after prompt ownership and stale-occupant checks
   are defined.
-- [ ] Keep lifecycle state separate from review state: Done means unseen idle,
+- [x] Keep lifecycle state separate from review state: Done means unseen idle,
   not tests passed or changes approved.
 
 ## Next: isolated worktree task loop
@@ -114,17 +114,18 @@ finish in Vibe Studio's native review UI.
 Terminal completion is only a signal. The real result is the task's changes
 and evidence.
 
-- [ ] Add an `AgentTask` model with runtime state and independent review state:
-  clean, unreviewed, feedback, checks failed, conflicted, merge ready,
-  accepted, or discarded.
-- [ ] Record a base commit so task diffs have a stable scope.
-- [ ] Report task exit codes through a private terminal marker.
-- [ ] Add task/check pipelines, then support `dependsOn`; do not enable
+- [x] Add a session-only `AgentTask` model with independent clean, unreviewed,
+  reviewed, feedback, stale approval, and accepted human-review state, with
+  conflicts and check results surfaced independently.
+  Discard remains deferred until isolated worktrees.
+- [x] Record a base commit so task evidence has a stable shared-tree scope.
+- [x] Report check exit codes through a nonce-bound private terminal marker.
+- [x] Add task/check pipelines with parallel/sequential `dependsOn`; do not enable
   repository-controlled folder-open autorun without a trust model.
 - [ ] Combine whole-task diff, latest checkpoint/turn diff, checks, LSP
   diagnostics, conflicts, commits, and preview status in one review surface.
 - [ ] Add line comments that can be batched into an agent follow-up.
-- [ ] Make merge readiness explicit; never infer approval from agent idleness.
+- [x] Make merge readiness explicit; never infer approval from agent idleness.
 - [ ] Add a read-only review-agent action after launch profiles exist.
 
 ## Next: launch profiles and agent definitions

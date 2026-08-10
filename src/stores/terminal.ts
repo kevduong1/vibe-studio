@@ -38,6 +38,8 @@ export const prunePaneState = <V>(
 };
 
 export interface TerminalState extends dock.DockState<WorkspaceTerminal> {
+  /** Ephemeral OSC 0/2 topics for project-dock agents. */
+  paneTitle: Record<string, string>;
   /** New terminal as a tab of the active group (or a fresh root group).
    *  Default title "Terminal N"; the task runner passes the task label. */
   newTerminal: (title?: string, kind?: TerminalKind) => string;
@@ -49,6 +51,7 @@ export interface TerminalState extends dock.DockState<WorkspaceTerminal> {
   setActiveGroup: (groupId: string) => void;
   renameTerminal: (id: string, title: string) => void;
   setNotificationsEnabled: (id: string, enabled: boolean) => void;
+  setPaneTitle: (id: string, title: string) => void;
   moveTerminal: (terminalId: string, targetGroupId: string, index: number) => void;
   splitGroup: (terminalId: string, targetGroupId: string, edge: DropEdge) => void;
   setSplitSizes: (splitId: string, sizes: number[]) => void;
@@ -78,6 +81,7 @@ export const createTerminalStore = (): TerminalStore =>
     terminals: {},
     root: null,
     activeGroupId: null,
+    paneTitle: {},
 
     newTerminal: (title, kind = "shell") => {
       const id = crypto.randomUUID();
@@ -117,7 +121,10 @@ export const createTerminalStore = (): TerminalStore =>
       return id;
     },
 
-    closeTerminal: (id) => set((s) => applied(s, dock.removeTerminal(s, id))),
+    closeTerminal: (id) => set((s) => ({
+      ...applied(s, dock.removeTerminal(s, id)),
+      paneTitle: prunePaneState(s.paneTitle, [id]),
+    })),
     setActiveTerminal: (groupId, terminalId) =>
       set((s) => applied(s, dock.setActiveTerminal(s, groupId, terminalId))),
     setActiveGroup: (groupId) => set((s) => applied(s, dock.setActiveGroup(s, groupId))),
@@ -132,6 +139,14 @@ export const createTerminalStore = (): TerminalStore =>
             [id]: { ...terminal, notificationsEnabled: enabled || undefined },
           },
         };
+      }),
+    setPaneTitle: (id, title) =>
+      set((s) => {
+        if (s.paneTitle[id] === title || (!title && !(id in s.paneTitle))) return s;
+        const paneTitle = { ...s.paneTitle };
+        if (title) paneTitle[id] = title;
+        else delete paneTitle[id];
+        return { paneTitle };
       }),
     moveTerminal: (terminalId, targetGroupId, index) =>
       set((s) => applied(s, dock.moveTerminal(s, terminalId, targetGroupId, index))),

@@ -38,9 +38,11 @@ use objc2_foundation::{NSArray, NSBundle, NSError, NSString};
 use parking_lot::Mutex;
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
-    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationSettings,
+    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
+    UNNotificationSettings,
     UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
+use tauri::{Emitter, Manager};
 
 /// Permission state as the frontend sees it. "unsupported" = the process has
 /// no bundle identifier (bare `tauri dev`), where the UN framework would
@@ -80,6 +82,46 @@ fn status_str(status: UNAuthorizationStatus) -> &'static str {
 /// it with every post — no extra command, no second source of truth).
 static PRESENT_FOREGROUND: AtomicBool = AtomicBool::new(false);
 
+#[derive(Default)]
+struct ActivationState {
+    frontend_ready: bool,
+    pending: Option<String>,
+}
+
+static ACTIVATION: Mutex<ActivationState> = Mutex::new(ActivationState {
+    frontend_ready: false,
+    pending: None,
+});
+static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationActivation {
+    terminal_id: String,
+}
+
+fn deliver_activation(id: String) {
+    let Some(app) = APP_HANDLE.get() else {
+        ACTIVATION.lock().pending = Some(id);
+        return;
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    let mut state = ACTIVATION.lock();
+    if state.frontend_ready {
+        drop(state);
+        let _ = app.emit(
+            "notification-activation",
+            NotificationActivation { terminal_id: id },
+        );
+    } else {
+        state.pending = Some(id);
+    }
+}
+
 define_class!(
     // SAFETY: NSObject has no subclassing requirements; the delegate is
     // stateless (no ivars, no Drop) and callable from any thread.
@@ -105,6 +147,19 @@ define_class!(
                 UNNotificationPresentationOptions::empty()
             };
             completion.call((opts,));
+        }
+
+        #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+        #[allow(non_snake_case)]
+        fn userNotificationCenter_didReceiveNotificationResponse_withCompletionHandler(
+            &self,
+            _center: &UNUserNotificationCenter,
+            response: &UNNotificationResponse,
+            completion: &DynBlock<dyn Fn()>,
+        ) {
+            let id = response.notification().request().identifier().to_string();
+            deliver_activation(id);
+            completion.call(());
         }
     }
 );
@@ -188,11 +243,13 @@ pub async fn notification_request() -> Result<String, String> {
 /// framework; dev (no bundle) is a silent no-op.
 #[tauri::command]
 pub async fn notification_send(
+    app: tauri::AppHandle,
     id: String,
     title: String,
     body: String,
     present_foreground: bool,
 ) -> Result<(), String> {
+    let _ = APP_HANDLE.set(app);
     blocking(move || {
         if !has_bundle() {
             return Ok(());
@@ -212,6 +269,48 @@ pub async fn notification_send(
         Ok(())
     })
     .await
+}
+
+/// Called only after the frontend listener is installed. Flushes the one
+/// activation that may have arrived during startup/listener registration.
+#[tauri::command]
+pub fn notification_activation_ready(app: tauri::AppHandle) -> Result<(), String> {
+    let _ = APP_HANDLE.set(app.clone());
+    let pending = {
+        let mut state = ACTIVATION.lock();
+        state.frontend_ready = true;
+        state.pending.take()
+    };
+    if let Some(terminal_id) = pending {
+        app.emit(
+            "notification-activation",
+            NotificationActivation { terminal_id },
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Page reload tears down the JS listener before the next page can install
+/// it. The composition root calls this at main-page load start.
+pub fn notification_activation_not_ready() {
+    ACTIVATION.lock().frontend_ready = false;
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::ActivationState;
+
+    #[test]
+    fn pending_activation_keeps_latest_terminal() {
+        let mut state = ActivationState::default();
+        state.pending = Some("first".into());
+        state.pending = Some("second".into());
+        assert_eq!(state.pending.as_deref(), Some("second"));
+        state.frontend_ready = true;
+        assert_eq!(state.pending.take().as_deref(), Some("second"));
+        assert!(state.pending.is_none());
+    }
 }
 
 /// Remove the delivered banner posted under this identifier (attention was

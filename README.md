@@ -60,10 +60,79 @@ A global dock for persistent shells and AI coding agents:
 - Live badges combine semantic state with each agent's current topic; tooltips
   explain the state authority and structured reason
 - Optional per-terminal sound and macOS banners alert once for background
-  questions/permissions or unseen completion
+  questions/permissions or unseen completion; clicking a banner returns to
+  the exact terminal
+- A global **Agent Inbox** (top-right titlebar or **⌘⇧I**) combines both docks in
+  Needs Input / review / working order, with exact-terminal navigation,
+  bounded context peek, independent review status, and check evidence
 - Drag & drop tabs into splits; layout persists across restarts
 - Drop a file or image from Finder onto a pane to paste its path — image
   drops work with Claude Code out of the box
+
+### 📥 Agent Inbox & review
+
+The titlebar inbox turns agent activity into one review queue across global
+and project terminals:
+
+- Open it from the top-right titlebar or with **⌘⇧I**. **Attention** shows actionable
+  agents; **All** includes working, idle, accepted, and unavailable sessions.
+- Items are ordered by urgency: **Needs Input**, conflicts or failed checks,
+  completed/unreviewed/stale approvals, active work, then informational states.
+  Older waiting items come first.
+- Every row includes the agent, terminal, project, current topic, structured
+  reason, elapsed time, lifecycle state, and separate review state. Related
+  workspace families and shared-working-tree review scope are called out.
+- Opening an item activates the exact project, panel side, dock grouping, tab,
+  and terminal. Closed global-terminal projects are reopened when possible.
+  **⌘⌥↓** and **⌘⌥↑** cycle through actionable agents.
+- **Peek context** explicitly reads only the last 12 logical terminal lines,
+  capped at 4 KiB. The text stays in the open popover and is never persisted,
+  logged, or added to task history.
+- macOS notification clicks use the same exact-terminal routing. A notification
+  for a terminal that has since closed opens the inbox with a nonfatal message.
+
+Each dedicated agent launch owns a session-only review task tied to that exact
+terminal occupant. Review state is intentionally independent from terminal
+lifecycle: **Done** means an unseen idle agent, not that its work passed checks
+or was approved.
+
+- Human review states cover **Clean**, **Unreviewed**, **Reviewed**,
+  **Feedback**, **Approval Stale**, and **Accepted**. Conflicts and check results
+  are shown separately instead of controlling approval.
+- Vibe Studio captures the launch's base commit and refreshes privacy-bounded
+  Git evidence as the repository changes. Committed, staged, working-tree, and
+  untracked changes, executable modes, conflict stages, and dirty submodules
+  are included; file contents are hashed in Rust and never retained in the
+  frontend. Unborn repositories are supported, while late/manual-launch
+  baselines are clearly marked as potentially incomplete review boundaries.
+- **Review changes** opens Source Control and the first current worktree/index
+  diff when one is available. **Accept** records the human decision after that
+  review; checks are optional evidence and do not gate it. **Needs changes**
+  records feedback and returns to the terminal without sending text. If the
+  repository changes after acceptance, the inbox marks that approval stale.
+- Because agents currently share the normal working tree, review scope is
+  always “all repository changes since the base commit.” Vibe Studio does not
+  claim that an individual agent authored particular files and does not expose
+  Apply, Merge, or Discard actions until isolated worktrees are supported.
+
+Repository checks come from `.vscode/tasks.json`:
+
+- Tasks in the `build` or `test` groups can be selected as pipeline roots.
+  Compound tasks are supported, dependencies run in parallel by default, and
+  `dependsOrder: "sequence"` preserves listed order.
+- Reachable duplicate labels, malformed/missing dependencies, cycles,
+  unsupported/background tasks, and unavailable or unknown variables are
+  rejected before execution; unrelated broken tasks do not block the pipeline.
+- Check nodes run in fresh app-reserved project terminals. Exit status is
+  reported by a private nonce-bound terminal marker instead of parsing output;
+  closing a terminal cancels the node rather than inventing a failure.
+- Checks compare pre/post fingerprints and rerun the full DAG once when a
+  formatter changes the tree; another mutation invalidates the evidence. Any
+  later repository mutation also makes a pass stale. The latest 20
+  structured runs are kept for the current app session, without raw output.
+- Manual runs are explicitly authorized by the click. **Auto-run on turn
+  completion** requires one project-scoped approval before repository commands
+  may run automatically, and that approval can be revoked in the inbox.
 
 ### ⌨️ Project terminals
 
@@ -76,6 +145,11 @@ A global dock for persistent shells and AI coding agents:
   streaming, so `cat`-ing a huge file won't wedge the app
 - **⌘⇧B task runner**: VS Code-compatible `.vscode/tasks.json`, with a
   quick-pick overlay, `${variable}` substitution, and panel reuse rules
+- Agent check pipelines use build/test task roots and support compound tasks,
+  parallel `dependsOn`, and `dependsOrder: "sequence"`; automatic runs require
+  explicit, revocable per-project approval. Checks use fresh reserved terminals
+  and compare the repository before/after execution, rerunning once when a
+  formatter changes the tree rather than certifying untested edits
 
 ### ✍️ Editor & navigation
 
@@ -119,6 +193,8 @@ A global dock for persistent shells and AI coding agents:
 | ⌘ ⇧ F | Search across the workspace |
 | ⌘ F | Find / replace in the editor |
 | ⌘ ⇧ B | Run build task |
+| ⌘ ⇧ I | Open Agent Inbox |
+| ⌘ ⌥ ↓ / ⌘ ⌥ ↑ | Next / previous actionable agent |
 | ⌘ ` | Toggle terminal panel |
 | ⌘ B | Toggle sidebar |
 | ⌘ 1–9 | Switch to the Nth workspace |
@@ -141,7 +217,9 @@ A global dock for persistent shells and AI coding agents:
 Contributor guidance lives in [`AGENTS.md`](AGENTS.md) and
 [`CLAUDE.md`](CLAUDE.md). The semantic terminal-agent state model and privacy
 boundary are documented in
-[`docs/architecture/agent-runtime.md`](docs/architecture/agent-runtime.md).
+[`docs/architecture/agent-runtime.md`](docs/architecture/agent-runtime.md),
+with task review and checks in
+[`docs/architecture/attention-review.md`](docs/architecture/attention-review.md).
 
 ## Development
 

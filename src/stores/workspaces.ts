@@ -16,6 +16,7 @@ import { disposePreviewsWithFallback } from "../lib/previewDisposal";
 import { projectDisplayName } from "../lib/projectNames";
 import { disposeWorkspaceLsp, setActiveLspWorkspace } from "../lib/lsp/servers";
 import { disposeSession } from "../lib/termSessions";
+import { removeAgentTask } from "./agentTasks";
 import { createRepoStore, type RepoState, type RepoStore } from "./repo";
 import {
   createEditorStore,
@@ -205,6 +206,7 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
       // running, and just show as disconnected.
       for (const id of Object.keys(ws.terminal.getState().terminals)) {
         disposeSession(id);
+        removeAgentTask(id);
       }
       // Same registry discipline for language servers (lib/lsp/servers.ts).
       disposeWorkspaceLsp(path);

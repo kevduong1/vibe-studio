@@ -143,6 +143,15 @@ export interface StatusResult {
   unstaged: FileStatus[];
 }
 
+export interface GitReviewSnapshot {
+  head: string | null;
+  baseAncestry: "same" | "ahead" | "diverged" | "unavailable";
+  changedFiles: string[];
+  conflictedFiles: string[];
+  /** SHA-256 over HEAD plus sorted staged/worktree/untracked content. */
+  fingerprint: string;
+}
+
 export interface RefLabel {
   /** Short name, e.g. "main", "origin/main", "v1.0.0". */
   name: string;
@@ -261,6 +270,18 @@ export interface SearchResult {
 /** Validate + open a repository (any path inside it works). */
 export const gitOpen = (path: string): Promise<RepoInfo> =>
   invoke("git_open", { path });
+
+export const gitReviewSnapshot = (
+  repoPath: string,
+  baseHead?: string | null,
+  baseUnborn = false,
+): Promise<GitReviewSnapshot> =>
+  invoke("git_review_snapshot", { repoPath, baseHead: baseHead ?? null, baseUnborn });
+
+/** Cheap launch boundary for review ownership; null is a successfully
+ * captured unborn repository, while rejection means no boundary was proven. */
+export const gitReviewHead = (repoPath: string): Promise<string | null> =>
+  invoke("git_review_head", { repoPath });
 
 export const gitStatus = (repoPath: string): Promise<StatusResult> =>
   invoke("git_status", { repoPath });
@@ -714,6 +735,28 @@ export const notificationSend = (
  *  none exists, or in dev). */
 export const notificationDismiss = (id: string): Promise<void> =>
   invoke("notification_dismiss", { id });
+
+export interface NotificationActivation {
+  terminalId: string;
+}
+
+/** Install the listener first, then mark it ready so a startup click cannot
+ * be lost between native activation and frontend registration. */
+export const listenNotificationActivations = async (
+  cb: (activation: NotificationActivation) => void,
+): Promise<UnlistenFn> => {
+  const unlisten = await listen<NotificationActivation>(
+    "notification-activation",
+    (event) => cb(event.payload),
+  );
+  try {
+    await invoke("notification_activation_ready");
+  } catch (error) {
+    unlisten();
+    throw error;
+  }
+  return unlisten;
+};
 
 /** Play an audio file through afplay (any format it handles). Rejects when
  *  afplay can't spawn or the file doesn't exist (so callers can fall back);

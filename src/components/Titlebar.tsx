@@ -30,6 +30,7 @@ import {
 } from "../lib/projectNames";
 import { copyText } from "../lib/clipboard";
 import { ContextMenu } from "./ContextMenu";
+import AttentionInbox from "./AttentionInbox";
 import {
   ActivityGlyph,
   IcBranch,
@@ -483,6 +484,7 @@ export default function Titlebar() {
 
       <div className="titlebar-right">
         {active && <ActiveRepoControls ws={active} />}
+        <AttentionInbox />
       </div>
 
       {tabMenu && (

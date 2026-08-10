@@ -13,6 +13,8 @@ import {
 } from "./termSessions";
 import type { TerminalStore } from "../stores/terminal";
 import type { Workspace } from "../stores/workspaces";
+import { createAgentTask, removeAgentTask } from "../stores/agentTasks";
+import { useAgentRuntimeStore } from "../stores/agentRuntime";
 
 /** The (possibly already-running) session for a workspace terminal. */
 export function getOrCreateWorkspaceSession(
@@ -29,6 +31,7 @@ export function getOrCreateWorkspaceSession(
       workspacePath: ws.path,
       agentScope: "workspace" as const,
     }),
+    onTitle: (title) => ws.terminal.getState().setPaneTitle(id, title),
     onExit: (_code, early) => {
       // Normal exit closes the tab; an early failure keeps the corpse
       // readable (spawn error, bad dotfiles) for the user to close.
@@ -53,7 +56,16 @@ export function openWorkspaceTerminal(
   if (kind !== "shell") {
     const session = getOrCreateWorkspaceSession(ws, id);
     session.markAgentLaunching();
-    session.sendText(`${AGENT_COMMAND[kind]}\r`);
+    const generation = (useAgentRuntimeStore.getState().states[id]?.generation ?? 0) + 1;
+    // Baseline capture is ordered before the app-initiated launch. Failure is
+    // recorded on the task and never prevents the command from starting.
+    void createAgentTask({
+      terminalId: id,
+      generation,
+      workspacePath: ws.path,
+      scope: "workspace",
+      kind,
+    }).finally(() => session.sendText(`${AGENT_COMMAND[kind]}\r`));
   }
   return id;
 }
@@ -61,5 +73,6 @@ export function openWorkspaceTerminal(
 /** UI-facing close: kill the PTY first, then remove the tab from the layout. */
 export function closeWorkspaceTerminal(store: TerminalStore, id: string): void {
   disposeSession(id);
+  removeAgentTask(id);
   store.getState().closeTerminal(id);
 }

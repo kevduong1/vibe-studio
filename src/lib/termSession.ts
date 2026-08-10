@@ -33,6 +33,7 @@ import {
   useAgentRuntimeStore,
 } from "../stores/agentRuntime";
 import { trackActivity, type ActivityTracker } from "./terminalActivity";
+import { trackedCommandProgram } from "./trackedCommand";
 import "@xterm/xterm/css/xterm.css";
 
 /** Terminal colors, mirroring theme.css (sanctioned hardcoded-color site:
@@ -119,6 +120,11 @@ export interface TermSession {
    *  safe immediately after the session is created — the task runner sends
    *  the command line before the pane host has even mounted). */
   sendText(data: string): void;
+  /** Privacy-bounded logical tail for an explicit, in-memory context peek. */
+  readTail(maxLines: number, maxChars: number): string[];
+  /** Run a shell line with an unforgeable private OSC completion marker.
+   * Terminal prose is never interpreted as an exit status. */
+  runTrackedCommand(command: string, runId: string): Promise<TrackedCommandResult>;
   /** Set semantic occupancy before typing a launch command into the shell. */
   markAgentLaunching(): void;
   /** Clear the tracker's attention state (user clicked into the terminal). */
@@ -126,6 +132,10 @@ export interface TermSession {
   /** The ONLY path that kills the PTY. Idempotent. */
   dispose(): void;
 }
+
+export type TrackedCommandResult =
+  | { runId: string; nonce: string; status: "exited"; exitCode: number }
+  | { runId: string; nonce: string; status: "cancelled" };
 
 export function createTermSession(opts: TermSessionOptions): TermSession {
   const { id, cwd, agent } = opts;
@@ -156,6 +166,10 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
   let runtimeRegistered = false;
   let unRuntime: (() => void) | null = null;
   let semanticTimer: number | null = null;
+  const tracked = new Map<
+    string,
+    { runId: string; resolve: (result: TrackedCommandResult) => void }
+  >();
 
   const watched = () => document.hasFocus() && el.offsetParent !== null;
 
@@ -259,9 +273,12 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
         )
       : null;
 
-  const logicalScreenTail = (): string[] => {
+  const readTail = (maxLines: number, maxChars: number): string[] => {
+    const lineLimit = Math.max(0, Math.floor(maxLines));
+    const charLimit = Math.max(0, Math.floor(maxChars));
+    if (lineLimit === 0 || charLimit === 0) return [];
     const buffer = term.buffer.active;
-    const first = Math.max(0, buffer.length - 120);
+    const first = Math.max(0, buffer.length - Math.max(120, lineLimit * 8));
     const logical: string[] = [];
     for (let y = first; y < buffer.length; y++) {
       const line = buffer.getLine(y);
@@ -272,14 +289,41 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     }
     let chars = 0;
     const tail: string[] = [];
-    for (let i = logical.length - 1; i >= 0 && tail.length < 40; i--) {
-      const room = 16 * 1024 - chars;
+    for (let i = logical.length - 1; i >= 0 && tail.length < lineLimit; i--) {
+      const room = charLimit - chars;
       if (room <= 0) break;
       const text = logical[i].length > room ? logical[i].slice(-room) : logical[i];
       tail.unshift(text);
       chars += text.length;
     }
     return tail;
+  };
+
+  const logicalScreenTail = (): string[] => readTail(40, 16 * 1024);
+
+  // 6973 is app-private. Returning true consumes the marker before xterm
+  // renders it; a matching random nonce is required before any promise is
+  // completed, so terminal output cannot impersonate a check result.
+  const trackedMarkerSub = term.parser.registerOscHandler(6973, (data) => {
+    const match = /^vibe;([^;]+);([^;]+);(\d+)$/.exec(data);
+    if (!match) return true;
+    const pending = tracked.get(match[2]);
+    if (!pending || encodeURIComponent(pending.runId) !== match[1]) return true;
+    tracked.delete(match[2]);
+    pending.resolve({
+      runId: pending.runId,
+      nonce: match[2],
+      status: "exited",
+      exitCode: Number(match[3]),
+    });
+    return true;
+  });
+
+  const cancelTracked = () => {
+    for (const [nonce, pending] of tracked) {
+      pending.resolve({ runId: pending.runId, nonce, status: "cancelled" });
+    }
+    tracked.clear();
   };
 
   const inspectSemanticScreen = () => {
@@ -326,6 +370,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
 
       const u2 = await onPtyExit(id, (code) => {
         exited = true;
+        cancelTracked();
         // A shell dying non-zero right after spawn (bad $SHELL, deleted
         // project dir) would close the terminal and destroy its own error
         // output — keep the corpse readable instead.
@@ -460,6 +505,27 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       else pendingInput += data;
     },
 
+    readTail,
+
+    runTrackedCommand(command, runId) {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      const nonce = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      return new Promise<TrackedCommandResult>((resolve) => {
+        if (disposed || exited) {
+          resolve({ runId, nonce, status: "cancelled" });
+          return;
+        }
+        tracked.set(nonce, { runId, resolve });
+        // Values are generated locally and contain no single quotes. The
+        // command remains a shell program so task comments and heredocs keep
+        // their expected semantics.
+        const wrapped = trackedCommandProgram(command, runId, nonce);
+        if (shellReady) void ptyWrite(id, `${wrapped}\r`).catch(() => cancelTracked());
+        else pendingInput += `${wrapped}\r`;
+      });
+    },
+
     markAgentLaunching() {
       ensureRuntime();
       markRuntimeLaunching(id);
@@ -481,6 +547,8 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       resizeSub.dispose();
       titleSub?.dispose();
       semanticSub?.dispose();
+      trackedMarkerSub.dispose();
+      cancelTracked();
       if (opts.agentKind) window.removeEventListener("focus", onWindowFocus);
       unRuntime?.();
       if (semanticTimer !== null) window.clearTimeout(semanticTimer);

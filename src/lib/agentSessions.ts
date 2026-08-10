@@ -12,6 +12,8 @@ import {
   type AgentTerminal,
 } from "../stores/agentTerminals";
 import type { TerminalKind } from "../stores/terminal";
+import { createAgentTask, removeAgentTask } from "../stores/agentTasks";
+import { useAgentRuntimeStore } from "../stores/agentRuntime";
 
 /** The (possibly already-running) session for an agent terminal. */
 export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
@@ -38,6 +40,7 @@ export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
  *  (and any banner still standing for it). */
 export function closeAgentTerminal(id: string): void {
   disposeSession(id);
+  removeAgentTask(id);
   useAgentTerminalsStore.getState().closeTerminal(id);
   dismissAgentAttention(id);
 }
@@ -50,6 +53,7 @@ export function closeGlobalGrouping(groupingId: string): void {
   if (!grouping) return;
   for (const id of groupingTerminalIds(grouping)) {
     disposeSession(id);
+    removeAgentTask(id);
     dismissAgentAttention(id);
   }
   s.closeGrouping(groupingId);
@@ -85,7 +89,14 @@ export function openAgentTerminal(
   if (t && kind !== "shell") {
     const session = getOrCreateAgentSession(t);
     session.markAgentLaunching();
-    session.sendText(`${AGENT_COMMAND[kind]}\r`);
+    const generation = (useAgentRuntimeStore.getState().states[id]?.generation ?? 0) + 1;
+    void createAgentTask({
+      terminalId: id,
+      generation,
+      workspacePath,
+      scope: "global",
+      kind,
+    }).finally(() => session.sendText(`${AGENT_COMMAND[kind]}\r`));
   }
   return id;
 }

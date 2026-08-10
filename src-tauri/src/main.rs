@@ -29,6 +29,7 @@ fn main() {
             if webview.label() == "main"
                 && payload.event() == tauri::webview::PageLoadEvent::Started
             {
+                notify::notification_activation_not_ready();
                 pty::kill_all(&webview.app_handle().state::<pty::PtyState>());
                 lsp::kill_all(&webview.app_handle().state::<lsp::LspState>());
             }
@@ -36,6 +37,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             // git
             git::git_open,
+            git::git_review_head,
+            git::git_review_snapshot,
             git::git_status,
             git::git_stage,
             git::git_unstage,
@@ -105,6 +108,7 @@ fn main() {
             notify::notification_state,
             notify::notification_request,
             notify::notification_send,
+            notify::notification_activation_ready,
             notify::notification_dismiss,
             notify::play_sound,
             // usage

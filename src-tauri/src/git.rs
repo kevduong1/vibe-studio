@@ -3,7 +3,11 @@
 //! operations (fetch/pull/push) shell out to the `git` CLI so the user's
 //! ssh-agent / credential helpers keep working.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fs::File;
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path};
 use std::process::{Command, Stdio};
 
@@ -12,6 +16,7 @@ use git2::{
     BranchType, Delta, DiffFindOptions, ErrorCode, Oid, Repository, Sort, StashFlags, Status,
     StatusOptions,
 };
+use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
 // Payload types (wire shapes match src/lib/ipc.ts exactly)
@@ -49,6 +54,19 @@ pub struct StatusResult {
     pub branch: BranchInfo,
     pub staged: Vec<FileStatus>,
     pub unstaged: Vec<FileStatus>,
+}
+
+/// Privacy-bounded review evidence. File contents are folded into the
+/// fingerprint in Rust and never cross IPC.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitReviewSnapshot {
+    pub head: Option<String>,
+    /// same | ahead | diverged | unavailable
+    pub base_ancestry: String,
+    pub changed_files: Vec<String>,
+    pub conflicted_files: Vec<String>,
+    pub fingerprint: String,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -446,6 +464,375 @@ pub async fn git_open(path: String) -> Result<RepoInfo, String> {
         Ok(RepoInfo { root, tab_group_id })
     })
     .await
+}
+
+fn hash_tag(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_le_bytes());
+    hasher.update(value);
+}
+
+fn hash_index_path(
+    hasher: &mut Sha256,
+    repo: &Repository,
+    index: &git2::Index,
+    relative: &str,
+) -> Result<(), String> {
+    let mut found = false;
+    for stage in 0..=3 {
+        if let Some(entry) = index.get_path(Path::new(relative), stage) {
+            found = true;
+            hash_tag(hasher, b"stage");
+            hasher.update((stage as u32).to_le_bytes());
+            hasher.update(entry.mode.to_le_bytes());
+            if entry.mode == 0o160000 {
+                // A gitlink points at a commit, not a blob. Its oid is the
+                // complete staged submodule content boundary.
+                hash_tag(hasher, b"gitlink");
+                hash_tag(hasher, entry.id.to_string().as_bytes());
+            } else {
+                hash_index_blob(hasher, repo, entry.id)?;
+            }
+        }
+    }
+    if !found {
+        hash_tag(hasher, b"deleted");
+    }
+    Ok(())
+}
+
+fn hash_dirty_repository(hasher: &mut Sha256, repo: &Repository) -> Result<(), String> {
+    let root = repo
+        .workdir()
+        .ok_or_else(|| "submodule has no working directory".to_string())?;
+    let head = repo.head().ok().and_then(|value| value.target());
+    hash_tag(
+        hasher,
+        head.map(|oid| oid.to_string())
+            .as_deref()
+            .unwrap_or("unborn")
+            .as_bytes(),
+    );
+    let mut options = StatusOptions::new();
+    options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .renames_head_to_index(true)
+        .renames_index_to_workdir(true);
+    let statuses = repo
+        .statuses(Some(&mut options))
+        .map_err(|e| e.to_string())?;
+    let index = repo.index().map_err(|e| e.to_string())?;
+    let mut entries = statuses
+        .iter()
+        .map(|entry| (lossy(entry.path_bytes()), entry.status()))
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, status) in entries {
+        hash_tag(hasher, path.as_bytes());
+        hasher.update(status.bits().to_le_bytes());
+        if status.intersects(
+            Status::INDEX_NEW
+                | Status::INDEX_MODIFIED
+                | Status::INDEX_DELETED
+                | Status::INDEX_RENAMED
+                | Status::INDEX_TYPECHANGE
+                | Status::CONFLICTED,
+        ) {
+            hash_index_path(hasher, repo, &index, &path)?;
+        }
+        if status.intersects(
+            Status::WT_NEW
+                | Status::WT_MODIFIED
+                | Status::WT_DELETED
+                | Status::WT_RENAMED
+                | Status::WT_TYPECHANGE
+                | Status::CONFLICTED,
+        ) {
+            hash_worktree_path(hasher, root, &path)?;
+        }
+    }
+    Ok(())
+}
+
+fn hash_worktree_path(hasher: &mut Sha256, root: &Path, relative: &str) -> Result<(), String> {
+    let path = root.join(relative);
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            hash_tag(hasher, b"deleted");
+            return Ok(());
+        }
+        Err(error) => return Err(format!("read {relative}: {error}")),
+    };
+    if metadata.file_type().is_symlink() {
+        hash_tag(hasher, b"symlink");
+        let target = std::fs::read_link(&path).map_err(|e| format!("read {relative}: {e}"))?;
+        hash_tag(hasher, target.to_string_lossy().as_bytes());
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        // Git reports a changed submodule as its directory. Fold both its
+        // checked-out commit and nested dirty/index/untracked state into the
+        // parent fingerprint. Ordinary untracked directories are expanded by
+        // recurse_untracked_dirs and do not reach this branch.
+        hash_tag(hasher, b"submodule");
+        if let Ok(repo) = Repository::open(&path) {
+            hash_dirty_repository(hasher, &repo)?;
+        }
+        return Ok(());
+    }
+    hash_tag(hasher, b"file");
+    #[cfg(unix)]
+    hasher.update((metadata.mode() & 0o111).to_le_bytes());
+    hasher.update(metadata.len().to_le_bytes());
+    let mut file = File::open(&path).map_err(|e| format!("read {relative}: {e}"))?;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|e| format!("read {relative}: {e}"))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(())
+}
+
+fn hash_index_blob(hasher: &mut Sha256, repo: &Repository, oid: Oid) -> Result<(), String> {
+    if let Ok(odb) = repo.odb() {
+        if let Ok((mut reader, size, _kind)) = odb.reader(oid) {
+            hasher.update((size as u64).to_le_bytes());
+            let mut buffer = [0_u8; 64 * 1024];
+            loop {
+                let count = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+                if count == 0 {
+                    return Ok(());
+                }
+                hasher.update(&buffer[..count]);
+            }
+        }
+    }
+    // Some packed/delta ODB backends do not expose a stream. The libgit2
+    // slice is the compatibility fallback; it is still hashed in Rust and is
+    // never cloned or returned over IPC.
+    let blob = repo.find_blob(oid).map_err(|e| e.to_string())?;
+    hasher.update((blob.size() as u64).to_le_bytes());
+    hasher.update(blob.content());
+    Ok(())
+}
+
+fn review_snapshot_once(
+    repo_path: &str,
+    base_head: Option<&str>,
+    base_unborn: bool,
+) -> Result<GitReviewSnapshot, String> {
+    let repo = open_repo(repo_path)?;
+    let root = repo
+        .workdir()
+        .ok_or_else(|| "repository has no working directory (bare repo)".to_string())?;
+    let head_oid = repo.head().ok().and_then(|head| head.target());
+    let head = head_oid.map(|oid| oid.to_string());
+    let base_ancestry = match (base_head, head_oid) {
+        (Some(base), Some(current)) => match Oid::from_str(base) {
+            Ok(base_oid) if base_oid == current => "same",
+            Ok(base_oid) => match repo.graph_descendant_of(current, base_oid) {
+                Ok(true) => "ahead",
+                Ok(false) => "diverged",
+                Err(_) => "unavailable",
+            },
+            Err(_) => "unavailable",
+        },
+        (None, None) if base_unborn => "same",
+        (None, Some(_)) if base_unborn => "ahead",
+        _ => "unavailable",
+    }
+    .to_string();
+
+    let mut options = StatusOptions::new();
+    options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .renames_head_to_index(true)
+        .renames_index_to_workdir(true);
+    let statuses = repo
+        .statuses(Some(&mut options))
+        .map_err(|e| e.to_string())?;
+    let mut changed = BTreeSet::new();
+    let mut conflicted = BTreeSet::new();
+    // A path can have independent staged and worktree content. Preserve
+    // both namespaces in sorted order so the digest is deterministic.
+    let mut sources: BTreeMap<(String, String), ()> = BTreeMap::new();
+    const INDEX_BITS: Status = Status::INDEX_NEW
+        .union(Status::INDEX_MODIFIED)
+        .union(Status::INDEX_DELETED)
+        .union(Status::INDEX_RENAMED)
+        .union(Status::INDEX_TYPECHANGE);
+    const WT_BITS: Status = Status::WT_NEW
+        .union(Status::WT_MODIFIED)
+        .union(Status::WT_DELETED)
+        .union(Status::WT_RENAMED)
+        .union(Status::WT_TYPECHANGE);
+    for entry in statuses.iter() {
+        let path = lossy(entry.path_bytes());
+        let status = entry.status();
+        changed.insert(path.clone());
+        if status.contains(Status::CONFLICTED) {
+            conflicted.insert(path.clone());
+        }
+        if status.intersects(INDEX_BITS) || status.contains(Status::CONFLICTED) {
+            sources.insert((path.clone(), "index".to_string()), ());
+        }
+        if status.intersects(WT_BITS)
+            || status.contains(Status::WT_NEW)
+            || status.contains(Status::CONFLICTED)
+        {
+            sources.insert((path, "worktree".to_string()), ());
+        }
+    }
+
+    // Changes may have been committed by the agent, leaving a clean
+    // worktree. Review scope is base..current plus local changes, not
+    // merely `git status` at the moment of inspection.
+    if let (Some(base), Some(current)) = (base_head, head_oid) {
+        if let Ok(base_oid) = Oid::from_str(base) {
+            if let (Ok(base_commit), Ok(current_commit)) =
+                (repo.find_commit(base_oid), repo.find_commit(current))
+            {
+                if let (Ok(base_tree), Ok(current_tree)) =
+                    (base_commit.tree(), current_commit.tree())
+                {
+                    if let Ok(diff) =
+                        repo.diff_tree_to_tree(Some(&base_tree), Some(&current_tree), None)
+                    {
+                        for delta in diff.deltas() {
+                            if let Some(path) = diff_file_path(delta.new_file())
+                                .or_else(|| diff_file_path(delta.old_file()))
+                            {
+                                changed.insert(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let index = repo.index().map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    hash_tag(&mut hasher, b"vibe-review-v1");
+    hash_tag(&mut hasher, head.as_deref().unwrap_or("unborn").as_bytes());
+    for ((path, source), ()) in sources {
+        hash_tag(&mut hasher, source.as_bytes());
+        hash_tag(&mut hasher, path.as_bytes());
+        if source == "index" {
+            hash_index_path(&mut hasher, &repo, &index, &path)?;
+        } else {
+            hash_worktree_path(&mut hasher, root, &path)?;
+        }
+    }
+    Ok(GitReviewSnapshot {
+        head,
+        base_ancestry,
+        changed_files: changed.into_iter().collect(),
+        conflicted_files: conflicted.into_iter().collect(),
+        fingerprint: format!("{:x}", hasher.finalize()),
+    })
+}
+
+fn repository_generation(repo_path: &str) -> Result<Vec<u8>, String> {
+    let repo = open_repo(repo_path)?;
+    let root = repo
+        .workdir()
+        .ok_or_else(|| "repository has no working directory (bare repo)".to_string())?;
+    let mut options = StatusOptions::new();
+    options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .renames_head_to_index(true)
+        .renames_index_to_workdir(true);
+    let statuses = repo
+        .statuses(Some(&mut options))
+        .map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    hash_tag(
+        &mut hasher,
+        repo.head()
+            .ok()
+            .and_then(|head| head.target())
+            .map(|oid| oid.to_string())
+            .as_deref()
+            .unwrap_or("unborn")
+            .as_bytes(),
+    );
+    let mut entries = statuses
+        .iter()
+        .map(|entry| (lossy(entry.path_bytes()), entry.status()))
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, status) in entries {
+        hash_tag(&mut hasher, path.as_bytes());
+        hasher.update(status.bits().to_le_bytes());
+        if let Ok(metadata) = std::fs::symlink_metadata(root.join(&path)) {
+            hasher.update(metadata.len().to_le_bytes());
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(value) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    hasher.update(value.as_nanos().to_le_bytes());
+                }
+            }
+            #[cfg(unix)]
+            hasher.update(metadata.mode().to_le_bytes());
+        }
+    }
+    if let Ok(metadata) = std::fs::metadata(repo.path().join("index")) {
+        hasher.update(metadata.len().to_le_bytes());
+        if let Ok(modified) = metadata.modified() {
+            if let Ok(value) = modified.duration_since(std::time::UNIX_EPOCH) {
+                hasher.update(value.as_nanos().to_le_bytes());
+            }
+        }
+    }
+    Ok(hasher.finalize().to_vec())
+}
+
+fn review_snapshot(
+    repo_path: &str,
+    base_head: Option<&str>,
+    base_unborn: bool,
+) -> Result<GitReviewSnapshot, String> {
+    for _ in 0..3 {
+        let before = repository_generation(repo_path)?;
+        let snapshot = review_snapshot_once(repo_path, base_head, base_unborn)?;
+        if before == repository_generation(repo_path)? {
+            return Ok(snapshot);
+        }
+    }
+    Err("repository kept changing while review evidence was captured".to_string())
+}
+
+#[tauri::command]
+pub async fn git_review_head(repo_path: String) -> Result<Option<String>, String> {
+    blocking(move || {
+        let repo = open_repo(&repo_path)?;
+        Ok(repo
+            .head()
+            .ok()
+            .and_then(|head| head.target())
+            .map(|oid| oid.to_string()))
+    })
+    .await
+}
+
+/// Capture current repository evidence for an owned agent task. The base is
+/// optional because the first capture also obtains it. Contents are hashed in
+/// Rust and never returned to the frontend.
+#[tauri::command]
+pub async fn git_review_snapshot(
+    repo_path: String,
+    base_head: Option<String>,
+    base_unborn: bool,
+) -> Result<GitReviewSnapshot, String> {
+    blocking(move || review_snapshot(&repo_path, base_head.as_deref(), base_unborn)).await
 }
 
 #[tauri::command]
@@ -1526,6 +1913,132 @@ pub async fn git_list_refs(repo_path: String) -> Result<Vec<RefLabel>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_repo() -> (std::path::PathBuf, Repository) {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("vibe-review-{}-{stamp}", std::process::id()));
+        let repo = Repository::init(&path).unwrap();
+        (path, repo)
+    }
+
+    fn commit_file(repo: &Repository, path: &Path, content: &[u8], message: &str) -> Oid {
+        std::fs::write(repo.workdir().unwrap().join(path), content).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(path).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let signature = git2::Signature::now("Vibe Test", "vibe@example.test").unwrap();
+        let parent = repo.head().ok().and_then(|head| head.peel_to_commit().ok());
+        let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+        repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &parents).unwrap()
+    }
+
+    #[test]
+    fn review_snapshot_tracks_clean_dirty_staged_untracked_and_large_content() {
+        let (path, repo) = temp_repo();
+        let base = commit_file(&repo, Path::new("tracked.txt"), b"base\n", "base");
+        let base = base.to_string();
+        let clean = review_snapshot(path.to_str().unwrap(), Some(&base), false).unwrap();
+        assert!(clean.changed_files.is_empty());
+        assert_eq!(clean.base_ancestry, "same");
+        assert_eq!(
+            clean.fingerprint,
+            review_snapshot(path.to_str().unwrap(), Some(&base), false)
+                .unwrap()
+                .fingerprint
+        );
+
+        std::fs::write(path.join("tracked.txt"), b"dirty\n").unwrap();
+        let dirty = review_snapshot(path.to_str().unwrap(), Some(&base), false).unwrap();
+        assert_eq!(dirty.changed_files, vec!["tracked.txt"]);
+        assert_ne!(clean.fingerprint, dirty.fingerprint);
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        let staged = review_snapshot(path.to_str().unwrap(), Some(&base), false).unwrap();
+        assert_eq!(staged.changed_files, vec!["tracked.txt"]);
+        assert_ne!(dirty.fingerprint, staged.fingerprint);
+
+        std::fs::write(path.join("large.bin"), vec![7_u8; 2 * 1024 * 1024]).unwrap();
+        let untracked = review_snapshot(path.to_str().unwrap(), Some(&base), false).unwrap();
+        assert_eq!(untracked.changed_files, vec!["large.bin", "tracked.txt"]);
+        assert_eq!(
+            untracked.fingerprint,
+            review_snapshot(path.to_str().unwrap(), Some(&base), false)
+                .unwrap()
+                .fingerprint
+        );
+        drop(repo);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn review_snapshot_keeps_committed_changes_and_detects_conflicts() {
+        let (path, repo) = temp_repo();
+        let base = commit_file(&repo, Path::new("file.txt"), b"base\n", "base");
+        let main_ref = repo.head().unwrap().name().unwrap().to_string();
+        let base_commit = repo.find_commit(base).unwrap();
+        repo.branch("other", &base_commit, false).unwrap();
+        drop(base_commit);
+        repo.set_head("refs/heads/other").unwrap();
+        repo.checkout_head(Some(CheckoutBuilder::new().force())).unwrap();
+        commit_file(&repo, Path::new("file.txt"), b"other\n", "other");
+        repo.set_head(&main_ref).unwrap();
+        repo.checkout_head(Some(CheckoutBuilder::new().force())).unwrap();
+        commit_file(&repo, Path::new("file.txt"), b"ours\n", "ours");
+
+        let committed =
+            review_snapshot(path.to_str().unwrap(), Some(&base.to_string()), false).unwrap();
+        assert_eq!(committed.base_ancestry, "ahead");
+        assert_eq!(committed.changed_files, vec!["file.txt"]);
+
+        let merge = run_git(path.to_str().unwrap(), &["merge", "other"]);
+        assert!(!merge.ok);
+        let conflict =
+            review_snapshot(path.to_str().unwrap(), Some(&base.to_string()), false).unwrap();
+        assert_eq!(conflict.conflicted_files, vec!["file.txt"]);
+        let _ = run_git(path.to_str().unwrap(), &["merge", "--abort"]);
+        drop(repo);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn review_snapshot_models_unborn_ancestry_and_executable_mode() {
+        let (path, repo) = temp_repo();
+        let unborn = review_snapshot(path.to_str().unwrap(), None, true).unwrap();
+        assert_eq!(unborn.base_ancestry, "same");
+
+        std::fs::write(path.join("script.sh"), b"#!/bin/sh\nexit 0\n").unwrap();
+        let first = commit_file(
+            &repo,
+            Path::new("script.sh"),
+            b"#!/bin/sh\nexit 0\n",
+            "first",
+        );
+        let after_first = review_snapshot(path.to_str().unwrap(), None, true).unwrap();
+        assert_eq!(after_first.base_ancestry, "ahead");
+
+        #[cfg(unix)]
+        {
+            let script = path.join("script.sh");
+            let before_mode =
+                review_snapshot(path.to_str().unwrap(), Some(&first.to_string()), false).unwrap();
+            let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+            permissions.set_mode(permissions.mode() | 0o111);
+            std::fs::set_permissions(&script, permissions).unwrap();
+            let executable =
+                review_snapshot(path.to_str().unwrap(), Some(&first.to_string()), false).unwrap();
+            assert_ne!(before_mode.fingerprint, executable.fingerprint);
+        }
+
+        drop(repo);
+        std::fs::remove_dir_all(path).unwrap();
+    }
 
     #[test]
     fn normalizes_hosted_clone_urls_without_credentials() {

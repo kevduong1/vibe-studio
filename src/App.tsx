@@ -29,6 +29,7 @@ import EditorArea from "./components/EditorArea";
 import Panel from "./components/Panel";
 import { Resizer } from "./components/Resizer";
 import { IcBrain, IcBranch, IcFile, IcSearch } from "./components/icons";
+import { listenAgentNotificationActivations } from "./lib/agentInbox";
 
 /** Slim far-left icon strip for switching sidebar panels. */
 function ActivityBar() {
@@ -184,6 +185,19 @@ export default function App() {
   // Native file drops onto terminal panes paste the shell-quoted paths
   // (image attachments for agent CLIs, plain paths for shells).
   useEffect(() => listenTermFileDrops(), []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listenAgentNotificationActivations().then((value) => {
+      if (disposed) value();
+      else unlisten = value;
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   // Restore the persisted zoom level (the webview always opens at 1).
   useEffect(() => initZoom(), []);

@@ -208,7 +208,7 @@ const terminalPresentation = (terminalId: string) => {
       return {
         enabled: terminal.notificationsEnabled === true,
         title: `${terminal.title} — ${projectDisplayName(workspace.path)}`,
-        topic: "",
+        topic: workspace.terminal.getState().paneTitle[terminalId] ?? "",
       };
     }
   }
@@ -217,7 +217,7 @@ const terminalPresentation = (terminalId: string) => {
 
 export function notifyAgentAttention(
   terminalId: string,
-  type: "blocked" | "done" = "blocked",
+  type: "blocked" | "done" | "checks_failed" = "blocked",
 ): void {
   const presentation = terminalPresentation(terminalId);
   if (!presentation?.enabled) return;
@@ -231,10 +231,10 @@ export function notifyAgentAttention(
     // answered / tab closed / notifications disabled) remove by it.
     terminalId,
     presentation.title,
-    presentation.topic ||
-      (type === "done"
-        ? "Turn completed"
-        : reasonLabel(runtime?.reason)),
+    type === "checks_failed"
+      ? "Automatic checks failed"
+      : presentation.topic ||
+        (type === "done" ? "Turn completed" : reasonLabel(runtime?.reason)),
     mode === "always",
   ).catch(() => {});
 }

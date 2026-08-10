@@ -131,10 +131,11 @@ global grouping tabs, and the hidden-panel indicator roll up with priority:
 
 `blocked > done > working > idle/unknown/absent`
 
-These are passive indicators, not a new inbox or control surface. Existing
-New Claude Agent / New Codex Agent actions still launch tabs. The only new
-interactive UI is the notification toggle on project-agent tab context menus;
-global agent tabs already had the same toggle.
+The titlebar also owns a global inbox over both docks. It preserves semantic
+ordering, routes to the exact workspace/group/tab/session, and projects review
+state beside (never into) lifecycle state. Task ownership, review evidence,
+checks, and context-peek privacy are specified in
+[`attention-review.md`](attention-review.md).
 
 ## Alerts
 
@@ -146,6 +147,10 @@ Alerts fire once for a background transition into blocked and once when a
 completed turn becomes unseen Done. They are dismissed on acknowledgement,
 viewing Done, resumed work, agent exit, tab close, or notification disable.
 Alert edge selection is pure and tested in `src/lib/agentState.test.ts`.
+The retained macOS delegate also handles notification responses. The terminal
+identifier is emitted through a typed activation event after focusing the main
+window; one early click is queued until the frontend listener reports ready.
+Stale identifiers open the inbox with a nonfatal explanation.
 
 ## PTY environment boundary
 
@@ -185,7 +190,7 @@ snapshots, process arguments, environments, or matched evidence text.
 
 ## Explicit non-goals
 
-The current feature does not include a dedicated inbox, notification-click
-routing, plain-shell discovery, worktree/task ownership, ACP, hooks, native
-session resume, custom launch profiles, or persistent PTYs. Those remain
-separate roadmap items.
+The current feature does not include plain-shell discovery, isolated worktree
+ownership, apply/merge/discard actions, quick reply, full diff comments, ACP,
+hooks, native session resume, custom launch profiles, persistent task history,
+or persistent PTYs. Those remain separate roadmap items.
