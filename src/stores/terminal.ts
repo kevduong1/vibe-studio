@@ -10,8 +10,7 @@ import { type DropEdge } from "../lib/dockTree";
  * terminals via the component glue that disposes the session first.
  *
  * Workspace terminals may be plain shells or launch an agent. Global
- * terminals live in stores/agentTerminals and reuse the kind/activity types
- * below.
+ * terminals live in stores/agentTerminals and reuse the terminal kind below.
  */
 export type TerminalKind = "shell" | "claude" | "codex";
 
@@ -22,33 +21,11 @@ export interface WorkspaceTerminal {
   title: string;
   /** What was launched when this tab was created. */
   kind: TerminalKind;
+  /** Session-only notification opt-in for dedicated agent tabs. */
+  notificationsEnabled?: boolean;
 }
 
-/** Live activity of one pane, reported by its tracker (lib/terminalActivity). */
-export interface PaneActivity {
-  busy: boolean;
-  attention: boolean;
-}
-
-export type ActivityLevel = "idle" | "busy" | "attention";
-
-/** attention > busy > idle over panes (all panes when paneIds is omitted). */
-export const aggregateActivity = (
-  paneActivity: Record<string, PaneActivity>,
-  paneIds?: string[],
-): ActivityLevel => {
-  const all = paneIds
-    ? paneIds.map((id) => paneActivity[id])
-    : Object.values(paneActivity);
-  let busy = false;
-  for (const a of all) {
-    if (a?.attention) return "attention";
-    if (a?.busy) busy = true;
-  }
-  return busy ? "busy" : "idle";
-};
-
-/** Drop pane-keyed entries (activity, live titles) for removed panes
+/** Drop pane-keyed entries (such as live titles) for removed panes
  *  (no-op when none are present, so subscribers see no change). */
 export const prunePaneState = <V>(
   record: Record<string, V>,
@@ -71,6 +48,7 @@ export interface TerminalState extends dock.DockState<WorkspaceTerminal> {
   setActiveTerminal: (groupId: string, terminalId: string) => void;
   setActiveGroup: (groupId: string) => void;
   renameTerminal: (id: string, title: string) => void;
+  setNotificationsEnabled: (id: string, enabled: boolean) => void;
   moveTerminal: (terminalId: string, targetGroupId: string, index: number) => void;
   splitGroup: (terminalId: string, targetGroupId: string, edge: DropEdge) => void;
   setSplitSizes: (splitId: string, sizes: number[]) => void;
@@ -144,6 +122,17 @@ export const createTerminalStore = (): TerminalStore =>
       set((s) => applied(s, dock.setActiveTerminal(s, groupId, terminalId))),
     setActiveGroup: (groupId) => set((s) => applied(s, dock.setActiveGroup(s, groupId))),
     renameTerminal: (id, title) => set((s) => applied(s, dock.renameTerminal(s, id, title))),
+    setNotificationsEnabled: (id, enabled) =>
+      set((s) => {
+        const terminal = s.terminals[id];
+        if (!terminal || (terminal.notificationsEnabled ?? false) === enabled) return s;
+        return {
+          terminals: {
+            ...s.terminals,
+            [id]: { ...terminal, notificationsEnabled: enabled || undefined },
+          },
+        };
+      }),
     moveTerminal: (terminalId, targetGroupId, index) =>
       set((s) => applied(s, dock.moveTerminal(s, terminalId, targetGroupId, index))),
     splitGroup: (terminalId, targetGroupId, edge) =>

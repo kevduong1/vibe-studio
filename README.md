@@ -49,12 +49,18 @@ A global dock for persistent shells and AI coding agents:
 
 - Start a plain shell, **Claude Code**, or **Codex** in the project root —
   quit an agent and you're back in its shell
+- Dedicated Codex tabs intentionally launch with `codex --yolo` by default
 - Global terminals are pinned to a **project**, not a window — they keep
   running when their workspace closes, and clicking one jumps straight to
   its project
-- **Busy / needs-attention indicators** surface what each agent is doing
-  across the dock, titlebar tabs, and status bar
-- Live **session-summary badges** show each agent's current topic
+- Semantic **Working / Needs Input / Done / No Agent** state distinguishes a
+  live agent from the shell it returns to, with accessible text, icons, and
+  priority rollups across the dock, titlebar tabs, and status bar; each leaf
+  terminal tab keeps its Claude/Codex icon beside its state indicator
+- Live badges combine semantic state with each agent's current topic; tooltips
+  explain the state authority and structured reason
+- Optional per-terminal sound and macOS banners alert once for background
+  questions/permissions or unseen completion
 - Drag & drop tabs into splits; layout persists across restarts
 - Drop a file or image from Finder onto a pane to paste its path — image
   drops work with Claude Code out of the box
@@ -63,6 +69,9 @@ A global dock for persistent shells and AI coding agents:
 
 - Real PTYs running your login shell, Claude Code, or Codex, with tabs,
   side-by-side splits, and drag-and-drop layout
+- Dedicated Codex tabs intentionally launch with `codex --yolo` by default
+- Dedicated Claude/Codex tabs use the same semantic state, Done tracking,
+  rollups, and optional notification toggle as global agent terminals
 - WebGL-accelerated rendering (xterm.js 6) with backpressure-aware
   streaming, so `cat`-ing a huge file won't wedge the app
 - **⌘⇧B task runner**: VS Code-compatible `.vscode/tasks.json`, with a
@@ -128,6 +137,11 @@ A global dock for persistent shells and AI coding agents:
 | Watcher | `notify` (FSEvents), debounced per repo |
 | Search & quick open | `ignore`-crate parallel worktree walks in Rust |
 | UI | React 19 + Vite, zustand, CodeMirror 6, `@codemirror/merge` |
+
+Contributor guidance lives in [`AGENTS.md`](AGENTS.md) and
+[`CLAUDE.md`](CLAUDE.md). The semantic terminal-agent state model and privacy
+boundary are documented in
+[`docs/architecture/agent-runtime.md`](docs/architecture/agent-runtime.md).
 
 ## Development
 

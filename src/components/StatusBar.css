@@ -228,7 +228,7 @@
   font-size: var(--font-size-sm);
 }
 
-/* Agent terminal waiting on the user while the panel is hidden. */
+/* Highest-priority semantic agent state while the panel is hidden. */
 .statusbar-attention-dot {
   position: absolute;
   top: 1px;
@@ -236,6 +236,12 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
+  background: var(--accent);
+}
+.statusbar-attention-dot.blocked {
   background: var(--warning);
   animation: attention-pulse 1.6s ease-in-out infinite;
+}
+.statusbar-attention-dot.done {
+  background: var(--success);
 }

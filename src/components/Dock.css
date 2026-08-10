@@ -105,6 +105,28 @@
   height: 13px;
   flex-shrink: 0;
 }
+.dock-tab-agent-icon {
+  display: inline-flex;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.dock-tab-agent-icon > svg {
+  width: 13px;
+  height: 13px;
+}
+.dock-tab-agent-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+.dock-tab-agent-status > svg {
+  width: 11px;
+  height: 11px;
+}
 
 .dock-tab-rename {
   width: 110px;

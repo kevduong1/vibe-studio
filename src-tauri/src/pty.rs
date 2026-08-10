@@ -23,6 +23,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use parking_lot::{Condvar, Mutex};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
 /// Park the reader thread once this many emitted bytes are unacknowledged
@@ -62,6 +63,162 @@ pub struct PtyState {
     sessions: Mutex<HashMap<String, PtySession>>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProcessTarget {
+    terminal_id: String,
+    executable_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessRow {
+    pid: u32,
+    parent_pid: u32,
+    process_group: i32,
+    executable: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProcessInfo {
+    pid: u32,
+    parent_pid: u32,
+    executable: String,
+    foreground: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProcessSnapshot {
+    terminal_id: String,
+    processes: Vec<AgentProcessInfo>,
+}
+
+fn parse_process_table(text: &str) -> Vec<ProcessRow> {
+    text.lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            let parent_pid = fields.next()?.parse().ok()?;
+            let process_group = fields.next()?.parse().ok()?;
+            let executable = std::path::Path::new(fields.next()?)
+                .file_name()?
+                .to_string_lossy()
+                .to_string();
+            Some(ProcessRow {
+                pid,
+                parent_pid,
+                process_group,
+                executable,
+            })
+        })
+        .collect()
+}
+
+fn matching_descendants(
+    rows: &[ProcessRow],
+    shell_pid: u32,
+    foreground_pgid: Option<i32>,
+    names: &HashSet<&str>,
+) -> Vec<AgentProcessInfo> {
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    let by_pid: HashMap<u32, &ProcessRow> = rows.iter().map(|row| (row.pid, row)).collect();
+    for row in rows {
+        children.entry(row.parent_pid).or_default().push(row.pid);
+    }
+    let mut stack = vec![shell_pid];
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    while let Some(pid) = stack.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        if let Some(row) = by_pid.get(&pid) {
+            if pid != shell_pid && names.contains(row.executable.as_str()) {
+                result.push(AgentProcessInfo {
+                    pid: row.pid,
+                    parent_pid: row.parent_pid,
+                    executable: row.executable.clone(),
+                    foreground: foreground_pgid == Some(row.process_group),
+                });
+            }
+        }
+        if let Some(kids) = children.get(&pid) {
+            stack.extend(kids);
+        }
+    }
+    result.sort_by_key(|process| (!process.foreground, process.pid));
+    result
+}
+
+fn validate_process_command(success: bool, status: &str) -> Result<(), String> {
+    if success {
+        Ok(())
+    } else {
+        Err(format!("ps exited with {status}"))
+    }
+}
+
+/// One aggregated, argument-free process snapshot for all requested PTYs.
+/// A command failure is an error (the frontend degrades occupancy to unknown),
+/// while a missing session has an empty result and is never confused with a
+/// process-table failure.
+#[tauri::command]
+pub async fn pty_agent_process_snapshot(
+    state: tauri::State<'_, PtyState>,
+    targets: Vec<AgentProcessTarget>,
+) -> Result<Vec<AgentProcessSnapshot>, String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (state, targets);
+        return Err("agent process discovery is unsupported on this platform".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let sessions: HashMap<String, (u32, Option<i32>)> = {
+            let sessions = state.sessions.lock();
+            targets
+                .iter()
+                .filter_map(|target| {
+                    let session = sessions.get(&target.terminal_id)?;
+                    let pid = session.pid?;
+                    let foreground = session.master.as_raw_fd().and_then(|fd| {
+                        let pgid = unsafe { libc::tcgetpgrp(fd) };
+                        (pgid > 0).then_some(pgid)
+                    });
+                    Some((target.terminal_id.clone(), (pid, foreground)))
+                })
+                .collect()
+        };
+        let output = tauri::async_runtime::spawn_blocking(|| {
+            std::process::Command::new("ps")
+                .args(["-axo", "pid=,ppid=,pgid=,comm="])
+                .output()
+        })
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+        validate_process_command(output.status.success(), &output.status.to_string())?;
+        let rows = parse_process_table(&String::from_utf8_lossy(&output.stdout));
+        Ok(targets
+            .into_iter()
+            .map(|target| {
+                let processes = sessions
+                    .get(&target.terminal_id)
+                    .map(|(shell_pid, foreground)| {
+                        let names = target.executable_names.iter().map(String::as_str).collect();
+                        matching_descendants(&rows, *shell_pid, *foreground, &names)
+                    })
+                    .unwrap_or_default();
+                AgentProcessSnapshot {
+                    terminal_id: target.terminal_id,
+                    processes,
+                }
+            })
+            .collect())
+    }
+}
+
 #[tauri::command]
 pub async fn pty_spawn(
     app: tauri::AppHandle,
@@ -89,6 +246,7 @@ pub async fn pty_spawn(
         .map_err(|e| e.to_string())?;
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let launched_from_codex = std::env::var_os("CODEX_CI").is_some();
     let mut cmd = CommandBuilder::new(shell);
     cmd.arg("-l");
     cmd.cwd(cwd);
@@ -100,6 +258,15 @@ pub async fn pty_spawn(
     // TERM_PROGRAM, live ITERM_SESSION_IDs, ...). Scrub the whole identity
     // family — a pane is not that terminal.
     for var in [
+        // Coding-agent hosts commonly set NO_COLOR for their own captured
+        // output. Letting that private parent setting leak into an integrated
+        // terminal silently turns Claude/Codex (and every other CLI)
+        // monochrome. The login shell may still set it again deliberately.
+        "NO_COLOR",
+        // A nested Codex must be a fresh interactive CLI, not inherit the
+        // host agent's CI behavior or current conversation identity.
+        "CODEX_CI",
+        "CODEX_THREAD_ID",
         "TERM_PROGRAM",
         "TERM_PROGRAM_VERSION",
         "TERM_SESSION_ID",
@@ -120,6 +287,13 @@ pub async fn pty_spawn(
         "WEZTERM_UNIX_SOCKET",
     ] {
         cmd.env_remove(var);
+    }
+    if launched_from_codex {
+        // Agent hosts force pagers to `cat` so captured command output cannot
+        // block. An actual PTY is interactive, so restore normal pager
+        // discovery; shell startup files remain free to choose another value.
+        cmd.env_remove("PAGER");
+        cmd.env_remove("GIT_PAGER");
     }
     if agent {
         // Masquerade as a notification-capable terminal: agent CLIs (Claude
@@ -395,4 +569,62 @@ pub async fn pty_kill(state: tauri::State<'_, PtyState>, id: String) -> Result<(
     let session = state.sessions.lock().remove(&id).ok_or("unknown pty")?;
     kill_session(session);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_process_table_and_keeps_only_basename() {
+        let rows =
+            parse_process_table(" 10 1 10 /bin/zsh\n 20 10 20 /opt/homebrew/bin/claude\ninvalid\n");
+        assert_eq!(
+            rows,
+            vec![
+                ProcessRow {
+                    pid: 10,
+                    parent_pid: 1,
+                    process_group: 10,
+                    executable: "zsh".into(),
+                },
+                ProcessRow {
+                    pid: 20,
+                    parent_pid: 10,
+                    process_group: 20,
+                    executable: "claude".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn groups_descendants_and_marks_foreground_membership() {
+        let rows = parse_process_table(
+            "10 1 10 /bin/zsh\n20 10 20 /bin/node\n21 20 20 /usr/local/bin/claude\n30 1 30 /usr/local/bin/claude\n",
+        );
+        let names = HashSet::from(["claude"]);
+        assert_eq!(
+            matching_descendants(&rows, 10, Some(20), &names),
+            vec![AgentProcessInfo {
+                pid: 21,
+                parent_pid: 20,
+                executable: "claude".into(),
+                foreground: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn missing_session_root_has_no_false_matches() {
+        let rows = parse_process_table("20 10 20 /usr/local/bin/codex\n");
+        let names = HashSet::from(["codex"]);
+        assert!(matching_descendants(&rows, 999, None, &names).is_empty());
+    }
+
+    #[test]
+    fn command_failure_is_an_error_not_an_empty_snapshot() {
+        assert!(validate_process_command(false, "exit status: 1").is_err());
+        assert!(validate_process_command(true, "exit status: 0").is_ok());
+    }
 }

@@ -18,8 +18,6 @@ import { type DropEdge } from "../lib/dockTree";
 import { projectDisplayName } from "../lib/projectNames";
 import { PROJECT_COLOR_NAMES } from "../lib/projectColors";
 import {
-  type ActivityLevel,
-  type PaneActivity,
   type TerminalKind,
   prunePaneState,
 } from "./terminal";
@@ -63,8 +61,6 @@ export interface AgentTerminalsState {
   groupings: GlobalTermGrouping[];
   /** Grouping shown while the panel's global side is in front. */
   activeGroupingId: string | null;
-  /** Sparse per-terminal activity — ephemeral, never persisted. */
-  paneActivity: Record<string, PaneActivity>;
   /** Sparse per-terminal live OSC 0/2 titles (Claude Code's auto-generated
    *  topic summaries), shown on the pane badge — ephemeral, never persisted
    *  (a respawned shell has no topic until its agent sets one). */
@@ -116,8 +112,6 @@ export interface AgentTerminalsState {
     edge: DropEdge,
   ) => void;
   setSplitSizes: (groupingId: string, splitId: string, sizes: number[]) => void;
-  /** Reported by the session's activity tracker; idle entries are dropped. */
-  setPaneActivity: (terminalId: string, activity: PaneActivity) => void;
   /** Reported by the session's onTitle hook; an empty title clears the
    *  entry (Claude Code resets the title to "" on exit). */
   setPaneTitle: (terminalId: string, title: string) => void;
@@ -166,7 +160,7 @@ export const groupingTerminalIds = (g: GlobalTermGrouping): string[] =>
   dock.dockGroups(g.root).flatMap((group) => group.terminalIds);
 
 // ---------------------------------------------------------------------------
-// Persistence (groupings + terminals only — paneActivity is runtime state)
+// Persistence (groupings + terminals only — semantic runtime state is separate)
 // ---------------------------------------------------------------------------
 
 interface PersistedSlice {
@@ -325,7 +319,6 @@ const groupingOf = (
 
 export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
   ...loadDock(),
-  paneActivity: {},
   paneTitle: {},
 
   newGrouping: () => {
@@ -406,7 +399,6 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
           s.activeGroupingId === id
             ? (groupings[Math.min(idx, groupings.length - 1)]?.id ?? null)
             : s.activeGroupingId,
-        paneActivity: prunePaneState(s.paneActivity, ids),
         paneTitle: prunePaneState(s.paneTitle, ids),
       };
     }),
@@ -468,7 +460,6 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
       if (applied === s) return s;
       return {
         ...applied,
-        paneActivity: prunePaneState(s.paneActivity, [id]),
         paneTitle: prunePaneState(s.paneTitle, [id]),
       };
     }),
@@ -534,16 +525,6 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
       inGrouping(s, groupingId, (view) => dock.setSplitSizes(view, splitId, sizes)),
     ),
 
-  setPaneActivity: (terminalId, activity) =>
-    set((s) => {
-      const keep = activity.busy || activity.attention;
-      if (!keep && !(terminalId in s.paneActivity)) return s;
-      const paneActivity = { ...s.paneActivity };
-      if (keep) paneActivity[terminalId] = activity;
-      else delete paneActivity[terminalId];
-      return { paneActivity };
-    }),
-
   setPaneTitle: (terminalId, title) =>
     set((s) => {
       if (s.paneTitle[terminalId] === title || (!title && !(terminalId in s.paneTitle)))
@@ -555,8 +536,8 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
     }),
 }));
 
-// Persist on structural changes only; paneActivity flaps with every command
-// a shell runs and must never hit localStorage.
+// Persist on structural changes only; semantic runtime state lives in the
+// separate ephemeral agentRuntime store and never reaches localStorage.
 useAgentTerminalsStore.subscribe((s, prev) => {
   if (s.groupings !== prev.groupings) {
     // Drop dock adapters for groupings that no longer exist.
@@ -647,117 +628,3 @@ export function groupingDockStore(groupingId: string): GroupingDockApi {
   groupingDocks.set(groupingId, api);
   return api;
 }
-
-// ---------------------------------------------------------------------------
-// Selectors (chrome outside the dock)
-// ---------------------------------------------------------------------------
-
-/** Activity rollup for one project's agent terminals (titlebar tabs). */
-export const selectWorkspaceActivity = (
-  s: AgentTerminalsState,
-  workspacePath: string,
-): ActivityLevel => {
-  let busy = false;
-  for (const [id, a] of Object.entries(s.paneActivity)) {
-    if (s.terminals[id]?.workspacePath !== workspacePath) continue;
-    if (a.attention) return "attention";
-    if (a.busy) busy = true;
-  }
-  return busy ? "busy" : "idle";
-};
-
-/** Activity rollup for a presentation-only family of workspace tabs. */
-export const selectWorkspacePathsActivity = (
-  s: AgentTerminalsState,
-  workspacePaths: string[],
-): ActivityLevel => {
-  const paths = new Set(workspacePaths);
-  let busy = false;
-  for (const [id, activity] of Object.entries(s.paneActivity)) {
-    if (!paths.has(s.terminals[id]?.workspacePath)) continue;
-    if (activity.attention) return "attention";
-    if (activity.busy) busy = true;
-  }
-  return busy ? "busy" : "idle";
-};
-
-export interface GroupingWorkspaceActivity {
-  workspacePath: string;
-  activity: Exclude<ActivityLevel, "idle">;
-}
-
-/** "Nothing is happening" as ONE reference — see the stability rule below. */
-const NO_GROUPING_ACTIVITY: readonly GroupingWorkspaceActivity[] = [];
-
-/** Last non-empty result per grouping id, reused while contents are equal. */
-const groupingActivityMemo = new Map<
-  string,
-  readonly GroupingWorkspaceActivity[]
->();
-
-const sameGroupingActivities = (
-  a: readonly GroupingWorkspaceActivity[],
-  b: readonly GroupingWorkspaceActivity[],
-): boolean =>
-  a.length === b.length &&
-  a.every(
-    (item, i) =>
-      item.workspacePath === b[i].workspacePath &&
-      item.activity === b[i].activity,
-  );
-
-/**
- * One non-idle indicator per project in a large terminal grouping. Attention
- * replaces busy for the same project and sorts ahead of all busy projects;
- * dock order remains stable within each priority.
- *
- * The result is REFERENCE-STABLE while its contents are unchanged, and every
- * caller must consume it as-is (no useShallow wrapper). zustand v5 runs the
- * selector inside useSyncExternalStore's getSnapshot, so a selector that
- * allocates fresh objects per call reports "changed" on every snapshot read
- * and spins React until it throws "Maximum update depth exceeded" — taking
- * the whole app down. useShallow cannot rescue it: zustand's `shallow`
- * compares array ELEMENTS with Object.is, so an array of freshly built
- * objects never matches (only the empty case did, which is why this only
- * ever detonated once an agent pane in the grouping went busy).
- */
-export const selectGroupingWorkspaceActivities = (
-  s: AgentTerminalsState,
-  groupingId: string,
-): readonly GroupingWorkspaceActivity[] => {
-  const grouping = s.groupings.find((item) => item.id === groupingId);
-  if (!grouping) {
-    groupingActivityMemo.delete(groupingId); // closed grouping — drop its memo
-    return NO_GROUPING_ACTIVITY;
-  }
-  const byWorkspace = new Map<string, Exclude<ActivityLevel, "idle">>();
-  for (const terminalId of groupingTerminalIds(grouping)) {
-    const terminal = s.terminals[terminalId];
-    const pane = s.paneActivity[terminalId];
-    if (!terminal || (!pane?.attention && !pane?.busy)) continue;
-    const activity = pane.attention ? "attention" : "busy";
-    if (
-      activity === "attention" ||
-      !byWorkspace.has(terminal.workspacePath)
-    ) {
-      byWorkspace.set(terminal.workspacePath, activity);
-    }
-  }
-  if (byWorkspace.size === 0) {
-    groupingActivityMemo.delete(groupingId);
-    return NO_GROUPING_ACTIVITY;
-  }
-  const next = [...byWorkspace]
-    .map(([workspacePath, activity]) => ({ workspacePath, activity }))
-    .sort((left, right) =>
-      left.activity === right.activity
-        ? 0
-        : left.activity === "attention"
-          ? -1
-          : 1,
-    );
-  const prev = groupingActivityMemo.get(groupingId);
-  if (prev && sameGroupingActivities(prev, next)) return prev;
-  groupingActivityMemo.set(groupingId, next);
-  return next;
-};

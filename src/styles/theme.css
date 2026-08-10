@@ -264,6 +264,9 @@ button {
   color: var(--warning);
   animation: attention-pulse 1.6s ease-in-out infinite;
 }
+.activity-done {
+  color: var(--success);
+}
 
 /* LSP server-status dot (settings modal rows + status-bar LSP item);
    color class comes from STATUS_KIND in lib/lsp/settings.ts */

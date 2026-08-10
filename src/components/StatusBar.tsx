@@ -14,8 +14,10 @@ import { serverLangForPath } from "../lib/lsp/types";
 import { isMarkdownPath } from "../lib/path";
 import { useActiveWorkspace, type Workspace } from "../stores/workspaces";
 import { useUiStore } from "../stores/ui";
-import { useAgentTerminalsStore } from "../stores/agentTerminals";
-import { aggregateActivity } from "../stores/terminal";
+import {
+  selectTerminalRollup,
+  useAgentRuntimeStore,
+} from "../stores/agentRuntime";
 import { initUsagePolling, useUsageStore } from "../stores/usage";
 import {
   initCodexUsagePolling,
@@ -460,9 +462,7 @@ export default function StatusBar({
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   // A waiting agent terminal has no visible indicator when the panel is
   // hidden and its project's titlebar tab is closed — surface it here.
-  const agentAttention = useAgentTerminalsStore(
-    (s) => aggregateActivity(s.paneActivity) === "attention",
-  );
+  const agentActivity = useAgentRuntimeStore((s) => selectTerminalRollup(s));
 
   return (
     <div className="statusbar">
@@ -492,8 +492,17 @@ export default function StatusBar({
           onClick={togglePanel}
         >
           <IcTerminal />
-          {!panelVisible && agentAttention && (
-            <span className="statusbar-attention-dot" />
+          {!panelVisible && agentActivity !== "idle" && (
+            <span
+              className={`statusbar-attention-dot ${agentActivity}`}
+              title={
+                agentActivity === "blocked"
+                  ? "Agent needs input"
+                  : agentActivity === "done"
+                    ? "Agent finished"
+                    : "Agent working"
+              }
+            />
           )}
         </button>
         <button

@@ -562,6 +562,30 @@ export const ptyKill = (id: string): Promise<void> => invoke("pty_kill", { id })
 export const ptyAck = (id: string, bytes: number): Promise<void> =>
   invoke("pty_ack", { id, bytes });
 
+export interface AgentProcessTarget {
+  terminalId: string;
+  executableNames: string[];
+}
+
+export interface AgentProcessInfo {
+  pid: number;
+  parentPid: number;
+  executable: string;
+  foreground: boolean;
+}
+
+export interface AgentProcessSnapshot {
+  terminalId: string;
+  processes: AgentProcessInfo[];
+}
+
+/** One privacy-bounded process-table snapshot for every live agent PTY.
+ * Executable basenames are returned; arguments and environments never are. */
+export const agentProcessSnapshot = (
+  targets: AgentProcessTarget[],
+): Promise<AgentProcessSnapshot[]> =>
+  invoke("pty_agent_process_snapshot", { targets });
+
 /** Decoded PTY output bytes — feed directly to xterm.write(). */
 export const onPtyData = (
   id: string,

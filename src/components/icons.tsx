@@ -420,14 +420,25 @@ export function ActivityGlyph({
   idle,
   color,
 }: {
-  activity: "idle" | "busy" | "attention";
+  activity:
+    | "idle"
+    | "busy"
+    | "attention"
+    | "starting"
+    | "working"
+    | "blocked"
+    | "done"
+    | "unknown"
+    | "absent";
   idle: ReactNode;
   color?: string;
 }) {
   const style = color ? { color } : undefined;
-  if (activity === "attention")
+  if (activity === "blocked" || activity === "attention")
     return <IcDot className="activity-attention" style={style} />;
-  if (activity === "busy")
+  if (activity === "working" || activity === "starting" || activity === "busy")
     return <IcSpinner className="activity-busy" style={style} />;
+  if (activity === "done")
+    return <IcCheck className="activity-done" style={style} />;
   return <>{idle}</>;
 }

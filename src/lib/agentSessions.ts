@@ -1,11 +1,11 @@
 /**
  * Agent-dock glue between the session registry (lib/termSessions) and the
  * agentTerminals store: agent sessions spawn in their bound project's
- * directory with the TERM_PROGRAM masquerade + activity tracking, and their
+ * directory with the TERM_PROGRAM masquerade + semantic tracking, and their
  * close path disposes the PTY before the structural removal.
  */
 import { getOrCreateSession, disposeSession, type TermSession } from "./termSessions";
-import { dismissAgentAttention, notifyAgentAttention } from "./agentNotifications";
+import { dismissAgentAttention } from "./agentNotifications";
 import {
   groupingTerminalIds,
   useAgentTerminalsStore,
@@ -19,19 +19,11 @@ export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
     id: t.id,
     cwd: t.workspacePath,
     agent: t.kind !== "shell",
-    onActivity: (activity) => {
-      const store = useAgentTerminalsStore.getState();
-      // Attention onset (false → true edge) fires the opt-in system
-      // notification; the clear edge (true → false: the user answered)
-      // tears its banner down. Prev is read BEFORE the set; the map is
-      // sparse (absent = idle = no attention). Only the id is passed on —
-      // this closure's `t` is the creation-time object and must not leak
-      // past renames/toggles.
-      const wasAttention = store.paneActivity[t.id]?.attention ?? false;
-      store.setPaneActivity(t.id, activity);
-      if (activity.attention && !wasAttention) notifyAgentAttention(t.id);
-      else if (!activity.attention && wasAttention) dismissAgentAttention(t.id);
-    },
+    ...(t.kind !== "shell" && {
+      agentKind: t.kind,
+      workspacePath: t.workspacePath,
+      agentScope: "global" as const,
+    }),
     onTitle: (title) =>
       useAgentTerminalsStore.getState().setPaneTitle(t.id, title),
     onExit: (_code, early) => {
@@ -68,6 +60,7 @@ export function closeGlobalGrouping(groupingId: string): void {
  *  leaves a normal shell in the project root. */
 const AGENT_COMMAND: Record<Exclude<TerminalKind, "shell">, string> = {
   claude: "claude",
+  // Intentional product default: dedicated Codex tabs start fully autonomous.
   codex: "codex --yolo",
 };
 
@@ -89,8 +82,11 @@ export function openAgentTerminal(
     kind,
   });
   const t = useAgentTerminalsStore.getState().terminals[id];
-  if (t && kind !== "shell")
-    getOrCreateAgentSession(t).sendText(`${AGENT_COMMAND[kind]}\r`);
+  if (t && kind !== "shell") {
+    const session = getOrCreateAgentSession(t);
+    session.markAgentLaunching();
+    session.sendText(`${AGENT_COMMAND[kind]}\r`);
+  }
   return id;
 }
 

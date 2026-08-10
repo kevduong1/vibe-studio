@@ -95,6 +95,7 @@ fn main() {
             pty::pty_resize,
             pty::pty_ack,
             pty::pty_kill,
+            pty::pty_agent_process_snapshot,
             // lsp
             lsp::lsp_resolve,
             lsp::lsp_start,

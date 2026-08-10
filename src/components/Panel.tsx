@@ -22,11 +22,11 @@ import {
 } from "../stores/ui";
 import {
   groupingTerminalIds,
-  selectGroupingWorkspaceActivities,
   useAgentTerminalsStore,
-  type GroupingWorkspaceActivity,
   type GlobalTermGrouping,
 } from "../stores/agentTerminals";
+import { useAgentRuntimeStore } from "../stores/agentRuntime";
+import { rollupAgentStates, type AgentRollup } from "../lib/agentState";
 import { closeGlobalGrouping, openGlobalTerminal } from "../lib/agentSessions";
 import {
   paletteColor,
@@ -102,13 +102,23 @@ const activateGrouping = (groupingId: string): void => {
   restoreGroupingWorkspace(groupingId);
 };
 
+interface GroupingWorkspaceActivity {
+  workspacePath: string;
+  activity: Exclude<AgentRollup, "idle">;
+}
+
 function GroupActivityGlyph({
   item,
 }: {
   item: GroupingWorkspaceActivity;
 }) {
   const color = useProjectColorVar(item.workspacePath);
-  const state = item.activity === "attention" ? "Waiting for response" : "Working";
+  const state =
+    item.activity === "blocked"
+      ? "Needs Input"
+      : item.activity === "done"
+        ? "Done"
+        : "Working";
   return (
     <span
       className="panel-group-activity-glyph"
@@ -138,12 +148,24 @@ function GroupingTab({
   onMenu: (e: React.MouseEvent) => void;
 }) {
   const cancelled = useRef(false);
-  // The selector is reference-stable by contract — never wrap it in
-  // useShallow (that compares the entries by identity and never settles,
-  // which spins React into "Maximum update depth exceeded").
-  const activities = useAgentTerminalsStore((state) =>
-    selectGroupingWorkspaceActivities(state, grouping.id),
-  );
+  const runtimeStates = useAgentRuntimeStore((state) => state.states);
+  const terminals = useAgentTerminalsStore((state) => state.terminals);
+  const byWorkspace = new Map<string, string[]>();
+  for (const id of groupingTerminalIds(grouping)) {
+    const workspacePath = terminals[id]?.workspacePath;
+    if (!workspacePath) continue;
+    byWorkspace.set(workspacePath, [...(byWorkspace.get(workspacePath) ?? []), id]);
+  }
+  const priority: Record<AgentRollup, number> = { idle: 0, working: 1, done: 2, blocked: 3 };
+  const activities: GroupingWorkspaceActivity[] = [...byWorkspace]
+    .map(([workspacePath, ids]) => ({
+      workspacePath,
+      activity: rollupAgentStates(ids.map((id) => runtimeStates[id])),
+    }))
+    .filter(
+      (item): item is GroupingWorkspaceActivity => item.activity !== "idle",
+    )
+    .sort((a, b) => priority[b.activity] - priority[a.activity]);
 
   const commit = (value: string) => {
     // renameGrouping trims and ignores empty — the old name just stays.

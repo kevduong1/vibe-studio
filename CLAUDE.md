@@ -7,9 +7,11 @@ drag-and-drop agent-terminal dock, a CodeMirror 6 diff viewer/editor, and
 TypeScript/Python LSP support (squiggles, hover, completion, go-to-def; off
 at every launch — opt-in per session via the status-bar LSP button or the
 ⌘, settings modal). Rust backend in `src-tauri/`, React 19 + TypeScript
-frontend in `src/` (Vite, zustand). There is no frontend/JavaScript test
-framework; the Rust backend has focused unit tests (including preview
-coverage), while GUI behavior still requires manual verification.
+frontend in `src/` (Vite, zustand). Vitest covers pure frontend state and
+detection logic; the Rust backend has focused unit tests, while final GUI
+behavior still requires manual verification. All agents should also follow
+`AGENTS.md`. Semantic terminal-agent architecture is documented in
+`docs/architecture/agent-runtime.md`.
 
 ## Architecture map
 
@@ -20,12 +22,14 @@ coverage), while GUI behavior still requires manual verification.
 | `src/lib/path.ts` | Shared POSIX-path helpers (`basename`, `dirname`, `isMarkdownPath`) — import these, don't redefine per file |
 | `src/lib/fuzzy.ts` | Hand-rolled two-phase fuzzy matcher for quick open: O(n) subsequence reject over the whole list, then a scoring DP (boundary/camelCase/basename/consecutive bonuses) returning matched positions for highlighting |
 | `src/lib/graphLayout.ts` | Pure lane-layout algorithm for the commit graph (algorithm documented in-file) |
-| `src/lib/terminalActivity.ts` | Per-pane busy/attention heuristics for **agent** terminals only (echo-suppressed, onset-debounced output → busy; BEL/OSC 9/777 + quiet-while-unfocused → attention; OSC 133/633 marks take over when present) |
-| `src/lib/termSession.ts` | Framework-free xterm+PTY session (attach/detach reparenting; ONLY `dispose()` kills the PTY); also hosts `XTERM_THEME` |
+| `src/lib/agentState.ts` | Pure semantic agent model: occupancy/lifecycle/authority types, derived display state, rollup priority, labels/tooltips, and notification-edge selection |
+| `src/lib/agentProfiles.ts` | Independently authored Claude/Codex screen-detection profiles; bounded near-tail rules for blocked/working/idle evidence |
+| `src/lib/terminalActivity.ts` | Generic lifecycle fallback for dedicated agent terminals: sustained output, BEL/OSC 9/777 notifications, quiet completion, and OSC 133/633 shell marks |
+| `src/lib/termSession.ts` | Framework-free xterm+PTY session (attach/detach reparenting; ONLY `dispose()` kills the PTY); semantic screen inspection/acknowledgement and `XTERM_THEME` live here |
 | `src/lib/termSessions.ts` | Session registry for ALL dock terminals (`getOrCreateSession`/`getSession`/`disposeSession`) — sessions outlive React unmounts |
-| `src/lib/agentSessions.ts` | Agent glue on the registry: masquerade+tracker session options, `closeAgentTerminal`, `openAgentTerminal` (eager session + auto-types `claude` into the fresh shell; restart respawns go via the mount path and stay plain shells) |
-| `src/lib/agentNotifications.ts` | Opt-in per-terminal attention alerts (right-click an agent dock tab), fired on the attention false→true edge from agentSessions' `onActivity`: app-played sound via `playAttentionSound` (the ONE playback path, shared with settings previews — `play_sound`/afplay, any audio file via the settings-modal picker; default = the bundled `src-tauri/sounds/alert.mp3` resource, resolveResource'd + cached-on-success only; a stale custom path falls back to the bundled default; immune to Focus modes and notification settings, identical in dev) + best-effort UserNotifications banner (bundled builds only — no bundle = no banner; OS authorization requested on first enable — coalesced across concurrent enables, denied-reminder dialog once per session) governed by the persisted `BannerMode` setting (always / background-only / never → `presentForeground` per send, answered by notify.rs' delegate). Banners are keyed by terminal id and dismissed on the attention-clear edge (agentSessions), terminal close, and notifications-disable |
-| `src/lib/workspaceSessions.ts` | Workspace glue on the registry (counterpart of agentSessions): `getOrCreateWorkspaceSession`, `closeWorkspaceTerminal` |
+| `src/lib/agentSessions.ts` | Global-agent glue on the registry: semantic metadata, close paths, and intentional `claude`/`codex --yolo` launch defaults; restored layouts intentionally remain fresh shells |
+| `src/lib/agentNotifications.ts` | Opt-in semantic blocked/Done alerts for both docks; one banner ID per terminal, shared sound/banner settings, edge-triggered delivery, and acknowledgement/resume/exit/close/disable dismissal |
+| `src/lib/workspaceSessions.ts` | Workspace terminal glue on the registry, including dedicated-agent semantic metadata, the intentional `codex --yolo` default, and launch/close paths |
 | `src/lib/termFileDrop.ts` | Native file drops onto terminal panes (both docks) paste shell-quoted paths: Tauri webview drag-drop events (the DOM never sees native drags) → pane hit-test → `term.paste()` (bracketed paste is how Claude Code detects image paths). Drag positions are LOGICAL px despite the PhysicalPosition type (macOS wry quirk, documented in-file) — never divide by devicePixelRatio, but DO divide by `currentZoom()` (page zoom shrinks the CSS viewport) |
 | `src/lib/previewSessions.ts` | Session-only registry for native localhost preview child webviews: per-preview serialized create/navigation/bounds/zoom/close operations, a global visibility coordinator that hides peers before showing one native view, and explicit disposal ownership so React unmounts only hide while tab/workspace close destroys; fitted device presets/custom dimensions use child-page zoom so responsive CSS sees the requested viewport size |
 | `src/lib/zoom.ts` | Whole-app zoom (⌘+/⌘−/⌘0, App.tsx): browser-style step list applied via webview `setZoom` (WKWebView.pageZoom — layout-reflowing, so terminals refit via their ResizeObservers), localStorage-persisted, restored by `initZoom()`; `currentZoom()` feeds termFileDrop's coordinate mapping |
@@ -42,8 +46,9 @@ coverage), while GUI behavior still requires manual verification.
 | `src/stores/repo.ts` | Per-workspace repo store factory: status/log/stashes, git mutations (return `Promise<boolean>`), log branch filter (`logFilter`/`setLogFilter`), watcher wiring (`init`/`dispose`), status-bar `error` |
 | `src/stores/editor.ts` | Per-workspace editor-tab store factory (`Tab = file \| diff \| memory \| preview`), dirty tracking, session-only preview creation/orientation plus teardown ownership (`pendingPreviewDisposals` survives tab removal until native close succeeds), `closeTabSafely(store, id)` / batch `closeTabsSafely` (confirm unsaved), `openFile(path, at?)` + nonce-gated `reveal` request (cursor-to-line, consumed by Editor.tsx), `retargetFileTabs(from, to)` (explorer renames/moves — drops dirty flags, drafts die with the old tab id) |
 | `src/stores/search.ts` | Per-workspace search store factory (⌘⇧F state: query/toggles/results); 250 ms debounce + sequence-number stale-result guard live in the store closure |
-| `src/stores/terminal.ts` | Per-workspace terminal dock store factory (plain shells, dockTree layout, NOT persisted; never touches xterm or IPC); also exports the shared `PaneActivity`/`aggregateActivity` activity types |
-| `src/stores/agentTerminals.ts` | GLOBAL terminal-groupings store: any number of named dockTree layouts (`groupings`, one panel tab each; `activeGroupingId`) over ONE shared terminals map, terminal↔project bindings, deduped default titles, ephemeral live pane titles (`paneTitle`), per-terminal `notificationsEnabled` opt-in, localStorage persistence (`vibe-studio:agent-terminals`, v2; v1 single-tree layouts migrate on load), and `groupingDockStore(id)` — the cached per-grouping read-only store facade the generic Dock consumes |
+| `src/stores/terminal.ts` | Per-workspace terminal dock store factory (shell/Claude/Codex tabs, dockTree layout, ephemeral notification toggles, NOT persisted; never touches xterm or IPC) |
+| `src/stores/agentRuntime.ts` | One ephemeral semantic runtime store for both docks: registration, occupancy polling, generation-safe transitions, authority fallback, acknowledgement, and workspace/group rollup selectors |
+| `src/stores/agentTerminals.ts` | GLOBAL terminal-groupings store: any number of named dockTree layouts (`groupings`, one panel tab each; `activeGroupingId`) over ONE shared terminals map, terminal↔project bindings, deduped default titles, ephemeral live pane titles (`paneTitle`), per-terminal `notificationsEnabled` opt-in, localStorage persistence (`vibe-studio:agent-terminals`, v3; older layouts migrate on load), and `groupingDockStore(id)` — the cached per-grouping read-only store facade the generic Dock consumes |
 | `src/stores/ui.ts` | Global (workspace-independent) sidebar/panel visibility, sizes, panel group (`terminal`/`agent`, `useEffectivePanelGroup`), panel maximize (`panelMaximized` — cleared by hiding the panel or opening an editor tab), markdown-preview toggle (`markdownPreview` — app-wide reading mode, not per-tab) |
 | `src/App.tsx` | Shell layout, per-workspace `WorkspaceView`s (all mounted; inactive hidden), global shortcuts (⌘\` ⌘B ⌘⇧B ⌘P ⌘⇧F ⌘W ⌘1–9 ⌘±/⌘0 zoom), welcome screen |
 | `src/components/Titlebar.tsx` | Workspace tab strip (switch/close/add; double-click → inline rename; right-click → rename / copy path / project color) + active repo's branch pill and fetch |
@@ -57,7 +62,7 @@ coverage), while GUI behavior still requires manual verification.
 | `src/components/DiffViewer.tsx` | @codemirror/merge split/unified diff; worktree diffs editable (⌘S), auto-refetch on repo change |
 | `src/components/Panel.tsx` | Global bottom panel (under the editor column): Project Terminals tab (leftmost) + one tab per global terminal grouping ("+" adds, double-click renames inline, right-click → rename/close with confirm) + per-group actions in one header row; per-workspace terminal docks AND every grouping's dock stay mounted (display:none); maximize toggle (button or header double-click outside grouping tabs) fills the center column |
 | `src/components/Dock.tsx` | Generic dockable terminal grid shared by both groups: recursive split/group rendering, per-group tab strips, double-click tab rename, pointer-capture DnD (strip insert caret / 5-zone edge splits), split resizers — flavor injected via `Pane`/`TabIcon`/`TabBadge`/`Empty` props |
-| `src/components/TerminalPanel.tsx` | Workspace flavor of Dock: plain registry sessions at the workspace root, auto-first-terminal (session/close glue lives in `lib/workspaceSessions.ts`) |
+| `src/components/TerminalPanel.tsx` | Workspace flavor of Dock: shell and dedicated-agent sessions, semantic icons/text badges/tooltips, ephemeral notification toggle, and auto-first-terminal |
 | `src/components/TaskPicker.tsx` | ⌘⇧B quick-pick overlay (filter + arrow/enter keyboard nav); a lone default build task skips it (App.tsx) |
 | `src/components/QuickOpen.tsx` | ⌘P fuzzy file picker overlay (TaskPicker pattern); fetches the gitignore-aware file list per open, renders top 100 with match highlighting |
 | `src/components/SettingsModal.tsx` | ⌘, settings modal (gear in status bar): per-language LSP enable toggles + live server status / install hints / restart, agent-notification attention-sound picker (system sounds + custom file, self-previewing; "Choose file…" is a distinct option value because re-selecting the selected option never fires onChange) + banner-visibility mode (always / app-in-background / never); sections are plain blocks — append future settings here |
@@ -66,12 +71,12 @@ coverage), while GUI behavior still requires manual verification.
 | `src/components/PreviewPicker.tsx` | Workspace-bound **Open Preview** dialog: normalizes manual loopback URLs, scans through typed preview IPC, groups detected servers as **This project** / **Other local servers**, and opens a fresh session-only preview tab for every selection |
 | `src/components/PreviewPane.tsx` | Interactive phone frame and browser toolbar over a native child WKWebView: measures zoom-adjusted host bounds, syncs resize/orientation/navigation/load state, and hides the native view whenever its tab/workspace is inactive, the panel is maximized, a global overlay covers it, or control fails; external navigations are routed through the app's URL opener |
 | `src/components/SearchPanel.tsx` | ⌘⇧F sidebar search view: query + case/word/regex toggles, per-file collapsible result groups, click opens the file at the match line (`openFile(path, at)`) |
-| `src/components/AgentDock.tsx` | Global flavor of Dock, one instance per grouping (`groupingId` prop → `groupingDockStore`): masquerade/tracked sessions, session-summary badge overlay (live OSC 0/2 title — Claude Code's auto-generated topic; hidden until one is set), active-project highlight ring, click-to-switch project, disconnected ⊘, right-click tab → notifications toggle (enabled = bell on the tab) |
+| `src/components/AgentDock.tsx` | Global flavor of Dock: semantic icons/text badges/tooltips plus OSC topic summary, active-project ring, project navigation, disconnected state, and persisted notification toggle |
 | `src/components/Resizer.tsx` | Generic drag-to-resize handle (sidebar, panel, dock splits) |
 | `src/components/ContextMenu.tsx` | Shared fixed-position context menu (viewport clamp, backdrop/Escape close) — GitGraph commit actions, Titlebar tab menu |
 | `src/components/FileExplorer.tsx` | Lazy directory tree (per-dir cache + expanded set) with ⌘/Ctrl toggle, Shift-range, and ⌘A multi-selection; pointer-capture drag-and-drop (HTML drag events are unreliable in WKWebView) moves the selected files/folders onto folders or the repo root. Right-click file management (new file/folder + rename via inline in-row inputs, multi-item cut/copy/paste/trash/copy-path, reveal in Finder; F2 rename, ⌘⌫ delete) repoints open editor tabs after renames/moves via the editor store's `retargetFileTabs`, confirming first when unsaved drafts would be lost |
 | `src-tauri/src/git.rs` | All git2 commands; fetch/pull/push/checkout/branch/squash-rebase shell out to `git` CLI so user auth + safety checks work |
-| `src-tauri/src/pty.rs` | PTY sessions keyed by frontend UUID; output streamed as base64 `pty-data:<id>` events with ack-based flow control (`pty_ack`, reader parks above 1 MiB unacked); kill = SIGHUP → 500 ms → SIGKILL process group |
+| `src-tauri/src/pty.rs` | PTY sessions, flow control, and process-group teardown; macOS aggregated privacy-bounded agent descendant snapshots; PTY capability setup and host-only environment-variable isolation |
 | `src-tauri/src/lsp.rs` | Language-server stdio transport (pty.rs sibling, deliberately protocol-blind): spawn as process-group leader with the login-shell PATH injected, Content-Length frame parser → raw `lsp-message:<id>` events, `lsp_send` owns outgoing framing, `lsp_resolve` finds binaries via `$SHELL -lc` (cached, `__VIBE_PATH__` marker); kill = SIGTERM → 500 ms → SIGKILL group |
 | `src-tauri/src/notify.rs` | Attention alerts: UserNotifications-framework banners (`notification_state`/`_request`/`_send`/`_dismiss`; every UN touch gated on `has_bundle` — bare `tauri dev` reports "unsupported"/no-ops; state-query timeout = Err, NOT "unsupported"). macOS silently drops banners while the app is frontmost unless a delegate's `willPresentNotification` allows it — `notification_send` installs a RETAINED delegate (the center holds it weakly) answering with the per-send `presentForeground` flag; send identifiers are caller keys (terminal id), so repeats REPLACE the delivered banner and `_dismiss` removes by them. `play_sound` = detached afplay spawn that PREEMPTS the previous one (SIGTERM via pid slot); missing file = Err so the frontend can fall back to the bundled default. Deliberately NOT tauri-plugin-notification: its deprecated NSUserNotificationCenter path is accepted but never presented on current macOS (`presented = NO`) and can't register the app for authorization at all |
 | `src-tauri/src/watcher.rs` | Debounced repo watchers (one per open repo, keyed by root) → `repo-changed` event `{repoPath, gitChanged}` |
@@ -104,12 +109,18 @@ interpreted as patterns (real-world case: Next.js `app/[slug]/page.tsx`).
 pnpm install
 pnpm tauri dev                  # run the app (starts vite via beforeDevCommand)
 pnpm tauri build                # .app/.dmg in src-tauri/target/release/bundle
-npx tsc --noEmit                # frontend typecheck only
+pnpm test                       # Vitest: detection/state/selector/alert logic
+pnpm build                      # TypeScript project build + Vite production build
 cd src-tauri && cargo check     # backend typecheck
+cd src-tauri && cargo test      # backend unit tests
 ```
 
 ## Conventions
 
+- Documentation ships with code. Any behavior/architecture/command/test/UI
+  change must update `CLAUDE.md`, the relevant `docs/architecture/*.md`, and
+  user-facing `README.md` or roadmap status where applicable in the SAME
+  change. Never leave removed types, flags, or test claims documented.
 - All colors/fonts/metrics come from CSS variables in `src/styles/theme.css`;
   never hardcode colors in component CSS. Sanctioned exceptions: the JS themes
   in `lib/termSession.ts` (XTERM_THEME) and `Editor.tsx` (editorTheme).
@@ -179,18 +190,24 @@ cd src-tauri && cargo check     # backend typecheck
   the session's ResizeObserver refits + `term.refresh()`es IMMEDIATELY (no
   debounce) — xterm's renderer is paused while hidden and the WebGL canvas
   can come back blank, so a debounced refit reads as flicker.
-- Terminals come in two homes: workspace panes (plain — no activity tracker,
-  no OSC handlers, no timers) and the global **agent dock** (sparkle button
-  in the panel header). Only agent sessions run `trackActivity` and only
-  their PTYs set `TERM_PROGRAM=ghostty` — the masquerade exists because
-  agent CLIs (Claude Code) only emit OSC 9/777 notification sequences and
-  OSC 0 title updates (auto-generated topic summaries → the pane badge) for
-  a recognized terminal: `terminalActivity.ts` turns the former into
-  needs-attention indicators (dock tab, titlebar workspace tab, status-bar
-  dot) — don't "fix" it away for agent sessions. Known cost:
-  TERM_PROGRAM-sniffing image CLIs (chafa, yazi) may emit Kitty graphics
-  that xterm.js silently drops (the reason plain panes don't masquerade;
-  they scrub TERM_PROGRAM).
+- Dedicated Claude/Codex tabs in BOTH docks register in the ephemeral
+  `agentRuntime` store; requested terminal kind is launch metadata, never proof
+  of occupancy. macOS `pty_agent_process_snapshot` establishes whether the
+  exact agent executable is a descendant of that PTY shell. Only then may the
+  bounded xterm tail classifier own lifecycle. Screen > OSC > activity;
+  delayed evidence must match the occupant generation. Read
+  `docs/architecture/agent-runtime.md` before changing this pipeline.
+- Agent PTYs set `TERM_PROGRAM=ghostty` so supported CLIs emit OSC 9/777
+  notifications and OSC 0 titles. Known cost: TERM_PROGRAM-sniffing image CLIs
+  may emit Kitty graphics xterm.js drops. PTY spawn also removes host-private
+  `NO_COLOR`, `CODEX_CI`, `CODEX_THREAD_ID`, and Codex-forced pager settings;
+  otherwise a dev app launched from an agent silently changes its child CLIs.
+  The login shell may set them again intentionally.
+- Semantic **Done** is derived from a present agent becoming idle in the
+  background and remaining unseen. Viewing acknowledges Done; viewing blocked
+  only dismisses its alert and MUST NOT clear lifecycle without new evidence.
+  Rollup priority is blocked > done > working > idle/unknown/absent. Runtime
+  and seen state are never persisted; restored global tabs are fresh shells.
 - ALL dock terminals (both groups) decouple PTY lifetime from React via the
   session registry: host unmount = `detach()` ONLY (drag-and-drop and split
   rewraps remount bystander panes); the PTY dies exclusively via

@@ -21,8 +21,18 @@ import {
   ptySpawn,
   ptyWrite,
 } from "./ipc";
+import { classifyAgentScreen } from "./agentProfiles";
+import type { AgentKind, AgentRuntimeState } from "./agentState";
+import {
+  acknowledgeAgentRuntime,
+  applyAgentActivity,
+  applyAgentScreen,
+  markAgentLaunching as markRuntimeLaunching,
+  registerAgentRuntime,
+  unregisterAgentRuntime,
+  useAgentRuntimeStore,
+} from "../stores/agentRuntime";
 import { trackActivity, type ActivityTracker } from "./terminalActivity";
-import type { PaneActivity } from "../stores/terminal";
 import "@xterm/xterm/css/xterm.css";
 
 /** Terminal colors, mirroring theme.css (sanctioned hardcoded-color site:
@@ -71,10 +81,14 @@ export interface TermSessionOptions {
   id: string;
   /** Spawn directory (the bound project's root). */
   cwd: string;
-  /** Agent sessions get the activity tracker + TERM_PROGRAM masquerade. */
+  /** Agent sessions get semantic tracking + TERM_PROGRAM masquerade. */
   agent: boolean;
-  /** State changes from the activity tracker (agent sessions only). */
-  onActivity?: (activity: PaneActivity) => void;
+  /** Dedicated agent identity and rollup metadata. Plain shells omit these. */
+  agentKind?: AgentKind;
+  workspacePath?: string;
+  agentScope?: "global" | "workspace";
+  /** Semantic transition callback, after the runtime state has changed. */
+  onSemanticTransition?: (state: AgentRuntimeState) => void;
   /** OSC 0/2 window-title changes (agent sessions only). Claude Code
    *  auto-generates topic summaries and emits them as OSC 0 titles for
    *  recognized terminals — the TERM_PROGRAM masquerade satisfies its
@@ -105,6 +119,8 @@ export interface TermSession {
    *  safe immediately after the session is created — the task runner sends
    *  the command line before the pane host has even mounted). */
   sendText(data: string): void;
+  /** Set semantic occupancy before typing a launch command into the shell. */
+  markAgentLaunching(): void;
   /** Clear the tracker's attention state (user clicked into the terminal). */
   acknowledge(): void;
   /** The ONLY path that kills the PTY. Idempotent. */
@@ -137,6 +153,38 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
   let unExit: UnlistenFn | null = null;
   let webglLost = false;
   let webglDead = false;
+  let runtimeRegistered = false;
+  let unRuntime: (() => void) | null = null;
+  let semanticTimer: number | null = null;
+
+  const watched = () => document.hasFocus() && el.offsetParent !== null;
+
+  const ensureRuntime = () => {
+    if (
+      runtimeRegistered ||
+      !opts.agentKind ||
+      !opts.workspacePath ||
+      !opts.agentScope
+    ) return;
+    runtimeRegistered = true;
+    registerAgentRuntime({
+      terminalId: id,
+      workspacePath: opts.workspacePath,
+      scope: opts.agentScope,
+      kind: opts.agentKind,
+    });
+    let runtimeState = useAgentRuntimeStore.getState().states[id];
+    let generation = runtimeState?.generation;
+    unRuntime = useAgentRuntimeStore.subscribe((store) => {
+      const next = store.states[id];
+      if (next && next !== runtimeState) opts.onSemanticTransition?.(next);
+      runtimeState = next;
+      if (next?.occupancy === "present" && next.generation !== generation) {
+        generation = next.generation;
+        inspectSemanticScreen();
+      }
+    });
+  };
 
   const term = new Terminal({
     // Sessions are constructed detached and can't be measured yet; seed with
@@ -197,22 +245,67 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     ? term.onTitleChange((title) => opts.onTitle!(title.trim()))
     : null;
 
-  // Busy/attention tracking. watched() is the focus oracle: attention exists
-  // to pull the user BACK to a pane, so "watching" means focused IN it
-  // (keystrokes land there) — a pane merely visible in a split while the
-  // user types elsewhere still deserves its ping when the work ends.
-  // contains(activeElement) also implies attached and visible (a hidden or
-  // removed node can't hold focus), and clicking into the pane focuses it,
-  // which acknowledges the ping (AgentPane onMouseDown). No store
-  // subscriptions needed, and it can't go stale.
+  // Activity fallback. A pane is considered watched whenever it is visible
+  // in the foreground app: semantic completion is about unseen results, not
+  // which split currently owns keyboard focus.
   let tracker: ActivityTracker | null =
-    agent && opts.onActivity
+    agent && opts.agentKind
       ? trackActivity(
           term,
-          () => document.hasFocus() && el.contains(document.activeElement),
-          opts.onActivity,
+          watched,
+          (activity) => {
+            applyAgentActivity(id, activity, watched());
+          },
         )
       : null;
+
+  const logicalScreenTail = (): string[] => {
+    const buffer = term.buffer.active;
+    const first = Math.max(0, buffer.length - 120);
+    const logical: string[] = [];
+    for (let y = first; y < buffer.length; y++) {
+      const line = buffer.getLine(y);
+      if (!line) continue;
+      const text = line.translateToString(true);
+      if (line.isWrapped && logical.length > 0) logical[logical.length - 1] += text;
+      else logical.push(text);
+    }
+    let chars = 0;
+    const tail: string[] = [];
+    for (let i = logical.length - 1; i >= 0 && tail.length < 40; i--) {
+      const room = 16 * 1024 - chars;
+      if (room <= 0) break;
+      const text = logical[i].length > room ? logical[i].slice(-room) : logical[i];
+      tail.unshift(text);
+      chars += text.length;
+    }
+    return tail;
+  };
+
+  const inspectSemanticScreen = () => {
+    if (!opts.agentKind || !runtimeRegistered || disposed) return;
+    const state = useAgentRuntimeStore.getState().states[id];
+    if (!state) return;
+    const generation = state.generation;
+    const classification = classifyAgentScreen(opts.agentKind, logicalScreenTail());
+    const delay = classification.strong
+      ? 0
+      : classification.lifecycle === "idle"
+        ? 650
+        : classification.lifecycle === "working"
+          ? 180
+          : 250;
+    if (semanticTimer !== null) window.clearTimeout(semanticTimer);
+    semanticTimer = window.setTimeout(() => {
+      semanticTimer = null;
+      applyAgentScreen(id, generation, classification, watched());
+    }, delay);
+  };
+  const semanticSub = opts.agentKind ? term.onWriteParsed(inspectSemanticScreen) : null;
+  const onWindowFocus = () => {
+    if (el.offsetParent !== null) acknowledgeAgentRuntime(id);
+  };
+  if (opts.agentKind) window.addEventListener("focus", onWindowFocus);
 
   // Attach listeners BEFORE spawning so no early output is lost; guard
   // every await against dispose-before-resolve (listen() resolves late).
@@ -241,7 +334,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
           // indicator can't sit stuck until its 30s failsafe.
           tracker?.dispose();
           tracker = null;
-          opts.onActivity?.({ busy: false, attention: false });
+          applyAgentActivity(id, { busy: false, attention: false }, watched());
           term.write(`\r\n\x1b[31m[process exited with code ${code}]\x1b[0m\r\n`);
           opts.onExit?.(code, true);
           return;
@@ -328,6 +421,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
 
     attach(host) {
       if (disposed) return;
+      ensureRuntime();
       host.appendChild(el);
       if (!opened) {
         opened = true;
@@ -366,8 +460,14 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       else pendingInput += data;
     },
 
+    markAgentLaunching() {
+      ensureRuntime();
+      markRuntimeLaunching(id);
+    },
+
     acknowledge() {
       tracker?.acknowledge();
+      acknowledgeAgentRuntime(id);
     },
 
     dispose() {
@@ -380,12 +480,17 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       dataSub.dispose();
       resizeSub.dispose();
       titleSub?.dispose();
+      semanticSub?.dispose();
+      if (opts.agentKind) window.removeEventListener("focus", onWindowFocus);
+      unRuntime?.();
+      if (semanticTimer !== null) window.clearTimeout(semanticTimer);
       if (tracker) {
         tracker.dispose();
         tracker = null;
         // Drop any lingering indicator (no-op if already pruned).
-        opts.onActivity?.({ busy: false, attention: false });
+        applyAgentActivity(id, { busy: false, attention: false }, false);
       }
+      if (runtimeRegistered) unregisterAgentRuntime(id);
       // Kill only once a dispatched spawn settles; a null spawnPromise means
       // the disposed guards above bailed before the spawn was ever sent.
       const p = spawnPromise;

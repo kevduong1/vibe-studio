@@ -24,6 +24,11 @@ export function getOrCreateWorkspaceSession(
     id,
     cwd: ws.path,
     agent: terminal?.kind !== "shell",
+    ...(terminal && terminal.kind !== "shell" && {
+      agentKind: terminal.kind,
+      workspacePath: ws.path,
+      agentScope: "workspace" as const,
+    }),
     onExit: (_code, early) => {
       // Normal exit closes the tab; an early failure keeps the corpse
       // readable (spawn error, bad dotfiles) for the user to close.
@@ -32,7 +37,11 @@ export function getOrCreateWorkspaceSession(
   });
 }
 
-const AGENT_COMMAND = { claude: "claude", codex: "codex --yolo" } as const;
+const AGENT_COMMAND = {
+  claude: "claude",
+  // Intentional product default: dedicated Codex tabs start fully autonomous.
+  codex: "codex --yolo",
+} as const;
 
 /** Create a project-bound shell or agent terminal and start the selected
  * agent inside its shell. */
@@ -41,8 +50,11 @@ export function openWorkspaceTerminal(
   kind: "shell" | "claude" | "codex",
 ): string {
   const id = ws.terminal.getState().newTerminal(undefined, kind);
-  if (kind !== "shell")
-    getOrCreateWorkspaceSession(ws, id).sendText(`${AGENT_COMMAND[kind]}\r`);
+  if (kind !== "shell") {
+    const session = getOrCreateWorkspaceSession(ws, id);
+    session.markAgentLaunching();
+    session.sendText(`${AGENT_COMMAND[kind]}\r`);
+  }
   return id;
 }
 

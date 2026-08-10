@@ -1,8 +1,7 @@
 /**
- * Opt-in attention alerts for agent terminals (right-click a dock tab):
- * each attention onset — detected by lib/terminalActivity and reported
- * through agentSessions' onActivity edge check — plays the attention sound
- * and posts a best-effort system banner. Default off for every terminal.
+ * Opt-in semantic alerts for agent terminals (right-click a dock tab):
+ * background blocked and unseen-completion edges play the attention sound
+ * and post a best-effort system banner. Default off for every terminal.
  *
  * The sound is app-played (ipc playSound → afplay), NOT a notification
  * sound: it works in dev and release alike, survives Focus modes and
@@ -29,6 +28,12 @@ import {
   playSound,
 } from "./ipc";
 import { useAgentTerminalsStore } from "../stores/agentTerminals";
+import { useWorkspacesStore } from "../stores/workspaces";
+import {
+  subscribeAgentTransitions,
+  useAgentRuntimeStore,
+} from "../stores/agentRuntime";
+import { agentAlertAction, reasonLabel } from "./agentState";
 import { projectDisplayName } from "./projectNames";
 
 // ---------------------------------------------------------------------------
@@ -149,7 +154,15 @@ export async function setTerminalNotifications(
   terminalId: string,
   enabled: boolean,
 ): Promise<void> {
-  useAgentTerminalsStore.getState().setNotificationsEnabled(terminalId, enabled);
+  const global = useAgentTerminalsStore.getState().terminals[terminalId];
+  if (global) {
+    useAgentTerminalsStore.getState().setNotificationsEnabled(terminalId, enabled);
+  } else {
+    const workspace = useWorkspacesStore
+      .getState()
+      .workspaces.find((item) => item.terminal.getState().terminals[terminalId]);
+    workspace?.terminal.getState().setNotificationsEnabled(terminalId, enabled);
+  }
   if (!enabled) {
     dismissAgentAttention(terminalId); // a delivered banner may linger
     return;
@@ -176,26 +189,52 @@ export async function setTerminalNotifications(
  * from the store by id — the caller's captured terminal object may predate
  * renames/toggles.
  */
-export function notifyAgentAttention(terminalId: string): void {
-  const s = useAgentTerminalsStore.getState();
-  const t = s.terminals[terminalId];
-  if (!t?.notificationsEnabled) return; // default off; also just-closed residue
+const terminalPresentation = (terminalId: string) => {
+  const globalState = useAgentTerminalsStore.getState();
+  const global = globalState.terminals[terminalId];
+  if (global) {
+    const project = projectDisplayName(global.workspacePath);
+    return {
+      enabled: global.notificationsEnabled === true,
+      title: global.title.startsWith(project)
+        ? global.title
+        : `${global.title} — ${project}`,
+      topic: globalState.paneTitle[terminalId],
+    };
+  }
+  for (const workspace of useWorkspacesStore.getState().workspaces) {
+    const terminal = workspace.terminal.getState().terminals[terminalId];
+    if (terminal) {
+      return {
+        enabled: terminal.notificationsEnabled === true,
+        title: `${terminal.title} — ${projectDisplayName(workspace.path)}`,
+        topic: "",
+      };
+    }
+  }
+  return undefined;
+};
+
+export function notifyAgentAttention(
+  terminalId: string,
+  type: "blocked" | "done" = "blocked",
+): void {
+  const presentation = terminalPresentation(terminalId);
+  if (!presentation?.enabled) return;
+  const runtime = useAgentRuntimeStore.getState().states[terminalId];
   void playAttentionSound();
   const mode = bannerMode();
   if (mode === "never") return;
-  const project = projectDisplayName(t.workspacePath);
   void notificationSend(
     // Identifier = terminal id: a repeat onset replaces the terminal's
     // delivered banner instead of stacking, and the dismiss paths (attention
     // answered / tab closed / notifications disabled) remove by it.
     terminalId,
-    // Default tab titles ARE the project name (possibly "· N"-deduped) —
-    // suffix the project only when the title no longer starts with the
-    // current name (tab renamed, or project renamed after the title was
-    // snapshotted at creation).
-    t.title.startsWith(project) ? t.title : `${t.title} — ${project}`,
-    // The live OSC 0/2 topic summary, when the agent has set one.
-    s.paneTitle[terminalId] || "Needs your attention",
+    presentation.title,
+    presentation.topic ||
+      (type === "done"
+        ? "Turn completed"
+        : reasonLabel(runtime?.reason)),
     mode === "always",
   ).catch(() => {});
 }
@@ -210,3 +249,21 @@ export function notifyAgentAttention(terminalId: string): void {
 export function dismissAgentAttention(terminalId: string): void {
   void notificationDismiss(terminalId).catch(() => {});
 }
+
+// Semantic edge behavior is centralized here so redraws cannot repeat an
+// alert. One identifier per terminal means a later blocked/done edge replaces
+// the prior delivered banner instead of stacking it.
+subscribeAgentTransitions(({ previous, current }) => {
+  const action = agentAlertAction(previous, current);
+  if (current && action === "blocked") {
+    notifyAgentAttention(current.terminalId, "blocked");
+    return;
+  }
+  if (current && action === "done") {
+    notifyAgentAttention(current.terminalId, "done");
+    return;
+  }
+  if (action === "dismiss") {
+    dismissAgentAttention(previous?.terminalId ?? current?.terminalId ?? "");
+  }
+});

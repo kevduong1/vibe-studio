@@ -17,7 +17,12 @@ import {
   useAgentTerminalsStore,
   type AgentTerminal,
 } from "../stores/agentTerminals";
-import { aggregateActivity } from "../stores/terminal";
+import { useAgentRuntimeStore } from "../stores/agentRuntime";
+import {
+  agentStateTooltip,
+  displayAgentState,
+  displayLabel,
+} from "../lib/agentState";
 import { switchToProject, useWorkspacesStore } from "../stores/workspaces";
 import {
   closeAgentTerminal,
@@ -32,6 +37,8 @@ import { ContextMenu } from "./ContextMenu";
 import {
   ActivityGlyph,
   IcBell,
+  IcClaude,
+  IcCodex,
   IcDisconnected,
   IcSparkle,
   IcTerminal,
@@ -58,17 +65,25 @@ function AgentBadge({
   // tab keeps the stable project name. Clicks fall through to the pane
   // (focus + switch-to-project), so the badge is display-only.
   const summary = useAgentTerminalsStore((s) => s.paneTitle[terminal.id]);
-  if (!summary) return null;
+  const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
+  const display = displayAgentState(runtime);
+  const semantic =
+    display === "working" || display === "starting" || display === "blocked" || display === "done"
+      ? displayLabel(display)
+      : "";
+  if (!summary && !semantic) return null;
 
   return (
     <div
       className="agent-badge"
       // Project identity: a soft project-tinted outline (softened in CSS).
       style={{ "--project-color": projectColor } as CSSProperties}
-      title={`${summary}\n${terminal.workspacePath}${connected ? "" : " — project not open"}`}
+      title={`${runtime ? agentStateTooltip(runtime) : "No Agent"}${summary ? `\nSummary: ${summary}` : ""}\n${terminal.workspacePath}${connected ? "" : " — project not open"}`}
     >
       {!connected && <IcDisconnected className="agent-badge-disconnected" />}
-      <span className="truncate">{summary}</span>
+      <span className="agent-badge-state">{semantic}</span>
+      {semantic && summary && <span className="agent-badge-separator">·</span>}
+      {summary && <span className="truncate">{summary}</span>}
     </div>
   );
 }
@@ -100,6 +115,10 @@ const AgentPane = memo(function AgentPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
 
+  useEffect(() => {
+    if (visible && document.hasFocus()) getSession(terminal.id)?.acknowledge();
+  }, [terminal.id, visible]);
+
   return (
     <div
       className={`dock-pane ${focused ? "focused" : ""} ${
@@ -124,29 +143,35 @@ const AgentPane = memo(function AgentPane({
 });
 
 function AgentTabIcon({ terminal }: { terminal: AgentTerminal }) {
-  const activity = useAgentTerminalsStore((s) =>
-    aggregateActivity(s.paneActivity, [terminal.id]),
-  );
   const projectColor = useProjectColorVar(terminal.workspacePath);
-  // All three glyph states tinted in the project's color (matches the
-  // titlebar tab and badge dot).
+  const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
+  if (terminal.kind === "shell") {
+    return <IcTerminal style={{ color: projectColor }} />;
+  }
   return (
-    <ActivityGlyph
-      activity={activity}
-      idle={
-        terminal.kind === "shell" ? (
-          <IcTerminal style={{ color: projectColor }} />
-        ) : (
-          <IcSparkle style={{ color: projectColor }} />
-        )
+    <span
+      className="dock-tab-agent-icon"
+      title={
+        runtime
+          ? agentStateTooltip(runtime)
+          : `${terminal.kind === "claude" ? "Claude" : "Codex"} — No Agent`
       }
-      color={projectColor}
-    />
+    >
+      {terminal.kind === "claude" ? (
+        <IcClaude style={{ color: projectColor }} />
+      ) : (
+        <IcCodex style={{ color: projectColor }} />
+      )}
+    </span>
   );
 }
 
 function AgentTabBadge({ terminal }: { terminal: AgentTerminal }) {
   const connected = useConnected(terminal.workspacePath);
+  const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
+  const activity = terminal.kind === "shell" ? "absent" : displayAgentState(runtime);
+  const showStatus = activity !== "idle" && activity !== "unknown";
+  const projectColor = useProjectColorVar(terminal.workspacePath);
   // Live store read (AgentTabMenu pattern) — the toggle must reflect
   // immediately, independent of how the Dock memoizes the terminal prop.
   const notify = useAgentTerminalsStore(
@@ -154,6 +179,22 @@ function AgentTabBadge({ terminal }: { terminal: AgentTerminal }) {
   );
   return (
     <>
+      {terminal.kind !== "shell" && showStatus && (
+        <span
+          className="dock-tab-agent-status"
+          title={
+            runtime
+              ? agentStateTooltip(runtime)
+              : `${terminal.kind === "claude" ? "Claude" : "Codex"} — No Agent`
+          }
+        >
+          <ActivityGlyph
+            activity={activity}
+            idle={<IcTerminal />}
+            color={projectColor}
+          />
+        </span>
+      )}
       {notify && <IcBell className="dock-tab-bell" />}
       {!connected && <IcDisconnected className="dock-tab-disconnected" />}
     </>

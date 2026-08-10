@@ -59,3 +59,11 @@
 .agent-badge-disconnected {
   color: var(--warning);
 }
+.agent-badge-state {
+  color: var(--fg);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.agent-badge-separator {
+  color: var(--fg-faint);
+}

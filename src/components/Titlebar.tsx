@@ -12,11 +12,10 @@ import {
   type Workspace,
 } from "../stores/workspaces";
 import {
-  selectWorkspaceActivity,
-  selectWorkspacePathsActivity,
-  useAgentTerminalsStore,
-} from "../stores/agentTerminals";
-import type { ActivityLevel } from "../stores/terminal";
+  selectWorkspaceRollup,
+  useAgentRuntimeStore,
+} from "../stores/agentRuntime";
+import type { AgentRollup } from "../lib/agentState";
 import {
   paletteColor,
   PROJECT_COLOR_NAMES,
@@ -119,7 +118,7 @@ function WorkspaceTab({
   onContext: (path: string, e: ReactMouseEvent) => void;
   onRenameStart: () => void;
   onRenameEnd: () => void;
-  activity: ActivityLevel;
+  activity: AgentRollup;
   groupWorkspaces?: Workspace[];
   title?: string;
 }) {
@@ -289,8 +288,8 @@ function SingleWorkspaceTab({
   ws,
   ...props
 }: WorkspaceTabCommonProps & { ws: Workspace }) {
-  const activity = useAgentTerminalsStore((state) =>
-    selectWorkspaceActivity(state, ws.path),
+  const activity = useAgentRuntimeStore((state) =>
+    selectWorkspaceRollup(state, [ws.path]),
   );
   return (
     <WorkspaceTab
@@ -317,8 +316,8 @@ function WorkspaceTabFamily({
   onExpandedChange: (expanded: boolean) => void;
 }) {
   const paths = workspaces.map((workspace) => workspace.path);
-  const familyActivity = useAgentTerminalsStore((state) =>
-    selectWorkspacePathsActivity(state, paths),
+  const familyActivity = useAgentRuntimeStore((state) =>
+    selectWorkspaceRollup(state, paths),
   );
   const representative =
     workspaces.find((workspace) => workspace.path === props.activePath) ?? workspaces[0];

@@ -35,7 +35,7 @@
  * "stale", no matter how long it runs.
  */
 import type { Terminal } from "@xterm/xterm";
-import type { PaneActivity } from "../stores/terminal";
+import type { AgentActivitySignal } from "../stores/agentRuntime";
 
 /** Output this soon after a keystroke is treated as echo, not work. */
 const ECHO_MS = 250;
@@ -68,15 +68,15 @@ export interface ActivityTracker {
 
 export function trackActivity(
   term: Terminal,
-  /** Whether the user is watching this pane (the caller's oracle —
-   *  termSession supplies "focused in it", so visible-but-unfocused split
-   *  panes still earn their pings). */
+  /** Whether the user is watching this pane (termSession supplies visible in
+   *  the foreground app, matching unseen-completion semantics). */
   watched: () => boolean,
   /** Fired only when the pane's activity actually changes. */
-  onChange: (activity: PaneActivity) => void,
+  onChange: (activity: AgentActivitySignal) => void,
 ): ActivityTracker {
   let busy = false;
   let attention = false;
+  let attentionSource: AgentActivitySignal["attentionSource"];
   /** Start of the current busy stretch; survives sub-grace output stalls. */
   let busySince = 0;
   /** First output of a not-yet-confirmed heuristic stretch (0 = none). */
@@ -96,11 +96,22 @@ export function trackActivity(
   let quietTimer: number | null = null;
   let pingTimer: number | null = null;
 
-  const update = (nextBusy: boolean, nextAttention: boolean) => {
-    if (nextBusy === busy && nextAttention === attention) return;
+  const update = (
+    nextBusy: boolean,
+    nextAttention: boolean,
+    nextSource: AgentActivitySignal["attentionSource"] = nextAttention
+      ? attentionSource
+      : undefined,
+  ) => {
+    if (
+      nextBusy === busy &&
+      nextAttention === attention &&
+      nextSource === attentionSource
+    ) return;
     busy = nextBusy;
     attention = nextAttention;
-    onChange({ busy, attention });
+    attentionSource = nextSource;
+    onChange({ busy, attention, ...(attentionSource && { attentionSource }) });
   };
 
   const stopQuietTimer = () => {
@@ -139,7 +150,7 @@ export function trackActivity(
     pingTimer = window.setTimeout(() => {
       pingTimer = null;
       if (!endedWatched && !watched() && stretch >= ATTENTION_MIN_BUSY_MS) {
-        update(busy, true);
+        update(busy, true, "completion");
       }
     }, PING_GRACE_MS);
   };
@@ -185,7 +196,7 @@ export function trackActivity(
     // The chunk delivering a notification mustn't also start a busy stretch
     // (which is what its own onWriteParsed would do).
     skipWrite = true;
-    if (!watched()) update(busy, true);
+    if (!watched()) update(busy, true, "notification");
   };
 
   const disposables = [
@@ -277,7 +288,7 @@ export function trackActivity(
             !watched() &&
             lastMarkAt - busySince >= ATTENTION_MIN_BUSY_MS;
           quietEnded = false;
-          update(false, attention || ping);
+          update(false, attention || ping, ping ? "completion" : attentionSource);
         }
         return true;
       }),
