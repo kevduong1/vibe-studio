@@ -24,13 +24,11 @@ export interface DiffRequest {
 /** Which agent a memory tab's entry came from (MemoriesPanel sidebar). */
 export type MemorySource = "claude" | "codex";
 
-export type PreviewOrientation = "portrait" | "landscape";
-
 export interface PreviewTab {
   id: string;
   kind: "preview";
   title: string;
-  preview: { url: string; orientation: PreviewOrientation };
+  preview: { url: string; width: number; height: number };
 }
 
 export type Tab =
@@ -69,7 +67,7 @@ export interface EditorState {
   openMemory: (source: MemorySource, entry: MemoryEntry) => void;
   openPreview: (url: string, title?: string) => void;
   setPreviewUrl: (id: string, url: string) => void;
-  setPreviewOrientation: (id: string, orientation: PreviewOrientation) => void;
+  setPreviewDimensions: (id: string, width: number, height: number) => void;
   beginClosing: () => void;
   cancelClosing: () => void;
   beginPreviewDisposal: (id: string) => void;
@@ -167,7 +165,7 @@ export const createEditorStore = (): EditorStore =>
         id,
         kind: "preview",
         title: title ?? new URL(url).host,
-        preview: { url, orientation: "portrait" },
+        preview: { url, width: 390, height: 844 },
       };
       set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
       revealEditor();
@@ -186,14 +184,14 @@ export const createEditorStore = (): EditorStore =>
             },
       ),
 
-    setPreviewOrientation: (id, orientation) =>
+    setPreviewDimensions: (id, width, height) =>
       set((s) =>
         s.closing
           ? s
           : {
               tabs: s.tabs.map((tab) =>
                 tab.id === id && tab.kind === "preview"
-                  ? { ...tab, preview: { ...tab.preview, orientation } }
+                  ? { ...tab, preview: { ...tab.preview, width, height } }
                   : tab,
               ),
             },

@@ -29,6 +29,8 @@ fn validate_bounds(bounds: PreviewBounds) -> Result<(), String> {
         && bounds.height.is_finite()
         && bounds.width > 0.0
         && bounds.height > 0.0
+        && bounds.page_zoom.is_finite()
+        && bounds.page_zoom > 0.0
     {
         Ok(())
     } else {
@@ -156,7 +158,12 @@ pub(crate) fn preview_create(
         || {
             let _ = webview.close();
         },
-    )
+    )?;
+    if let Err(error) = webview.set_zoom(bounds.page_zoom) {
+        let _ = webview.close();
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -201,6 +208,9 @@ pub(crate) fn preview_set_bounds(
     };
     webview
         .set_bounds(logical_rect(bounds))
+        .map_err(|error| error.to_string())?;
+    webview
+        .set_zoom(bounds.page_zoom)
         .map_err(|error| error.to_string())
 }
 
@@ -283,6 +293,7 @@ mod tests {
             y: 2.0,
             width: 390.0,
             height: 844.0,
+            page_zoom: 1.0,
         })
         .is_ok());
         assert!(validate_bounds(PreviewBounds {
@@ -290,6 +301,7 @@ mod tests {
             y: 0.0,
             width: 0.0,
             height: 844.0,
+            page_zoom: 1.0,
         })
         .is_err());
         assert!(validate_bounds(PreviewBounds {
@@ -297,6 +309,15 @@ mod tests {
             y: 0.0,
             width: 390.0,
             height: 844.0,
+            page_zoom: 1.0,
+        })
+        .is_err());
+        assert!(validate_bounds(PreviewBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 390.0,
+            height: 844.0,
+            page_zoom: 0.0,
         })
         .is_err());
     }

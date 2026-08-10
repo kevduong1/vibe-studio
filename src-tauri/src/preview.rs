@@ -11,6 +11,7 @@ pub(crate) struct PreviewBounds {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    pub page_zoom: f64,
 }
 
 #[derive(Clone, serde::Serialize)]

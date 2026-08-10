@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
 } from "react";
 import {
@@ -28,6 +29,26 @@ import {
 import "./PreviewPane.css";
 
 const INPUT_ERROR = "Enter a localhost HTTP or HTTPS URL";
+const MIN_VIEWPORT = 200;
+const MAX_VIEWPORT = 5120;
+
+const VIEWPORT_PRESETS = [
+  { label: "Phone", width: 390, height: 844 },
+  { label: "Large Phone", width: 430, height: 932 },
+  { label: "Tablet", width: 768, height: 1024 },
+  { label: "HD", width: 1280, height: 720 },
+  { label: "Notebook", width: 1366, height: 768 },
+  { label: "Laptop", width: 1440, height: 900 },
+  { label: "Full HD", width: 1920, height: 1080 },
+] as const;
+
+const viewportKey = (width: number, height: number) => `${width}x${height}`;
+
+const validDimension = (value: string): number | null => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.min(MAX_VIEWPORT, Math.max(MIN_VIEWPORT, Math.round(parsed)));
+};
 
 /**
  * Native external-navigation events are app-wide, so they deliberately have
@@ -76,8 +97,8 @@ export default function PreviewPane({
 }) {
   const session = getOrCreatePreviewSession(tab.id);
   const setPreviewUrl = useEditor((state) => state.setPreviewUrl);
-  const setPreviewOrientation = useEditor(
-    (state) => state.setPreviewOrientation,
+  const setPreviewDimensions = useEditor(
+    (state) => state.setPreviewDimensions,
   );
   const panelMaximized = useUiStore((state) => state.panelMaximized);
   const nativeOverlayDepth = useUiStore((state) => state.nativeOverlayDepth);
@@ -89,6 +110,8 @@ export default function PreviewPane({
   const [loading, setLoading] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
   const [listenerRetryNonce, setListenerRetryNonce] = useState(0);
+  const [widthInput, setWidthInput] = useState(String(tab.preview.width));
+  const [heightInput, setHeightInput] = useState(String(tab.preview.height));
 
   const hostRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -97,7 +120,10 @@ export default function PreviewPane({
   const mountedRef = useRef(true);
   const visibleRef = useRef(shouldShow);
   const urlRef = useRef(tab.preview.url);
-  const orientationRef = useRef(tab.preview.orientation);
+  const dimensionsRef = useRef({
+    width: tab.preview.width,
+    height: tab.preview.height,
+  });
   const errorRef = useRef<string | null>(controlError);
 
   // These refs are authoritative for callbacks and async completions. They
@@ -105,10 +131,15 @@ export default function PreviewPane({
   // native work from the new render.
   visibleRef.current = shouldShow;
   urlRef.current = tab.preview.url;
-  orientationRef.current = tab.preview.orientation;
+  dimensionsRef.current = {
+    width: tab.preview.width,
+    height: tab.preview.height,
+  };
   errorRef.current = controlError;
 
   useEffect(() => setInput(tab.preview.url), [tab.preview.url]);
+  useEffect(() => setWidthInput(String(tab.preview.width)), [tab.preview.width]);
+  useEffect(() => setHeightInput(String(tab.preview.height)), [tab.preview.height]);
 
   const hideAfterFailure = useCallback(
     (error: unknown, generation?: number) => {
@@ -158,6 +189,7 @@ export default function PreviewPane({
         y: rect.top * zoom,
         width: rect.width * zoom,
         height: rect.height * zoom,
+        pageZoom: (rect.width * zoom) / dimensionsRef.current.width,
       };
       const url = urlRef.current;
 
@@ -188,11 +220,11 @@ export default function PreviewPane({
     syncBounds();
   }, [controlError, hideAfterFailure, session, shouldShow, syncBounds]);
 
-  // Orientation is an explicit synchronization trigger even though the
+  // Viewport dimensions are an explicit synchronization trigger even though the
   // ResizeObserver normally sees the resulting size change as well.
   useLayoutEffect(() => {
     syncBounds();
-  }, [syncBounds, tab.preview.orientation]);
+  }, [syncBounds, tab.preview.width, tab.preview.height]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -272,12 +304,37 @@ export default function PreviewPane({
     setPreviewUrl(tab.id, url);
   };
 
-  const rotate = () => {
-    const orientation =
-      orientationRef.current === "portrait" ? "landscape" : "portrait";
-    orientationRef.current = orientation;
-    setPreviewOrientation(tab.id, orientation);
+  const applyDimensions = (width: number, height: number) => {
+    dimensionsRef.current = { width, height };
+    setPreviewDimensions(tab.id, width, height);
   };
+
+  const commitDimensionInputs = () => {
+    const width = validDimension(widthInput) ?? dimensionsRef.current.width;
+    const height = validDimension(heightInput) ?? dimensionsRef.current.height;
+    setWidthInput(String(width));
+    setHeightInput(String(height));
+    applyDimensions(width, height);
+  };
+
+  const rotate = () => {
+    const { width, height } = dimensionsRef.current;
+    applyDimensions(height, width);
+  };
+
+  const presetValue = VIEWPORT_PRESETS.some(
+    (preset) =>
+      preset.width === tab.preview.width && preset.height === tab.preview.height,
+  )
+    ? viewportKey(tab.preview.width, tab.preview.height)
+    : "custom";
+
+  const deviceStyle = {
+    "--preview-width": tab.preview.width,
+    "--preview-height": tab.preview.height,
+    "--preview-width-px": `${tab.preview.width}px`,
+    "--preview-ratio": tab.preview.width / tab.preview.height,
+  } as CSSProperties;
 
   const retry = () => {
     const generation = ++syncGeneration.current;
@@ -337,6 +394,56 @@ export default function PreviewPane({
           />
         </form>
         {loading && <span className="preview-loading">Loading…</span>}
+        <div className="preview-size-controls">
+          <select
+            aria-label="Preview size preset"
+            title="Viewport preset"
+            value={presetValue}
+            onChange={(event) => {
+              const preset = VIEWPORT_PRESETS.find(
+                (item) => viewportKey(item.width, item.height) === event.target.value,
+              );
+              if (preset) applyDimensions(preset.width, preset.height);
+            }}
+          >
+            {VIEWPORT_PRESETS.map((preset) => (
+              <option
+                key={viewportKey(preset.width, preset.height)}
+                value={viewportKey(preset.width, preset.height)}
+              >
+                {preset.label} · {preset.width}×{preset.height}
+              </option>
+            ))}
+            <option value="custom">Custom</option>
+          </select>
+          <input
+            type="number"
+            min={MIN_VIEWPORT}
+            max={MAX_VIEWPORT}
+            aria-label="Preview width"
+            title={`Viewport width (${MIN_VIEWPORT}–${MAX_VIEWPORT}px)`}
+            value={widthInput}
+            onChange={(event) => setWidthInput(event.target.value)}
+            onBlur={commitDimensionInputs}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />
+          <span aria-hidden="true">×</span>
+          <input
+            type="number"
+            min={MIN_VIEWPORT}
+            max={MAX_VIEWPORT}
+            aria-label="Preview height"
+            title={`Viewport height (${MIN_VIEWPORT}–${MAX_VIEWPORT}px)`}
+            value={heightInput}
+            onChange={(event) => setHeightInput(event.target.value)}
+            onBlur={commitDimensionInputs}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />
+        </div>
         <button
           className="icon-btn"
           title="Open External"
@@ -360,10 +467,11 @@ export default function PreviewPane({
       </div>
       <div
         ref={stageRef}
-        className={`preview-stage ${tab.preview.orientation}`}
+        className="preview-stage"
       >
         <div
           className="preview-device"
+          style={deviceStyle}
           onPointerDown={() => {
             if (!controlError && shouldShow) runControl(() => session.focus());
           }}

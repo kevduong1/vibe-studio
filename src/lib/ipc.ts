@@ -18,6 +18,8 @@ export interface PreviewBounds {
   y: number;
   width: number;
   height: number;
+  /** Page zoom that makes the fitted child view expose the requested CSS viewport. */
+  pageZoom: number;
 }
 
 export interface PreviewServer {

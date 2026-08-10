@@ -40,6 +40,48 @@
   font-size: var(--font-size-sm);
 }
 
+.preview-size-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.preview-size-controls select,
+.preview-size-controls input {
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--fg-dim);
+  font: inherit;
+  outline: none;
+}
+
+.preview-size-controls select {
+  width: 124px;
+  padding: 0 5px;
+}
+
+.preview-size-controls input {
+  width: 56px;
+  padding: 0 4px;
+  text-align: right;
+  appearance: textfield;
+}
+
+.preview-size-controls input::-webkit-inner-spin-button,
+.preview-size-controls input::-webkit-outer-spin-button {
+  appearance: none;
+}
+
+.preview-size-controls select:focus,
+.preview-size-controls input:focus {
+  border-color: var(--focus-ring);
+}
+
 .preview-stage {
   display: flex;
   align-items: center;
@@ -49,6 +91,7 @@
   min-height: 0;
   overflow: hidden;
   background: var(--bg-panel);
+  container-type: size;
 }
 
 .preview-device {
@@ -57,16 +100,12 @@
   box-sizing: content-box;
   border: 1px solid var(--border);
   background: var(--bg-input);
-}
-
-.preview-stage.portrait .preview-device {
-  width: min(390px, calc(100% - 32px));
-  height: min(844px, calc(100% - 32px));
-}
-
-.preview-stage.landscape .preview-device {
-  width: min(844px, calc(100% - 32px));
-  height: min(390px, calc(100% - 32px));
+  width: min(
+    var(--preview-width-px),
+    calc(100cqw - 32px),
+    calc((100cqh - 32px) * var(--preview-ratio))
+  );
+  aspect-ratio: var(--preview-width) / var(--preview-height);
 }
 
 .preview-native-host {
