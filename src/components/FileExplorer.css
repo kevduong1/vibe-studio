@@ -45,6 +45,16 @@
   overflow-x: hidden;
   outline: none;
   padding-bottom: 10px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Pointer drags can leave the tree while still captured. WebKit otherwise
+   starts selecting text under the cursor elsewhere in the app. */
+body.fx-pointer-dragging,
+body.fx-pointer-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 .fx-repo-row {
@@ -72,6 +82,28 @@
 }
 .fx-row.selected {
   background: var(--bg-selected);
+}
+.fx-row.dragging {
+  opacity: 0.55;
+}
+.fx-row.drop-target,
+.fx-repo-row.drop-target {
+  background: var(--accent-muted);
+  box-shadow: inset 0 0 0 1px var(--focus-ring);
+}
+.fx-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  left: -10000px;
+  top: -10000px;
+  max-width: 220px;
+  padding: 3px 8px;
+  border: 1px solid var(--focus-ring);
+  border-radius: 4px;
+  background: var(--bg-overlay);
+  color: var(--fg);
+  font-size: 12px;
+  pointer-events: none;
 }
 .fx-row.dotfile .fx-icon,
 .fx-row.dotfile .fx-name {
@@ -150,6 +182,8 @@
   color: var(--fg);
   font-size: 12.5px;
   outline: none;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* the clipboard's cut entry, awaiting its paste */

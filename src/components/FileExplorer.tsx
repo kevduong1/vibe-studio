@@ -27,6 +27,8 @@ import "./FileExplorer.css";
 
 type DirCache = Map<string, DirEntry[] | "error">;
 
+const DRAG_THRESHOLD_PX = 4;
+
 interface Row {
   key: string;
   kind: "entry" | "empty" | "error" | "create";
@@ -91,7 +93,11 @@ export default function FileExplorer() {
   const [cache, setCache] = useState<DirCache>(() => new Map());
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [rootExpanded, setRootExpanded] = useState(true);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [focused, setFocused] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<Set<string>>(() => new Set());
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [dragGhost, setDragGhost] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -100,7 +106,7 @@ export default function FileExplorer() {
   } | null>(null);
   // explorer-internal cut/copy clipboard (not the OS pasteboard)
   const [clipboard, setClipboard] = useState<{
-    entry: DirEntry;
+    entries: DirEntry[];
     cut: boolean;
   } | null>(null);
   const [editing, setEditing] = useState<
@@ -114,14 +120,23 @@ export default function FileExplorer() {
   const repoPathRef = useRef(repoPath);
   const expandedRef = useRef(expanded);
   const cacheRef = useRef(cache);
+  const selectedRef = useRef(selected);
+  const selectionAnchorRef = useRef<string | null>(null);
+  const dragPathsRef = useRef<string[]>([]);
+  const dropTargetRef = useRef<string | null>(null);
+  const dragGhostRef = useRef<HTMLDivElement>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  const suppressClickRef = useRef(false);
   repoPathRef.current = repoPath;
   expandedRef.current = expanded;
   cacheRef.current = cache;
+  selectedRef.current = selected;
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      dragCleanupRef.current?.();
     };
   }, []);
 
@@ -170,7 +185,15 @@ export default function FileExplorer() {
     setCache(new Map());
     setExpanded(new Set());
     setRootExpanded(true);
-    setSelected(null);
+    setSelected(new Set());
+    setFocused(null);
+    setDragging(new Set());
+    setDropTarget(null);
+    setDragGhost(null);
+    selectionAnchorRef.current = null;
+    dragPathsRef.current = [];
+    dropTargetRef.current = null;
+    dragCleanupRef.current?.();
     setMenu(null);
     setClipboard(null);
     setEditing(null);
@@ -216,7 +239,13 @@ export default function FileExplorer() {
       ? activeTabId.slice("file:".length)
       : null;
   useEffect(() => {
-    if (activeFilePath) setSelected(activeFilePath);
+    if (activeFilePath) {
+      const next = new Set([activeFilePath]);
+      selectedRef.current = next;
+      setSelected(next);
+      setFocused(activeFilePath);
+      selectionAnchorRef.current = activeFilePath;
+    }
   }, [activeFilePath]);
 
   const toggleDir = useCallback(
@@ -266,6 +295,30 @@ export default function FileExplorer() {
     [ws],
   );
 
+  /** Remove descendants when an ancestor is also selected. Moving/deleting
+      the ancestor already includes them, and a second operation would target
+      a path that no longer exists. */
+  const topLevelEntries = (entries: DirEntry[]) =>
+    entries.filter(
+      (entry) =>
+        !entries.some(
+          (other) =>
+            other !== entry && entry.path.startsWith(other.path + "/"),
+        ),
+    );
+
+  const entriesForPaths = (paths: Iterable<string>): DirEntry[] => {
+    const wanted = new Set(paths);
+    const found: DirEntry[] = [];
+    for (const entries of cacheRef.current.values()) {
+      if (entries === "error") continue;
+      for (const entry of entries) {
+        if (wanted.delete(entry.path)) found.push(entry);
+      }
+    }
+    return found;
+  };
+
   /** Renaming/moving/deleting retargets or closes affected tabs, and unsaved
       drafts die with their tab id — get explicit consent first. */
   const confirmDirtyLoss = useCallback(
@@ -285,6 +338,29 @@ export default function FileExplorer() {
     [ws, affectedTabs],
   );
 
+  const confirmDirtyLossFor = useCallback(
+    async (roots: string[], title: string): Promise<boolean> => {
+      const { dirty } = ws.editor.getState();
+      const dirtyTabs = new Map(
+        roots
+          .flatMap(affectedTabs)
+          .filter((tab) => dirty[tab.id])
+          .map((tab) => [tab.id, tab]),
+      );
+      if (dirtyTabs.size === 0) return true;
+      const tabs = [...dirtyTabs.values()];
+      const what =
+        tabs.length === 1
+          ? `"${tabs[0].title}" has`
+          : `${tabs.length} open files have`;
+      return confirm(`${what} unsaved changes that will be lost.`, {
+        title,
+        kind: "warning",
+      });
+    },
+    [ws, affectedTabs],
+  );
+
   /** Repoint local state (selection, expansion, clipboard, editor tabs)
       after `from` moved to `to`. Updates expandedRef eagerly — see
       ensureExpanded. */
@@ -295,12 +371,26 @@ export default function FileExplorer() {
       const next = new Set([...expandedRef.current].map(remap));
       expandedRef.current = next;
       setExpanded(next);
-      setSelected((s) => (s ? remap(s) : s));
+      setSelected((paths) => {
+        const moved = new Set([...paths].map(remap));
+        selectedRef.current = moved;
+        return moved;
+      });
+      setFocused((path) => (path ? remap(path) : path));
+      if (selectionAnchorRef.current) {
+        selectionAnchorRef.current = remap(selectionAnchorRef.current);
+      }
       setClipboard((c) => {
         if (!c) return c;
-        const p = remap(c.entry.path);
-        if (p === c.entry.path) return c;
-        return { ...c, entry: { ...c.entry, path: p, name: basename(p) } };
+        return {
+          ...c,
+          entries: c.entries.map((entry) => {
+            const path = remap(entry.path);
+            return path === entry.path
+              ? entry
+              : { ...entry, path, name: basename(path) };
+          }),
+        };
       });
       ws.editor.getState().retargetFileTabs(from, to);
     },
@@ -342,7 +432,11 @@ export default function FileExplorer() {
       void message(String(e), { title, kind: "error" });
       return;
     }
-    setSelected(path);
+    const next = new Set([path]);
+    selectedRef.current = next;
+    setSelected(next);
+    setFocused(path);
+    selectionAnchorRef.current = path;
     if (!isDir) openFile(path);
     await refetchExpanded();
     scrollRowIntoView(path);
@@ -366,15 +460,25 @@ export default function FileExplorer() {
       return;
     }
     applyPathMove(entry.path, to);
-    setSelected(to);
+    const next = new Set([to]);
+    selectedRef.current = next;
+    setSelected(next);
+    setFocused(to);
+    selectionAnchorRef.current = to;
     await refetchExpanded();
     scrollRowIntoView(to);
   };
 
-  const deleteEntry = async (entry: DirEntry) => {
+  const deleteEntries = async (rawEntries: DirEntry[]) => {
     setMenu(null);
+    const entries = topLevelEntries(rawEntries);
+    if (entries.length === 0) return;
     const { dirty } = ws.editor.getState();
-    const affected = affectedTabs(entry.path);
+    const affected = [
+      ...new Map(
+        entries.flatMap((entry) => affectedTabs(entry.path)).map((tab) => [tab.id, tab]),
+      ).values(),
+    ];
     const dirtyTabs = affected.filter((t) => dirty[t.id]);
     const unsaved =
       dirtyTabs.length === 0
@@ -382,74 +486,156 @@ export default function FileExplorer() {
         : dirtyTabs.length === 1
           ? ` "${dirtyTabs[0].title}" has unsaved changes that will be lost.`
           : ` ${dirtyTabs.length} open files have unsaved changes that will be lost.`;
-    const ok = await confirm(`Move "${entry.name}" to the Trash?${unsaved}`, {
+    const subject =
+      entries.length === 1 ? `"${entries[0].name}"` : `${entries.length} items`;
+    const ok = await confirm(`Move ${subject} to the Trash?${unsaved}`, {
       title: "Delete",
       kind: "warning",
     });
     if (!ok) return;
-    try {
-      await fsTrash(entry.path);
-    } catch (e) {
-      void message(String(e), { title: "Delete", kind: "error" });
+
+    const removed: DirEntry[] = [];
+    const errors: string[] = [];
+    for (const entry of entries) {
+      try {
+        await fsTrash(entry.path);
+        removed.push(entry);
+      } catch (e) {
+        errors.push(String(e));
+      }
+    }
+    if (removed.length === 0) {
+      void message(errors.join("\n"), { title: "Delete", kind: "error" });
       return;
     }
+
+    const withinRemoved = (p: string) =>
+      removed.some(
+        (entry) => p === entry.path || p.startsWith(entry.path + "/"),
+      );
     const editor = ws.editor.getState();
-    for (const t of affected) editor.closeTab(t.id);
-    const within = (p: string) =>
-      p === entry.path || p.startsWith(entry.path + "/");
-    const next = new Set([...expandedRef.current].filter((p) => !within(p)));
+    const removedTabIds = new Set(
+      removed.flatMap((entry) => affectedTabs(entry.path)).map((tab) => tab.id),
+    );
+    for (const tab of affected) {
+      if (removedTabIds.has(tab.id)) editor.closeTab(tab.id);
+    }
+    const next = new Set(
+      [...expandedRef.current].filter((path) => !withinRemoved(path)),
+    );
     expandedRef.current = next;
     setExpanded(next);
-    setSelected((s) => (s && within(s) ? null : s));
-    setClipboard((c) => (c && within(c.entry.path) ? null : c));
+    setSelected((paths) => {
+      const kept = new Set([...paths].filter((path) => !withinRemoved(path)));
+      selectedRef.current = kept;
+      return kept;
+    });
+    setFocused((path) => (path && withinRemoved(path) ? null : path));
+    if (selectionAnchorRef.current && withinRemoved(selectionAnchorRef.current)) {
+      selectionAnchorRef.current = null;
+    }
+    setClipboard((c) => {
+      if (!c) return c;
+      const kept = c.entries.filter((entry) => !withinRemoved(entry.path));
+      return kept.length > 0 ? { ...c, entries: kept } : null;
+    });
     await refetchExpanded();
+    if (errors.length > 0) {
+      void message(errors.join("\n"), { title: "Delete", kind: "error" });
+    }
+  };
+
+  const moveEntriesInto = async (
+    rawEntries: DirEntry[],
+    destDir: string,
+    title: "Move" | "Paste",
+  ): Promise<{ moved: string[]; failed: DirEntry[] } | null> => {
+    const entries = topLevelEntries(rawEntries);
+    const moving = entries.filter((entry) => dirname(entry.path) !== destDir);
+    const invalid = moving.find(
+      (entry) =>
+        entry.isDir &&
+        (destDir === entry.path || destDir.startsWith(entry.path + "/")),
+    );
+    if (invalid) {
+      void message("Cannot move a folder into itself.", {
+        title,
+        kind: "error",
+      });
+      return null;
+    }
+    if (moving.length === 0) return { moved: [], failed: [] };
+    if (!(await confirmDirtyLossFor(moving.map((entry) => entry.path), "Move"))) {
+      return null;
+    }
+
+    const moved: string[] = [];
+    const failed: DirEntry[] = [];
+    const errors: string[] = [];
+    for (const entry of moving) {
+      const dest = `${destDir}/${entry.name}`;
+      try {
+        await fsRename(entry.path, dest);
+        applyPathMove(entry.path, dest);
+        moved.push(dest);
+      } catch (e) {
+        failed.push(entry);
+        errors.push(String(e));
+      }
+    }
+    ensureExpanded(destDir);
+    if (moved.length > 0) {
+      const next = new Set(moved);
+      selectedRef.current = next;
+      setSelected(next);
+      setFocused(moved[moved.length - 1]);
+      selectionAnchorRef.current = moved[0];
+    }
+    await refetchExpanded();
+    if (moved.length > 0) scrollRowIntoView(moved[moved.length - 1]);
+    if (errors.length > 0) {
+      void message(errors.join("\n"), { title, kind: "error" });
+    }
+    return { moved, failed };
   };
 
   const pasteInto = async (destDir: string) => {
     setMenu(null);
     if (!clipboard) return;
-    const { entry, cut } = clipboard;
+    const { entries: clipboardEntries, cut } = clipboard;
+    const entries = topLevelEntries(clipboardEntries);
     if (cut) {
-      const dest = `${destDir}/${entry.name}`;
-      if (dest === entry.path) {
-        setClipboard(null); // pasted back in place
-        return;
+      const result = await moveEntriesInto(entries, destDir, "Paste");
+      if (result) {
+        setClipboard(
+          result.failed.length > 0
+            ? { entries: result.failed, cut: true }
+            : null,
+        );
       }
-      if (
-        entry.isDir &&
-        (destDir === entry.path || destDir.startsWith(entry.path + "/"))
-      ) {
-        void message("Cannot move a folder into itself.", {
-          title: "Paste",
-          kind: "error",
-        });
-        return;
-      }
-      if (!(await confirmDirtyLoss(entry.path, "Move"))) return;
-      try {
-        await fsRename(entry.path, dest);
-      } catch (e) {
-        void message(String(e), { title: "Paste", kind: "error" });
-        return;
-      }
-      setClipboard(null);
-      applyPathMove(entry.path, dest);
-      ensureExpanded(destDir);
-      setSelected(dest);
-      await refetchExpanded();
-      scrollRowIntoView(dest);
     } else {
-      let created: string;
-      try {
-        created = await fsCopy(entry.path, destDir);
-      } catch (e) {
-        void message(String(e), { title: "Paste", kind: "error" });
-        return;
+      const created: string[] = [];
+      const errors: string[] = [];
+      for (const entry of entries) {
+        try {
+          created.push(await fsCopy(entry.path, destDir));
+        } catch (e) {
+          errors.push(String(e));
+        }
       }
       ensureExpanded(destDir);
-      setSelected(created);
+      if (created.length > 0) {
+        const next = new Set(created);
+        selectedRef.current = next;
+        setSelected(next);
+        setFocused(created[created.length - 1]);
+        selectionAnchorRef.current = created[0];
+      }
       await refetchExpanded();
-      scrollRowIntoView(created);
+      if (created.length > 0) scrollRowIntoView(created[created.length - 1]);
+      if (errors.length > 0) {
+        void message(errors.join("\n"), { title: "Paste", kind: "error" });
+      }
     }
   };
 
@@ -479,23 +665,191 @@ export default function FileExplorer() {
     return out;
   }, [cache, expanded, rootExpanded, repoPath, editing]);
 
-  const onRowClick = (e: DirEntry) => {
-    setSelected(e.path);
-    if (e.isDir) toggleDir(e.path);
-    else openFile(e.path);
+  const visibleEntries = rows
+    .filter((row) => row.kind === "entry")
+    .map((row) => row.entry!);
+
+  const setOnlySelected = (path: string) => {
+    const next = new Set([path]);
+    selectedRef.current = next;
+    setSelected(next);
+    setFocused(path);
+    selectionAnchorRef.current = path;
   };
 
-  const onRowContext = (e: DirEntry, ev: React.MouseEvent) => {
+  const selectRange = (toPath: string) => {
+    const anchor = selectionAnchorRef.current;
+    const anchorIdx = visibleEntries.findIndex((entry) => entry.path === anchor);
+    const toIdx = visibleEntries.findIndex((entry) => entry.path === toPath);
+    if (anchorIdx < 0 || toIdx < 0) {
+      setOnlySelected(toPath);
+      return;
+    }
+    const [start, end] =
+      anchorIdx < toIdx ? [anchorIdx, toIdx] : [toIdx, anchorIdx];
+    const next = new Set(
+      visibleEntries.slice(start, end + 1).map((entry) => entry.path),
+    );
+    selectedRef.current = next;
+    setSelected(next);
+    setFocused(toPath);
+  };
+
+  const onRowClick = (entry: DirEntry, ev: React.MouseEvent) => {
+    if (ev.shiftKey) {
+      selectRange(entry.path);
+      return;
+    }
+    if (ev.metaKey || ev.ctrlKey) {
+      const next = new Set(selectedRef.current);
+      if (next.has(entry.path)) next.delete(entry.path);
+      else next.add(entry.path);
+      selectedRef.current = next;
+      setSelected(next);
+      setFocused(entry.path);
+      selectionAnchorRef.current = entry.path;
+      return;
+    }
+    setOnlySelected(entry.path);
+    if (entry.isDir) toggleDir(entry.path);
+    else openFile(entry.path);
+  };
+
+  const onRowContext = (entry: DirEntry, ev: React.MouseEvent) => {
     ev.preventDefault();
     ev.stopPropagation();
-    setSelected(e.path);
-    setMenu({ x: ev.clientX, y: ev.clientY, entry: e });
+    if (!selectedRef.current.has(entry.path)) setOnlySelected(entry.path);
+    else setFocused(entry.path);
+    setMenu({ x: ev.clientX, y: ev.clientY, entry });
+  };
+
+  const moveDroppedEntries = async (rawEntries: DirEntry[], destDir: string) => {
+    await moveEntriesInto(rawEntries, destDir, "Move");
+  };
+
+  const updateDropTarget = (path: string | null) => {
+    if (dropTargetRef.current === path) return;
+    dropTargetRef.current = path;
+    setDropTarget(path);
+  };
+
+  /** WKWebView/Tauri does not reliably deliver HTML drag events for explorer
+      rows. Use pointer capture (the same strategy as Dock's tab dragging),
+      then hit-test folder/root targets beneath the captured pointer. */
+  const beginPointerDrag = (ev: React.PointerEvent, entry: DirEntry) => {
+    if (ev.button !== 0) return;
+    const row = ev.currentTarget as HTMLElement;
+    const pointerId = ev.pointerId;
+    const startX = ev.clientX;
+    const startY = ev.clientY;
+    let started = false;
+
+    const hitTest = (x: number, y: number) => {
+      const hit = document.elementFromPoint(x, y);
+      const target = hit?.closest("[data-fx-drop-dir]") as HTMLElement | null;
+      if (target) {
+        updateDropTarget(target.getAttribute("data-fx-drop-dir"));
+        return;
+      }
+      const tree = hit?.closest(".fx-tree");
+      updateDropTarget(tree ? repoPathRef.current : null);
+    };
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("keydown", onKey, true);
+      document.body.style.cursor = "";
+      document.body.classList.remove("fx-pointer-dragging");
+      dragCleanupRef.current = null;
+    };
+
+    const finish = (commit: boolean) => {
+      cleanup();
+      const target = dropTargetRef.current;
+      const paths = dragPathsRef.current;
+      dragPathsRef.current = [];
+      updateDropTarget(null);
+      setDragging(new Set());
+      setDragGhost(null);
+      if (!started) return;
+
+      // A click is normally synthesized immediately after pointerup. Do not
+      // let that reopen/toggle the row after a completed drag.
+      suppressClickRef.current = true;
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+      if (commit && target) {
+        void moveDroppedEntries(entriesForPaths(paths), target);
+      }
+    };
+
+    const onMove = (moveEv: PointerEvent) => {
+      // Prevent WKWebView from turning the gesture into a native text
+      // selection, including during the few pixels before drag activation.
+      moveEv.preventDefault();
+      if (!started) {
+        if (
+          Math.abs(moveEv.clientX - startX) < DRAG_THRESHOLD_PX &&
+          Math.abs(moveEv.clientY - startY) < DRAG_THRESHOLD_PX
+        ) {
+          return;
+        }
+        started = true;
+        let paths: string[];
+        if (selectedRef.current.has(entry.path)) {
+          paths = topLevelEntries(entriesForPaths(selectedRef.current)).map(
+            (item) => item.path,
+          );
+        } else {
+          setOnlySelected(entry.path);
+          paths = [entry.path];
+        }
+        dragPathsRef.current = paths;
+        setDragging(new Set(paths));
+        setDragGhost(paths.length === 1 ? entry.name : `${paths.length} items`);
+        window.getSelection()?.removeAllRanges();
+        row.setPointerCapture(pointerId);
+        document.body.style.cursor = "grabbing";
+        document.body.classList.add("fx-pointer-dragging");
+      }
+
+      const ghost = dragGhostRef.current;
+      if (ghost) {
+        ghost.style.left = `${moveEv.clientX + 10}px`;
+        ghost.style.top = `${moveEv.clientY + 8}px`;
+      }
+      const tree = treeRef.current;
+      if (tree) {
+        const rect = tree.getBoundingClientRect();
+        if (moveEv.clientY < rect.top + 24) tree.scrollTop -= 10;
+        else if (moveEv.clientY > rect.bottom - 24) tree.scrollTop += 10;
+      }
+      hitTest(moveEv.clientX, moveEv.clientY);
+    };
+
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (keyEv: KeyboardEvent) => {
+      if (keyEv.key === "Escape") {
+        keyEv.stopPropagation();
+        finish(false);
+      }
+    };
+
+    dragCleanupRef.current = () => finish(false);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("keydown", onKey, true);
   };
 
   const onKeyDown = (ev: React.KeyboardEvent) => {
-    const entries = rows.filter((r) => r.kind === "entry").map((r) => r.entry!);
+    const entries = visibleEntries;
     if (entries.length === 0) return;
-    const idx = entries.findIndex((e) => e.path === selected);
+    const idx = entries.findIndex((entry) => entry.path === focused);
     const sel = idx >= 0 ? entries[idx] : null;
 
     if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
@@ -507,7 +861,8 @@ export default function FileExplorer() {
               entries.length - 1,
               Math.max(0, idx + (ev.key === "ArrowDown" ? 1 : -1)),
             );
-      setSelected(entries[ni].path);
+      if (ev.shiftKey) selectRange(entries[ni].path);
+      else setOnlySelected(entries[ni].path);
       scrollRowIntoView(entries[ni].path);
     } else if (ev.key === "ArrowRight") {
       ev.preventDefault();
@@ -522,10 +877,17 @@ export default function FileExplorer() {
       else openFile(sel.path);
     } else if (ev.key === "F2") {
       ev.preventDefault();
-      if (sel) setEditing({ kind: "rename", entry: sel });
+      if (sel && selected.size === 1) setEditing({ kind: "rename", entry: sel });
     } else if (ev.key === "Backspace" && ev.metaKey) {
       ev.preventDefault();
-      if (sel) void deleteEntry(sel);
+      void deleteEntries(entriesForPaths(selected));
+    } else if (ev.key.toLowerCase() === "a" && (ev.metaKey || ev.ctrlKey)) {
+      ev.preventDefault();
+      const next = new Set(entries.map((entry) => entry.path));
+      selectedRef.current = next;
+      setSelected(next);
+      setFocused(entries[entries.length - 1].path);
+      selectionAnchorRef.current = entries[0].path;
     }
   };
 
@@ -556,13 +918,21 @@ export default function FileExplorer() {
         ref={treeRef}
         tabIndex={0}
         onKeyDown={onKeyDown}
+        onClick={(ev) => {
+          if (ev.target !== ev.currentTarget) return;
+          selectedRef.current = new Set();
+          setSelected(new Set());
+          setFocused(null);
+          selectionAnchorRef.current = null;
+        }}
         onContextMenu={(ev) => {
           ev.preventDefault();
           setMenu({ x: ev.clientX, y: ev.clientY, entry: null });
         }}
       >
         <div
-          className="fx-repo-row"
+          className={`fx-repo-row ${dropTarget === repoPath ? "drop-target" : ""}`}
+          data-fx-drop-dir={repoPath}
           onClick={() => setRootExpanded((v) => !v)}
         >
           <span className={`fx-chevron ${rootExpanded ? "open" : ""}`}>
@@ -609,9 +979,13 @@ export default function FileExplorer() {
             editing?.kind === "rename" && editing.entry.path === e.path;
           const cls = [
             "fx-row",
-            selected === e.path ? "selected" : "",
+            selected.has(e.path) ? "selected" : "",
             e.name.startsWith(".") ? "dotfile" : "",
-            clipboard?.cut && clipboard.entry.path === e.path ? "cut" : "",
+            clipboard?.cut && clipboard.entries.some((entry) => entry.path === e.path)
+              ? "cut"
+              : "",
+            dragging.has(e.path) ? "dragging" : "",
+            dropTarget === e.path ? "drop-target" : "",
           ]
             .filter(Boolean)
             .join(" ");
@@ -619,8 +993,22 @@ export default function FileExplorer() {
             <div
               key={row.key}
               data-path={e.path}
+              data-fx-drop-dir={e.isDir ? e.path : undefined}
               className={cls}
-              onClick={isRenaming ? undefined : () => onRowClick(e)}
+              onPointerDown={
+                isRenaming ? undefined : (ev) => beginPointerDrag(ev, e)
+              }
+              onClick={
+                isRenaming
+                  ? undefined
+                  : (ev) => {
+                      if (suppressClickRef.current) {
+                        suppressClickRef.current = false;
+                        return;
+                      }
+                      onRowClick(e, ev);
+                    }
+              }
               onContextMenu={(ev) => onRowContext(e, ev)}
             >
               {Array.from({ length: row.depth }, (_, i) => (
@@ -645,10 +1033,23 @@ export default function FileExplorer() {
         })}
       </div>
 
+      {dragGhost && (
+        <div className="fx-drag-ghost" ref={dragGhostRef}>
+          <span className="truncate">{dragGhost}</span>
+        </div>
+      )}
+
       {menu &&
         repoPath &&
         (() => {
           const e = menu.entry;
+          const menuEntries = e
+            ? selected.has(e.path)
+              ? entriesForPaths(selected)
+              : [e]
+            : [];
+          const topMenuEntries = topLevelEntries(menuEntries);
+          const single = topMenuEntries.length === 1 ? topMenuEntries[0] : null;
           // files take New/Paste actions on their containing dir
           const dirFor = e ? (e.isDir ? e.path : dirname(e.path)) : repoPath;
           return (
@@ -667,7 +1068,7 @@ export default function FileExplorer() {
               <button
                 onClick={() => {
                   setMenu(null);
-                  void fsReveal(e?.path ?? repoPath);
+                  void fsReveal(single?.path ?? e?.path ?? repoPath);
                 }}
               >
                 Reveal in Finder
@@ -677,7 +1078,7 @@ export default function FileExplorer() {
                 <>
                   <button
                     onClick={() => {
-                      setClipboard({ entry: e, cut: true });
+                      setClipboard({ entries: topMenuEntries, cut: true });
                       setMenu(null);
                     }}
                   >
@@ -685,7 +1086,7 @@ export default function FileExplorer() {
                   </button>
                   <button
                     onClick={() => {
-                      setClipboard({ entry: e, cut: false });
+                      setClipboard({ entries: topMenuEntries, cut: false });
                       setMenu(null);
                     }}
                   >
@@ -701,7 +1102,9 @@ export default function FileExplorer() {
                   <div className="ctx-menu-sep" />
                   <button
                     onClick={() => {
-                      void copyText(e.path);
+                      void copyText(
+                        topMenuEntries.map((entry) => entry.path).join("\n"),
+                      );
                       setMenu(null);
                     }}
                   >
@@ -709,22 +1112,30 @@ export default function FileExplorer() {
                   </button>
                   <button
                     onClick={() => {
-                      void copyText(e.path.slice(repoPath.length + 1));
+                      void copyText(
+                        topMenuEntries
+                          .map((entry) => entry.path.slice(repoPath.length + 1))
+                          .join("\n"),
+                      );
                       setMenu(null);
                     }}
                   >
                     Copy Relative Path
                   </button>
                   <div className="ctx-menu-sep" />
-                  <button
-                    onClick={() => {
-                      setMenu(null);
-                      setEditing({ kind: "rename", entry: e });
-                    }}
-                  >
-                    Rename…
+                  {single && (
+                    <button
+                      onClick={() => {
+                        setMenu(null);
+                        setEditing({ kind: "rename", entry: single });
+                      }}
+                    >
+                      Rename…
+                    </button>
+                  )}
+                  <button onClick={() => void deleteEntries(topMenuEntries)}>
+                    Delete
                   </button>
-                  <button onClick={() => void deleteEntry(e)}>Delete</button>
                 </>
               )}
             </ContextMenu>
