@@ -686,17 +686,50 @@ export interface GroupingWorkspaceActivity {
   activity: Exclude<ActivityLevel, "idle">;
 }
 
+/** "Nothing is happening" as ONE reference — see the stability rule below. */
+const NO_GROUPING_ACTIVITY: readonly GroupingWorkspaceActivity[] = [];
+
+/** Last non-empty result per grouping id, reused while contents are equal. */
+const groupingActivityMemo = new Map<
+  string,
+  readonly GroupingWorkspaceActivity[]
+>();
+
+const sameGroupingActivities = (
+  a: readonly GroupingWorkspaceActivity[],
+  b: readonly GroupingWorkspaceActivity[],
+): boolean =>
+  a.length === b.length &&
+  a.every(
+    (item, i) =>
+      item.workspacePath === b[i].workspacePath &&
+      item.activity === b[i].activity,
+  );
+
 /**
  * One non-idle indicator per project in a large terminal grouping. Attention
  * replaces busy for the same project and sorts ahead of all busy projects;
  * dock order remains stable within each priority.
+ *
+ * The result is REFERENCE-STABLE while its contents are unchanged, and every
+ * caller must consume it as-is (no useShallow wrapper). zustand v5 runs the
+ * selector inside useSyncExternalStore's getSnapshot, so a selector that
+ * allocates fresh objects per call reports "changed" on every snapshot read
+ * and spins React until it throws "Maximum update depth exceeded" — taking
+ * the whole app down. useShallow cannot rescue it: zustand's `shallow`
+ * compares array ELEMENTS with Object.is, so an array of freshly built
+ * objects never matches (only the empty case did, which is why this only
+ * ever detonated once an agent pane in the grouping went busy).
  */
 export const selectGroupingWorkspaceActivities = (
   s: AgentTerminalsState,
   groupingId: string,
-): GroupingWorkspaceActivity[] => {
+): readonly GroupingWorkspaceActivity[] => {
   const grouping = s.groupings.find((item) => item.id === groupingId);
-  if (!grouping) return [];
+  if (!grouping) {
+    groupingActivityMemo.delete(groupingId); // closed grouping — drop its memo
+    return NO_GROUPING_ACTIVITY;
+  }
   const byWorkspace = new Map<string, Exclude<ActivityLevel, "idle">>();
   for (const terminalId of groupingTerminalIds(grouping)) {
     const terminal = s.terminals[terminalId];
@@ -710,7 +743,11 @@ export const selectGroupingWorkspaceActivities = (
       byWorkspace.set(terminal.workspacePath, activity);
     }
   }
-  return [...byWorkspace]
+  if (byWorkspace.size === 0) {
+    groupingActivityMemo.delete(groupingId);
+    return NO_GROUPING_ACTIVITY;
+  }
+  const next = [...byWorkspace]
     .map(([workspacePath, activity]) => ({ workspacePath, activity }))
     .sort((left, right) =>
       left.activity === right.activity
@@ -719,4 +756,8 @@ export const selectGroupingWorkspaceActivities = (
           ? -1
           : 1,
     );
+  const prev = groupingActivityMemo.get(groupingId);
+  if (prev && sameGroupingActivities(prev, next)) return prev;
+  groupingActivityMemo.set(groupingId, next);
+  return next;
 };

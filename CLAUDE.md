@@ -128,8 +128,16 @@ cd src-tauri && cargo check     # backend typecheck
 - Status letters/colors/paths come from `src/lib/status.ts`. `statusPaths` is
   mandatory for any git mutation on a file entry — renamed files need both the
   new and old path or the operation half-applies.
-- zustand: subscribe with narrow selectors (`useShallow` for multi-field picks);
-  whole-store destructuring re-renders on every state change. Inside a
+- zustand: subscribe with narrow selectors (`useShallow` for multi-field picks
+  of values the store already holds); whole-store destructuring re-renders on
+  every state change. A selector that BUILDS a value must return a
+  reference-stable one (memoize like `selectGroupingWorkspaceActivities`):
+  zustand v5 runs selectors inside `useSyncExternalStore`'s getSnapshot, so a
+  freshly allocated result reads as "changed" every time and spins React until
+  it throws "Maximum update depth exceeded" — which kills the whole app.
+  `useShallow` does NOT rescue that: its `shallow` compares array/object
+  entries with `Object.is`, so a fresh array of fresh objects never matches
+  (an empty one does, so the loop only appears once there's data). Inside a
   workspace tree, use the context hooks (`useRepo`/`useEditor`/`useTerminal`),
   NOT a global store; event handlers read fresh state via
   `useWorkspace().repo.getState()` etc. Global chrome (titlebar/status bar)

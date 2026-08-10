@@ -9,7 +9,6 @@
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import { useShallow } from "zustand/react/shallow";
 import {
   switchToProject,
   useActiveWorkspace,
@@ -139,10 +138,11 @@ function GroupingTab({
   onMenu: (e: React.MouseEvent) => void;
 }) {
   const cancelled = useRef(false);
-  const activities = useAgentTerminalsStore(
-    useShallow((state) =>
-      selectGroupingWorkspaceActivities(state, grouping.id),
-    ),
+  // The selector is reference-stable by contract — never wrap it in
+  // useShallow (that compares the entries by identity and never settles,
+  // which spins React into "Maximum update depth exceeded").
+  const activities = useAgentTerminalsStore((state) =>
+    selectGroupingWorkspaceActivities(state, grouping.id),
   );
 
   const commit = (value: string) => {
