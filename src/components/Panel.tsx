@@ -7,9 +7,10 @@
  * terminals live across workspace switches; "+" adds a grouping, double-click
  * renames it, right-click closes it).
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
+  switchToProject,
   useActiveWorkspace,
   useWorkspacesStore,
   WorkspaceContext,
@@ -26,6 +27,7 @@ import {
 } from "../stores/agentTerminals";
 import { aggregateActivity } from "../stores/terminal";
 import { closeGlobalGrouping, openGlobalTerminal } from "../lib/agentSessions";
+import { paletteColor, PROJECT_COLOR_NAMES } from "../lib/projectColors";
 import { openWorkspaceTerminal } from "../lib/workspaceSessions";
 import TerminalPanel from "./TerminalPanel";
 import AgentDock from "./AgentDock";
@@ -55,9 +57,44 @@ async function closeGroupingSafely(groupingId: string): Promise<void> {
       { title: "Close Terminal Group", kind: "warning" },
     ))
   ) {
+    const wasActive =
+      useAgentTerminalsStore.getState().activeGroupingId === groupingId;
     closeGlobalGrouping(groupingId);
+    if (wasActive && effectiveAgentSide()) {
+      restoreGroupingWorkspace(
+        useAgentTerminalsStore.getState().activeGroupingId,
+      );
+    }
   }
 }
+
+const effectiveAgentSide = (): boolean => {
+  const hasWorkspaces = useWorkspacesStore.getState().workspaces.length > 0;
+  return !hasWorkspaces || useUiStore.getState().panelGroup === "agent";
+};
+
+const restoreGroupingWorkspace = (groupingId: string | null): void => {
+  const grouping = useAgentTerminalsStore
+    .getState()
+    .groupings.find((item) => item.id === groupingId);
+  const path = grouping?.lastActiveWorkspacePath;
+  if (path && path !== useWorkspacesStore.getState().activePath) {
+    void switchToProject(path);
+  }
+};
+
+const activateGrouping = (groupingId: string): void => {
+  const terminals = useAgentTerminalsStore.getState();
+  const grouping = terminals.groupings.find((item) => item.id === groupingId);
+  if (!grouping) return;
+  const currentWorkspace = useWorkspacesStore.getState().activePath;
+  if (!grouping.lastActiveWorkspacePath && currentWorkspace) {
+    terminals.setGroupingWorkspace(groupingId, currentWorkspace);
+  }
+  terminals.setActiveGrouping(groupingId);
+  useUiStore.getState().setPanelGroup("agent");
+  restoreGroupingWorkspace(groupingId);
+};
 
 /** One grouping's panel tab: click fronts it, double-click renames inline.
  *  The right-click menu lives in PanelHeader (ContextMenu must be a sibling
@@ -78,7 +115,6 @@ function GroupingTab({
   onMenu: (e: React.MouseEvent) => void;
 }) {
   const cancelled = useRef(false);
-  const setPanelGroup = useUiStore((s) => s.setPanelGroup);
   // Surface a waiting agent in this grouping while another tab is in front.
   const attention = useAgentTerminalsStore(
     (s) =>
@@ -95,10 +131,10 @@ function GroupingTab({
   return (
     <div
       className={`panel-group-tab panel-grouping-tab ${front ? "active" : ""}`}
+      style={{ "--group-color": paletteColor(grouping.colorIndex) } as CSSProperties}
       onMouseDown={(e) => {
         if (e.button !== 0 || editing) return;
-        useAgentTerminalsStore.getState().setActiveGrouping(grouping.id);
-        setPanelGroup("agent");
+        activateGrouping(grouping.id);
       }}
       onDoubleClick={(e) => {
         e.stopPropagation(); // rename, not the header's maximize toggle
@@ -134,6 +170,7 @@ function GroupingTab({
         />
       ) : (
         <>
+          <span className="panel-group-color" />
           {grouping.name}
           {!front && attention && (
             <IcDot className="activity-attention panel-group-dot" />
@@ -201,8 +238,12 @@ function PanelHeader({ group }: { group: PanelGroup }) {
         className="icon-btn panel-group-add"
         title="New Terminal Group"
         onClick={() => {
-          useAgentTerminalsStore.getState().newGrouping();
-          setPanelGroup("agent");
+          const id = useAgentTerminalsStore.getState().newGrouping();
+          const path = useWorkspacesStore.getState().activePath;
+          if (path) {
+            useAgentTerminalsStore.getState().setGroupingWorkspace(id, path);
+          }
+          activateGrouping(id);
         }}
       >
         <IcPlus />
@@ -298,6 +339,30 @@ function PanelHeader({ group }: { group: PanelGroup }) {
           >
             Rename Group
           </button>
+          <div className="ctx-menu-sep" />
+          <div className="panel-color-label">Group Color</div>
+          <div className="panel-color-row">
+            {PROJECT_COLOR_NAMES.map((name, colorIndex) => {
+              const selected =
+                groupings.find((grouping) => grouping.id === groupingMenu.id)
+                  ?.colorIndex === colorIndex;
+              return (
+                <button
+                  key={name}
+                  className={`panel-color-swatch ${selected ? "selected" : ""}`}
+                  title={name}
+                  style={{ background: paletteColor(colorIndex) }}
+                  onClick={() => {
+                    useAgentTerminalsStore
+                      .getState()
+                      .setGroupingColor(groupingMenu.id, colorIndex);
+                    setGroupingMenu(null);
+                  }}
+                />
+              );
+            })}
+          </div>
+          <div className="ctx-menu-sep" />
           <button
             onClick={() => {
               const id = groupingMenu.id;
@@ -323,6 +388,30 @@ export default function Panel() {
   const group = useEffectivePanelGroup();
   const groupings = useAgentTerminalsStore((s) => s.groupings);
   const activeGroupingId = useAgentTerminalsStore((s) => s.activeGroupingId);
+
+  // Remember workspace navigation only while a global group is actually in
+  // front. Group switches are handled explicitly so a closed repo can reopen
+  // without the old workspace overwriting the target group's memory mid-load.
+  useEffect(
+    () =>
+      useWorkspacesStore.subscribe((state, previous) => {
+        if (
+          state.activePath === previous.activePath ||
+          !state.activePath ||
+          !effectiveAgentSide()
+        ) {
+          return;
+        }
+        const terminals = useAgentTerminalsStore.getState();
+        if (terminals.activeGroupingId) {
+          terminals.setGroupingWorkspace(
+            terminals.activeGroupingId,
+            state.activePath,
+          );
+        }
+      }),
+    [],
+  );
 
   // With nothing to show (welcome screen, no global groupings) the panel
   // disappears entirely; it is still MOUNTED either way — terminals hide

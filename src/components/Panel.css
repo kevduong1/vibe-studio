@@ -38,9 +38,29 @@
 /* Global-grouping tabs are divs (they host an inline rename input), unlike
    the fixed Project Terminals button — give them the button feel back. */
 .panel-grouping-tab {
+  position: relative;
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.panel-grouping-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: -4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--group-color);
+}
+
+.panel-group-color {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--group-color);
+  flex-shrink: 0;
 }
 
 /* Inline grouping rename (dock-tab-rename's look, panel-header sized). */
@@ -56,6 +76,35 @@
   text-transform: none;
   letter-spacing: normal;
   outline: none;
+}
+
+.panel-color-label {
+  padding: 3px 8px 4px;
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+.panel-color-row {
+  display: flex;
+  gap: 6px;
+  padding: 2px 8px 6px;
+}
+
+.panel-color-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.panel-color-swatch:hover {
+  transform: scale(1.2);
+}
+
+.panel-color-swatch.selected {
+  box-shadow:
+    0 0 0 1.5px var(--bg-overlay),
+    0 0 0 3px var(--fg-dim);
 }
 
 /* Tucked right after the grouping tabs, quieter than the action buttons. */

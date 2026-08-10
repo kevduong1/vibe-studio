@@ -16,6 +16,7 @@ import { create, type StoreApi } from "zustand";
 import * as dock from "../lib/dockTree";
 import { type DropEdge } from "../lib/dockTree";
 import { projectDisplayName } from "../lib/projectNames";
+import { PROJECT_COLOR_NAMES } from "../lib/projectColors";
 import {
   type ActivityLevel,
   type PaneActivity,
@@ -47,6 +48,10 @@ export interface GlobalTermGrouping {
   id: string;
   /** Panel tab label (double-click to rename); defaults to "Global N". */
   name: string;
+  /** User-assigned identity color in the shared project/group palette. */
+  colorIndex: number;
+  /** Workspace to restore when this large panel tab returns to the front. */
+  lastActiveWorkspacePath: string | null;
   root: dock.DockNode | null;
   activeGroupId: string | null;
 }
@@ -68,6 +73,8 @@ export interface AgentTerminalsState {
   /** New empty grouping ("Global N"), made active. Returns its id. */
   newGrouping: () => string;
   renameGrouping: (id: string, name: string) => void;
+  setGroupingColor: (id: string, colorIndex: number) => void;
+  setGroupingWorkspace: (id: string, workspacePath: string) => void;
   /** Structural removal (grouping + its terminals) — go through
    *  closeGlobalGrouping() from UI. */
   closeGrouping: (id: string) => void;
@@ -148,6 +155,12 @@ const nextGroupingName = (groupings: GlobalTermGrouping[]): string => {
   return `Global ${n}`;
 };
 
+const nextGroupingColor = (groupings: GlobalTermGrouping[]): number => {
+  const counts = new Array<number>(PROJECT_COLOR_NAMES.length).fill(0);
+  for (const grouping of groupings) counts[grouping.colorIndex] += 1;
+  return counts.indexOf(Math.min(...counts));
+};
+
 /** All terminal ids in one grouping's tree (activity rollups, close glue). */
 export const groupingTerminalIds = (g: GlobalTermGrouping): string[] =>
   dock.dockGroups(g.root).flatMap((group) => group.terminalIds);
@@ -173,7 +186,7 @@ const loadDock = (): PersistedSlice => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return emptySlice;
     const p = JSON.parse(raw) as Record<string, unknown>;
-    if (p?.version !== 1 && p?.version !== 2) return emptySlice;
+    if (p?.version !== 1 && p?.version !== 2 && p?.version !== 3) return emptySlice;
 
     const terminals: Record<string, AgentTerminal> = {};
     if (p.terminals && typeof p.terminals === "object") {
@@ -196,10 +209,10 @@ const loadDock = (): PersistedSlice => {
     }
 
     // v1 stored a single tree; wrap it as the one grouping (dropped when
-    // empty — a v1 user with no terminals gets no grouping tab). v2 is the
-    // multi-grouping shape, where empty groupings are deliberate and kept.
+    // empty — a v1 user with no terminals gets no grouping tab). v2/v3 are
+    // the multi-grouping shape, where empty groupings are deliberate and kept.
     const rawGroupings: unknown[] =
-      p.version === 2 && Array.isArray(p.groupings)
+      (p.version === 2 || p.version === 3) && Array.isArray(p.groupings)
         ? (p.groupings as unknown[])
         : [{ name: "Global 1", root: p.root, activeGroupId: p.activeGroupId }];
 
@@ -211,7 +224,7 @@ const loadDock = (): PersistedSlice => {
       // `seen` spans ALL groupings — a terminal referenced twice keeps only
       // its first tab (same first-reference-wins rule as within one tree).
       const root = dock.normalize(dock.sanitizeNode(g.root, terminals, seen));
-      if (!root && p.version !== 2) continue; // legacy empty dock = no grouping
+      if (!root && p.version === 1) continue; // legacy empty dock = no grouping
       const id =
         typeof g.id === "string" && !groupings.some((x) => x.id === g.id)
           ? g.id
@@ -223,6 +236,18 @@ const loadDock = (): PersistedSlice => {
           typeof g.name === "string" && g.name.trim()
             ? g.name
             : `Global ${groupings.length + 1}`,
+        colorIndex:
+          typeof g.colorIndex === "number" &&
+          Number.isInteger(g.colorIndex) &&
+          g.colorIndex >= 0 &&
+          g.colorIndex < PROJECT_COLOR_NAMES.length
+            ? g.colorIndex
+            : nextGroupingColor(groupings),
+        lastActiveWorkspacePath:
+          typeof g.lastActiveWorkspacePath === "string" &&
+          g.lastActiveWorkspacePath.length > 0
+            ? g.lastActiveWorkspacePath
+            : null,
         root,
         activeGroupId:
           typeof g.activeGroupId === "string" &&
@@ -253,7 +278,7 @@ const saveDock = (s: PersistedSlice) =>
   localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
-      version: 2,
+      version: 3,
       terminals: s.terminals,
       groupings: s.groupings,
       activeGroupingId: s.activeGroupingId,
@@ -308,7 +333,14 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
     set((s) => ({
       groupings: [
         ...s.groupings,
-        { id, name: nextGroupingName(s.groupings), root: null, activeGroupId: null },
+        {
+          id,
+          name: nextGroupingName(s.groupings),
+          colorIndex: nextGroupingColor(s.groupings),
+          lastActiveWorkspacePath: null,
+          root: null,
+          activeGroupId: null,
+        },
       ],
       activeGroupingId: id,
     }));
@@ -322,6 +354,39 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
       if (!g || !trimmed || g.name === trimmed) return s;
       return {
         groupings: s.groupings.map((x) => (x === g ? { ...x, name: trimmed } : x)),
+      };
+    }),
+
+  setGroupingColor: (id, colorIndex) =>
+    set((s) => {
+      if (
+        !Number.isInteger(colorIndex) ||
+        colorIndex < 0 ||
+        colorIndex >= PROJECT_COLOR_NAMES.length
+      ) {
+        return s;
+      }
+      const grouping = s.groupings.find((item) => item.id === id);
+      if (!grouping || grouping.colorIndex === colorIndex) return s;
+      return {
+        groupings: s.groupings.map((item) =>
+          item === grouping ? { ...item, colorIndex } : item,
+        ),
+      };
+    }),
+
+  setGroupingWorkspace: (id, workspacePath) =>
+    set((s) => {
+      const grouping = s.groupings.find((item) => item.id === id);
+      if (!grouping || !workspacePath || grouping.lastActiveWorkspacePath === workspacePath) {
+        return s;
+      }
+      return {
+        groupings: s.groupings.map((item) =>
+          item === grouping
+            ? { ...item, lastActiveWorkspacePath: workspacePath }
+            : item,
+        ),
       };
     }),
 
@@ -376,6 +441,8 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
         const grouping: GlobalTermGrouping = {
           id: crypto.randomUUID(),
           name: nextGroupingName(s.groupings),
+          colorIndex: nextGroupingColor(s.groupings),
+          lastActiveWorkspacePath: workspacePath,
           root: next.root,
           activeGroupId: next.activeGroupId,
         };
