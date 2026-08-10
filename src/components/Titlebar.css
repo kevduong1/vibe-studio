@@ -69,6 +69,35 @@
   color: var(--fg-faint);
 }
 
+.ws-tab-family {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  border-radius: 7px;
+}
+
+.ws-tab-family.expanded {
+  padding: 1px 2px;
+  background: color-mix(in srgb, var(--bg-active) 55%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+
+.ws-tab-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--fg-faint);
+  font-size: 10px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .ws-tab-close {
   display: inline-flex;
   align-items: center;

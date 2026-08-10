@@ -30,6 +30,9 @@ pub struct BranchInfo {
 #[serde(rename_all = "camelCase")]
 pub struct RepoInfo {
     pub root: String,
+    /// Presentation-only identity used to group equivalent repo tabs. The
+    /// workspace itself remains keyed by `root` everywhere else.
+    pub tab_group_id: String,
 }
 
 #[derive(serde::Serialize)]
@@ -114,6 +117,103 @@ pub struct GitOpResult {
 
 fn open_repo(path: &str) -> Result<Repository, String> {
     Repository::discover(path).map_err(|e| e.to_string())
+}
+
+fn common_dir_id(repo: &Repository) -> String {
+    let path = repo
+        .commondir()
+        .canonicalize()
+        .unwrap_or_else(|_| repo.commondir().to_path_buf());
+    format!("gitdir:{}", path.to_string_lossy())
+}
+
+fn trim_repo_suffix(path: &str) -> &str {
+    path.trim_matches('/')
+        .strip_suffix(".git")
+        .unwrap_or_else(|| path.trim_matches('/'))
+}
+
+/** Normalize common HTTPS/SSH/scp remote forms to one credential-free key. */
+fn hosted_remote_id(remote: &str) -> Option<String> {
+    if let Ok(parsed) = url::Url::parse(remote) {
+        if parsed.scheme() == "file" {
+            return None;
+        }
+        let host = parsed.host_str()?.to_ascii_lowercase();
+        let path = trim_repo_suffix(parsed.path());
+        if path.is_empty() {
+            return None;
+        }
+        let port = parsed.port().map(|value| format!(":{value}")).unwrap_or_default();
+        return Some(format!("remote:{host}{port}/{path}"));
+    }
+
+    // Git's scp-like syntax: [user@]host:owner/repo.git.
+    let (authority, path) = remote.split_once(':')?;
+    if authority.contains('/') || authority.len() == 1 {
+        return None;
+    }
+    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let path = trim_repo_suffix(path);
+    if host.is_empty() || path.is_empty() {
+        return None;
+    }
+    Some(format!("remote:{}/{path}", host.to_ascii_lowercase()))
+}
+
+fn local_remote_path(repo: &Repository, remote: &str) -> Option<std::path::PathBuf> {
+    if let Ok(parsed) = url::Url::parse(remote) {
+        if parsed.scheme() == "file" {
+            return parsed.to_file_path().ok();
+        }
+        return None;
+    }
+    let path = Path::new(remote);
+    if path.is_absolute() {
+        Some(path.to_path_buf())
+    } else if remote.starts_with("./") || remote.starts_with("../") {
+        Some(repo.workdir()?.join(path))
+    } else {
+        None
+    }
+}
+
+fn remote_group_id(repo: &Repository, remote: &str) -> Option<String> {
+    if let Some(path) = local_remote_path(repo, remote) {
+        let target = Repository::open(&path).or_else(|_| Repository::discover(&path)).ok()?;
+        return Some(common_dir_id(&target));
+    }
+    hosted_remote_id(remote)
+}
+
+fn preferred_remote_name(repo: &Repository) -> Option<String> {
+    if let Ok(head) = repo.head() {
+        if let Ok(branch) = head.shorthand() {
+            if let Ok(config) = repo.config() {
+                if let Ok(remote) = config.get_string(&format!("branch.{branch}.remote")) {
+                    if remote != "." && repo.find_remote(&remote).is_ok() {
+                        return Some(remote);
+                    }
+                }
+            }
+        }
+    }
+    if repo.find_remote("origin").is_ok() {
+        return Some("origin".to_string());
+    }
+    let remotes = repo.remotes().ok()?;
+    let names: Vec<_> = remotes.iter().filter_map(Result::ok).flatten().collect();
+    (names.len() == 1).then(|| names[0].to_string())
+}
+
+fn repo_tab_group_id(repo: &Repository) -> String {
+    preferred_remote_name(repo)
+        .and_then(|name| {
+            let remote = repo.find_remote(&name).ok()?;
+            let url = remote.url().ok()?;
+            remote_group_id(repo, url)
+        })
+        .unwrap_or_else(|| common_dir_id(repo))
 }
 
 /// Run sync libgit2 / git-CLI work on the blocking pool so slow repos and
@@ -342,7 +442,8 @@ pub async fn git_open(path: String) -> Result<RepoInfo, String> {
         while root.len() > 1 && root.ends_with('/') {
             root.pop();
         }
-        Ok(RepoInfo { root })
+        let tab_group_id = repo_tab_group_id(&repo);
+        Ok(RepoInfo { root, tab_group_id })
     })
     .await
 }
@@ -1420,4 +1521,40 @@ pub async fn git_list_refs(repo_path: String) -> Result<Vec<RefLabel>, String> {
         Ok(out)
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_hosted_clone_urls_without_credentials() {
+        let expected = "remote:github.com/OpenAI/codex";
+        for remote in [
+            "https://token@GitHub.com/OpenAI/codex.git",
+            "ssh://git@github.com/OpenAI/codex.git/",
+            "git@github.com:OpenAI/codex.git",
+        ] {
+            assert_eq!(hosted_remote_id(remote).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn keeps_explicit_hosts_and_ports_distinct() {
+        assert_eq!(
+            hosted_remote_id("https://git.example.test:8443/team/app.git").as_deref(),
+            Some("remote:git.example.test:8443/team/app")
+        );
+        assert_ne!(
+            hosted_remote_id("https://one.example/team/app.git"),
+            hosted_remote_id("https://two.example/team/app.git")
+        );
+    }
+
+    #[test]
+    fn rejects_local_paths_as_hosted_remotes() {
+        for remote in ["/tmp/repo.git", "../repo.git", "file:///tmp/repo.git"] {
+            assert_eq!(hosted_remote_id(remote), None);
+        }
+    }
 }

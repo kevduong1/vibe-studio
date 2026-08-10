@@ -37,6 +37,8 @@ export interface Workspace {
   /** Workdir root (canonical, from git_open). Doubles as the workspace id.
    *  Display names come from lib/projectNames (basename, user-renameable). */
   path: string;
+  /** Header-tab presentation only; never used as workspace identity. */
+  tabGroupId: string;
   repo: RepoStore;
   editor: EditorStore;
   terminal: TerminalStore;
@@ -114,6 +116,7 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
     }
     const ws: Workspace = {
       path: root,
+      tabGroupId: info.tabGroupId,
       repo: createRepoStore(root),
       editor: createEditorStore(),
       terminal: createTerminalStore(),

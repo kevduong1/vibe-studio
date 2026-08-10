@@ -598,3 +598,18 @@ export const selectWorkspaceActivity = (
   }
   return busy ? "busy" : "idle";
 };
+
+/** Activity rollup for a presentation-only family of workspace tabs. */
+export const selectWorkspacePathsActivity = (
+  s: AgentTerminalsState,
+  workspacePaths: string[],
+): ActivityLevel => {
+  const paths = new Set(workspacePaths);
+  let busy = false;
+  for (const [id, activity] of Object.entries(s.paneActivity)) {
+    if (!paths.has(s.terminals[id]?.workspacePath)) continue;
+    if (activity.attention) return "attention";
+    if (activity.busy) busy = true;
+  }
+  return busy ? "busy" : "idle";
+};

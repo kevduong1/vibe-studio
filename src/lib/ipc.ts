@@ -199,6 +199,8 @@ export interface GitOpResult {
 export interface RepoInfo {
   /** Absolute path of the repository workdir root. */
   root: string;
+  /** Opaque presentation identity for equivalent clone/worktree header tabs. */
+  tabGroupId: string;
 }
 
 // ---------------------------------------------------------------------------

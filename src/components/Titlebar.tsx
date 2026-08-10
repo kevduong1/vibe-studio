@@ -13,8 +13,10 @@ import {
 } from "../stores/workspaces";
 import {
   selectWorkspaceActivity,
+  selectWorkspacePathsActivity,
   useAgentTerminalsStore,
 } from "../stores/agentTerminals";
+import type { ActivityLevel } from "../stores/terminal";
 import {
   paletteColor,
   PROJECT_COLOR_NAMES,
@@ -22,6 +24,7 @@ import {
   useProjectColorIndex,
 } from "../lib/projectColors";
 import {
+  projectDisplayName,
   setProjectDisplayName,
   useProjectDisplayName,
   useProjectDisplayNames,
@@ -105,6 +108,9 @@ function WorkspaceTab({
   onContext,
   onRenameStart,
   onRenameEnd,
+  activity,
+  groupCount,
+  title,
 }: {
   ws: Workspace;
   active: boolean;
@@ -113,15 +119,12 @@ function WorkspaceTab({
   onContext: (path: string, e: ReactMouseEvent) => void;
   onRenameStart: () => void;
   onRenameEnd: () => void;
+  activity: ActivityLevel;
+  groupCount?: number;
+  title?: string;
 }) {
   const setActive = useWorkspacesStore((s) => s.setActive);
   const closeWorkspace = useWorkspacesStore((s) => s.closeWorkspace);
-  // Agent-terminal activity trickles up from the global dock: spinner while
-  // one of this project's agents works, pulsing dot when one is waiting on
-  // the user (e.g. Claude Code asking a question).
-  const activity = useAgentTerminalsStore((s) =>
-    selectWorkspaceActivity(s, ws.path),
-  );
   const ref = useRef<HTMLDivElement | null>(null);
   const colorIndex = useProjectColorIndex(ws.path);
   const name = useProjectDisplayName(ws.path);
@@ -142,7 +145,7 @@ function WorkspaceTab({
     <div
       ref={ref}
       className={`ws-tab ${active ? "active" : ""}`}
-      title={ws.path}
+      title={title ?? ws.path}
       onMouseDown={(e) => {
         // prevent middle-click autoscroll; close on aux click below
         if (e.button === 1) e.preventDefault();
@@ -196,6 +199,11 @@ function WorkspaceTab({
           {ambiguous && <span className="ws-tab-dir"> · {parentDir(ws.path)}</span>}
         </span>
       )}
+      {!renaming && groupCount && groupCount > 1 && (
+        <span className="ws-tab-group-count" title={`${groupCount} related workspaces`}>
+          {groupCount}
+        </span>
+      )}
       {!renaming && (
         <button
           className="ws-tab-close"
@@ -208,6 +216,84 @@ function WorkspaceTab({
         >
           <IcClose />
         </button>
+      )}
+    </div>
+  );
+}
+
+interface WorkspaceTabCommonProps {
+  activePath: string | null;
+  nameCounts: Map<string, number>;
+  renamingPath: string | null;
+  onContext: (path: string, e: ReactMouseEvent) => void;
+  onRenameStart: (path: string) => void;
+  onRenameEnd: () => void;
+}
+
+function SingleWorkspaceTab({
+  ws,
+  ...props
+}: WorkspaceTabCommonProps & { ws: Workspace }) {
+  const activity = useAgentTerminalsStore((state) =>
+    selectWorkspaceActivity(state, ws.path),
+  );
+  return (
+    <WorkspaceTab
+      ws={ws}
+      active={ws.path === props.activePath}
+      ambiguous={(props.nameCounts.get(projectDisplayName(ws.path)) ?? 0) > 1}
+      renaming={ws.path === props.renamingPath}
+      onContext={props.onContext}
+      onRenameStart={() => props.onRenameStart(ws.path)}
+      onRenameEnd={props.onRenameEnd}
+      activity={activity}
+    />
+  );
+}
+
+function WorkspaceTabFamily({
+  workspaces,
+  expanded,
+  onExpandedChange,
+  ...props
+}: WorkspaceTabCommonProps & {
+  workspaces: Workspace[];
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+}) {
+  const paths = workspaces.map((workspace) => workspace.path);
+  const familyActivity = useAgentTerminalsStore((state) =>
+    selectWorkspacePathsActivity(state, paths),
+  );
+  const representative =
+    workspaces.find((workspace) => workspace.path === props.activePath) ?? workspaces[0];
+  const familyTitle = workspaces.map((workspace) => workspace.path).join("\n");
+
+  return (
+    <div
+      className={`ws-tab-family ${expanded ? "expanded" : ""}`}
+      onMouseEnter={() => onExpandedChange(true)}
+      onMouseLeave={() => onExpandedChange(false)}
+    >
+      {expanded ? (
+        workspaces.map((workspace) => (
+          <SingleWorkspaceTab key={workspace.path} ws={workspace} {...props} />
+        ))
+      ) : (
+        <WorkspaceTab
+          ws={representative}
+          active={workspaces.some((workspace) => workspace.path === props.activePath)}
+          ambiguous={
+            (props.nameCounts.get(projectDisplayName(representative.path)) ?? 0) > 1
+          }
+          renaming={false}
+          onContext={props.onContext}
+          onRenameStart={() => props.onRenameStart(representative.path)}
+          onRenameEnd={props.onRenameEnd}
+          activity={familyActivity}
+          groupCount={workspaces.length}
+          title={familyTitle}
+        />
       )}
     </div>
   );
@@ -261,6 +347,7 @@ export default function Titlebar() {
   // Lifted out of the tab so the context menu's Rename item can start an
   // inline edit on any tab.
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
 
   const pickFolder = async () => {
     const dir = await openDialog({ directory: true, multiple: false });
@@ -278,24 +365,55 @@ export default function Titlebar() {
     nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
   }
 
+  // Stable first-seen order, without changing the underlying workspace list
+  // or any path-keyed behavior outside this header presentation.
+  const tabGroups: { id: string; workspaces: Workspace[] }[] = [];
+  for (const workspace of workspaces) {
+    const existing = tabGroups.find((group) => group.id === workspace.tabGroupId);
+    if (existing) existing.workspaces.push(workspace);
+    else tabGroups.push({ id: workspace.tabGroupId, workspaces: [workspace] });
+  }
+
+  const commonTabProps: WorkspaceTabCommonProps = {
+    activePath,
+    nameCounts,
+    renamingPath,
+    onContext: (path, event) => {
+      event.preventDefault();
+      setTabMenu({ path, x: event.clientX, y: event.clientY });
+    },
+    onRenameStart: setRenamingPath,
+    onRenameEnd: () => setRenamingPath(null),
+  };
+
   return (
     <div className="titlebar" data-tauri-drag-region>
       <div className="titlebar-tabs">
-        {workspaces.map((ws) => (
-          <WorkspaceTab
-            key={ws.path}
-            ws={ws}
-            active={ws.path === activePath}
-            ambiguous={(nameCounts.get(displayName(ws.path)) ?? 0) > 1}
-            renaming={ws.path === renamingPath}
-            onContext={(path, e) => {
-              e.preventDefault();
-              setTabMenu({ path, x: e.clientX, y: e.clientY });
-            }}
-            onRenameStart={() => setRenamingPath(ws.path)}
-            onRenameEnd={() => setRenamingPath(null)}
-          />
-        ))}
+        {tabGroups.map((group) =>
+          group.workspaces.length === 1 ? (
+            <SingleWorkspaceTab
+              key={group.id}
+              ws={group.workspaces[0]}
+              {...commonTabProps}
+            />
+          ) : (
+            <WorkspaceTabFamily
+              key={group.id}
+              workspaces={group.workspaces}
+              expanded={
+                expandedGroupId === group.id ||
+                group.workspaces.some(
+                  (workspace) =>
+                    workspace.path === renamingPath || workspace.path === tabMenu?.path,
+                )
+              }
+              onExpandedChange={(expanded) =>
+                setExpandedGroupId(expanded ? group.id : null)
+              }
+              {...commonTabProps}
+            />
+          ),
+        )}
         <button
           className="icon-btn ws-tab-add"
           title="Open Repository…"
