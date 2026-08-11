@@ -41,6 +41,14 @@ export const IcBranch = (props: IconProps) => (
     <path d="M11.5 7.2c0 2.3-2.8 2.4-4.6 3.2" />
   </Svg>
 );
+/** Tree — repository worktrees activity view. */
+export const IcTree = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M8 1.5 4.8 5.6h1.6L4.2 8.7h7.6L9.6 5.6h1.6z" />
+    <path d="M8 8.7v4.8" />
+    <path d="M5.5 13.5h5" />
+  </Svg>
+);
 export const IcRemote = (props: IconProps) => (
   <Svg {...props}>
     <path d="M4.6 12.5h7a2.6 2.6 0 0 0 .4-5.17 4 4 0 0 0-7.83-.55A2.9 2.9 0 0 0 4.6 12.5z" />

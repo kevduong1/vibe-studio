@@ -71,6 +71,8 @@ export interface AgentTerminalsState {
   renameGrouping: (id: string, name: string) => void;
   setGroupingColor: (id: string, colorIndex: number) => void;
   setGroupingWorkspace: (id: string, workspacePath: string) => void;
+  /** Rebind navigation memory that points at a checkout deleted from disk. */
+  forgetWorkspace: (workspacePath: string, fallbackPath: string | null) => void;
   /** Structural removal (grouping + its terminals) — go through
    *  closeGlobalGrouping() from UI. */
   closeGrouping: (id: string) => void;
@@ -317,6 +319,31 @@ const groupingOf = (
 ): GlobalTermGrouping | undefined =>
   groupings.find((g) => dock.groupOf(g.root, terminalId));
 
+/**
+ * Replace one deleted grouping-navigation target. Prefer the grouping's active
+ * surviving terminal, then any surviving terminal, then the caller's current
+ * workspace. Keeping this pure makes the deletion race regression-testable.
+ */
+export const groupingAfterWorkspaceDeleted = (
+  grouping: GlobalTermGrouping,
+  terminals: Record<string, AgentTerminal>,
+  workspacePath: string,
+  fallbackPath: string | null,
+): GlobalTermGrouping => {
+  if (grouping.lastActiveWorkspacePath !== workspacePath) return grouping;
+  const activeTerminalId = dock.findGroup(grouping.root, grouping.activeGroupId)
+    ?.activeTerminalId;
+  const orderedIds = [
+    ...(activeTerminalId ? [activeTerminalId] : []),
+    ...groupingTerminalIds(grouping).filter((id) => id !== activeTerminalId),
+  ];
+  const terminalPath = orderedIds
+    .map((id) => terminals[id]?.workspacePath)
+    .find((path) => Boolean(path) && path !== workspacePath);
+  const nextPath = terminalPath ?? (fallbackPath !== workspacePath ? fallbackPath : null);
+  return { ...grouping, lastActiveWorkspacePath: nextPath };
+};
+
 export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
   ...loadDock(),
   paneTitle: {},
@@ -381,6 +408,21 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
             : item,
         ),
       };
+    }),
+
+  forgetWorkspace: (workspacePath, fallbackPath) =>
+    set((s) => {
+      const groupings = s.groupings.map((grouping) =>
+        groupingAfterWorkspaceDeleted(
+          grouping,
+          s.terminals,
+          workspacePath,
+          fallbackPath,
+        ),
+      );
+      return groupings.every((grouping, index) => grouping === s.groupings[index])
+        ? s
+        : { groupings };
     }),
 
   closeGrouping: (id) =>

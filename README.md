@@ -114,18 +114,37 @@ or was approved.
   records feedback and returns to the terminal without sending text. If the
   repository changes after acceptance, the inbox marks that approval stale.
 - Agents in a normal workspace still use “all repository changes since the
-  base commit” scope. For isolated ownership, choose **New Worktree + Agent…**
-  from the titlebar **+** menu.
+  base commit” scope. For isolated ownership, choose **New Task…** from the
+  Worktrees sidebar or titlebar **+** menu.
 
-### 🌿 Isolated agent tasks
+### 🌿 Git worktrees & isolated agent tasks
 
-- **New Worktree…**, **Open Worktree…**, and **New Worktree + Agent…** create
-  or open linked checkouts as ordinary workspaces. The root is configurable;
+- **New Worktree…**, **Open Worktree…**, and **New Task…** create or open
+  linked checkouts as ordinary workspaces. New Task also launches the selected
+  agent. The root is configurable;
   repositories can opt into bootstrap, ignored-file includes, and a preview
   port range with `.vibe/worktrees.json`.
-- The Tasks sidebar combines whole-task/latest-turn changes, conflicts, checks,
-  diagnostics, commits, previews, agent state, and read-only child-agent rows;
-  each card keeps its parent project's accent color while workspaces switch.
+- The Worktrees sidebar lists the main checkout and every linked worktree Git
+  knows about for the current repository, including worktrees created outside
+  Vibe Studio. It shows branch/detached state, HEAD, main/linked and
+  locked/prunable status, and lets you open or switch to another checkout.
+  Ordinary worktrees stay in compact rows; Vibe-owned task rows expand for
+  review evidence, plans, feedback, and lifecycle actions. The activity-bar
+  tree icon opens this view. Ordering remains stable while switching: the main
+  checkout comes first, followed by branch and path, while **Current** is only
+  a status badge.
+  Live Git data remains authoritative; ordinary worktrees are never silently
+  adopted as Vibe-owned tasks. **New Task** creates an isolated worktree and
+  launches the selected agent; **Removed tasks** appears only when task records
+  remain after their Git checkouts were deleted. Every linked worktree has a
+  confirmed remove action that keeps its branch; the main checkout cannot be
+  removed. Task rows separately support permanent **Delete Task Record**, which
+  deletes Vibe metadata while leaving a live worktree and branch intact.
+- Vibe-owned worktree rows additionally combine whole-task/latest-turn
+  changes, conflicts, checks, diagnostics, commits, previews, agent state, and
+  read-only child-agent rows. Every live worktree row uses the same path-keyed
+  project color as its workspace tab; removed history falls back to its parent
+  project's color.
   Prompt-owned turns snapshot into a private Git tree first, so latest-turn
   files open as checkpoint-to-current diffs without changing the real index.
   Line comments can be batched into a follow-up only while the same agent
@@ -138,9 +157,11 @@ or was approved.
   absent, stale, or ambiguous references fall back to a fresh shell without
   guessing or using `--last`.
 - Task outcomes are explicit: **Apply / Merge**, **Keep Branch**, **Archive**,
-  and **Discard**. Closing, archiving, and checkout deletion are separate. Git
+  and **Remove Worktree**. Closing, archiving, checkout deletion, and permanent
+  task-record deletion are separate. Git
   gets the first dirty-removal refusal; force requires confirmation; live
-  global terminals block removal; branches are never deleted implicitly.
+  global terminals block removal; successful cleanup forgets deleted checkout
+  paths in global terminal groups; branches are never deleted implicitly.
 - Agent buttons open a launch sheet for model, reasoning, permissions, sandbox,
   environment, extra arguments, and current/worktree folder choice. Conversation
   restore remains an explicit archived-task action. The initial Codex profile remains

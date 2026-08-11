@@ -59,6 +59,8 @@ interface IsolatedTasksState {
   tasks: Record<string, IsolatedTask>;
   addTask: (task: IsolatedTask) => void;
   patchTask: (id: string, patch: Partial<IsolatedTask>) => void;
+  /** Permanently remove one task record and references to it from parent plans. */
+  deleteTask: (id: string) => void;
 }
 
 const PLAN_STATUSES: TaskPlanStepStatus[] = ["draft", "approved", "running", "completed", "blocked"];
@@ -191,6 +193,22 @@ export const useIsolatedTasksStore = create<IsolatedTasksState>((set) => ({
           [id]: { ...task, ...patch, id, updatedAt: Date.now() },
         },
       };
+    }),
+  deleteTask: (id) =>
+    set((state) => {
+      if (!state.tasks[id]) return state;
+      const tasks = { ...state.tasks };
+      delete tasks[id];
+      for (const [taskId, task] of Object.entries(tasks)) {
+        const plan = task.plan.map((step) => ({
+          ...step,
+          childTaskIds: step.childTaskIds.filter((childId) => childId !== id),
+        }));
+        if (plan.some((step, index) => step.childTaskIds.length !== task.plan[index].childTaskIds.length)) {
+          tasks[taskId] = { ...task, plan, updatedAt: Date.now() };
+        }
+      }
+      return { tasks };
     }),
 }));
 

@@ -1,17 +1,59 @@
 .isolated-tasks-panel { height: 100%; overflow: auto; }
-.isolated-task-list { display: grid; gap: 7px; padding: 8px; }
-.isolated-task-project { display: grid; gap: 7px; }
-.isolated-task-project-title { padding: 3px 2px 0; color: var(--fg-faint); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
-.isolated-task-filter { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; padding: 8px 8px 0; }
-.isolated-task-filter input { min-width: 0; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-input); color: var(--fg); padding: 5px 7px; }
-.isolated-task-filter button { border: 1px solid var(--border); border-radius: 4px; padding: 4px 7px; color: var(--fg-dim); }
-.isolated-task-filter button.active { color: var(--accent); border-color: var(--accent); }
+.isolated-task-list { display: grid; gap: 6px; padding: 7px 8px 12px; }
+.worktree-sidebar-header { min-height: 34px; display: flex; align-items: center; gap: 5px; padding: 0 7px 0 11px; }
+.worktree-sidebar-header > :first-child { flex: 1; color: var(--fg-dim); font-size: var(--font-size-sm); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.worktree-count { min-width: 14px; color: var(--fg-faint); font-size: 10px; text-align: center; }
+.worktree-new-task { display: flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid transparent; border-radius: 4px; background: var(--accent-muted); color: var(--accent-hover); font-size: var(--font-size-sm); white-space: nowrap; }
+.worktree-new-task:hover { border-color: var(--accent-muted); background: var(--bg-selected); color: var(--fg); }
+.worktree-new-task svg { width: 11px; height: 11px; }
+.worktree-refresh { display: grid; place-items: center; width: 22px; height: 22px; color: var(--fg-dim); }
+.worktree-refresh:hover:not(:disabled) { color: var(--fg); background: var(--bg-hover); }
+.worktree-refresh svg { width: 13px; height: 13px; }
+.worktree-refresh.refreshing svg { animation: worktree-refresh-spin .8s linear infinite; }
+@keyframes worktree-refresh-spin { to { transform: rotate(360deg); } }
+.isolated-task-filter { padding: 2px 8px 0; }
+.isolated-task-filter input { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 5px; outline: none; background: var(--bg-input); color: var(--fg); padding: 5px 8px; }
+.isolated-task-filter input:focus { border-color: var(--focus-ring); }
+.worktree-removed-toggle { display: flex; align-items: center; gap: 4px; margin: 4px 9px 0; padding: 2px 3px; color: var(--fg-faint); font-size: var(--font-size-sm); }
+.worktree-removed-toggle:hover,
+.worktree-removed-toggle.active { color: var(--fg-dim); }
+.worktree-removed-toggle svg { width: 10px; height: 10px; }
 .isolated-tasks-empty { padding: 22px 14px; color: var(--fg-dim); line-height: 1.5; }
-.isolated-task-card { border: 1px solid var(--border); border-radius: 5px; background: var(--bg-hover); overflow: hidden; }
-.isolated-task-card.outcome-active { border-left: 2px solid var(--accent); }
+.worktree-load-error { display: grid; gap: 7px; margin: 8px; padding: 8px; border: 1px solid var(--danger); border-radius: 4px; color: var(--danger); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.worktree-load-error button { justify-self: start; padding: 3px 7px; border: 1px solid var(--border); border-radius: 3px; color: var(--fg); }
+.isolated-task-card { border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 5px; background: var(--bg-hover); overflow: hidden; }
+.isolated-task-card.current { border-color: var(--border); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.worktree-card { border: 1px solid var(--border-subtle); border-left: 3px solid var(--accent); border-radius: 6px; background: color-mix(in srgb, var(--bg-hover) 72%, transparent); overflow: hidden; }
+.worktree-card:hover { border-color: var(--border); border-left-color: var(--accent); background: var(--bg-hover); }
+.worktree-card.current { border-color: var(--border); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.worktree-card-content { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 9px 8px 10px; }
+.worktree-card-copy { display: grid; gap: 3px; min-width: 0; }
+.worktree-card-title-row { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.worktree-card-name { min-width: 0; flex: 1; overflow: hidden; color: var(--fg); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-card-meta { display: flex; min-width: 0; align-items: center; gap: 4px; overflow: hidden; color: var(--fg-dim); font-size: var(--font-size-sm); white-space: nowrap; }
+.worktree-card-meta svg { width: 11px; height: 11px; flex: 0 0 auto; color: var(--accent); }
+.worktree-card-branch { overflow: hidden; text-overflow: ellipsis; }
+.worktree-card-separator { color: var(--fg-faint); }
+.worktree-card-meta .bad { color: var(--danger); }
+.worktree-card-path { overflow: hidden; color: var(--fg-faint); font-family: var(--font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-card-actions { display: flex; align-items: center; gap: 3px; }
+.worktree-card-action { padding: 3px 7px; border: 1px solid var(--border); border-radius: 4px; color: var(--fg-dim); font-size: var(--font-size-sm); }
+.worktree-card-action:hover:not(:disabled) { border-color: var(--accent-muted); background: var(--accent-muted); color: var(--fg); }
+.worktree-card-action:disabled { opacity: .45; cursor: default; }
+.worktree-card-delete { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 4px; color: var(--fg-faint); }
+.worktree-card-delete:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.worktree-card-delete:disabled { opacity: .45; cursor: default; }
+.worktree-card-delete svg { width: 12px; height: 12px; }
 .isolated-task-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; align-items: center; width: 100%; padding: 8px; text-align: left; }
 .isolated-task-summary svg { width: 12px; height: 12px; }
+.worktree-summary-copy { display: grid; gap: 2px; min-width: 0; }
 .isolated-task-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-summary-meta { overflow: hidden; color: var(--fg-faint); font-family: var(--font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-badges { display: flex; max-width: 112px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 3px; }
+.worktree-badge { padding: 1px 5px; border: 0; border-radius: 7px; background: var(--bg-active); color: var(--fg-faint); font-size: 9px; line-height: 1.35; white-space: nowrap; }
+.worktree-badge.current,
+.worktree-badge.task { background: var(--accent-muted); color: var(--accent-hover); }
+.worktree-badge.bad { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
 .isolated-task-outcome { color: var(--fg-faint); font-size: var(--font-size-sm); }
 .isolated-task-body { display: grid; gap: 8px; padding: 0 10px 10px 27px; }
 .isolated-task-branch,
@@ -22,6 +64,9 @@
 .isolated-task-evidence span { display: inline-flex; align-items: center; gap: 3px; }
 .isolated-task-evidence svg { width: 11px; height: 11px; }
 .isolated-task-evidence .bad { color: var(--danger); }
+.worktree-flags { display: flex; flex-wrap: wrap; gap: 5px; color: var(--fg-dim); font-size: var(--font-size-sm); }
+.worktree-flags span { padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; }
+.worktree-flags .bad { color: var(--danger); }
 .isolated-task-head,
 .isolated-task-path { color: var(--fg-faint); font-family: var(--font-mono); font-size: 10px; overflow-wrap: anywhere; }
 .isolated-task-actions { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -55,3 +100,7 @@
 .isolated-task-plan-deps input { width: auto; }
 .isolated-task-plan-children { color: var(--accent); font-size: var(--font-size-sm); }
 .isolated-task-plan-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+.worktree-history { display: grid; gap: 7px; margin-top: 5px; padding-top: 10px; border-top: 1px solid var(--border); }
+.worktree-history-title,
+.worktree-history-empty { color: var(--fg-faint); font-size: var(--font-size-sm); }
+.worktree-history-empty { padding: 7px 2px; }

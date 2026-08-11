@@ -31,6 +31,7 @@ import {
 import { copyText } from "../lib/clipboard";
 import {
   archiveIsolatedTask,
+  deleteIsolatedTaskRecord,
   discardIsolatedTask,
   keepIsolatedTaskBranch,
   mergeIsolatedTask,
@@ -114,17 +115,29 @@ function ProjectTabMenu({
           {task.cleanupProvenance === "created-by-vibe" && (
             <button
               className="danger"
-              onClick={() => void runTaskAction("Discard Task", async () => {
+              onClick={() => void runTaskAction("Remove Worktree", async () => {
                 if (!(await confirm(
-                  `Discard “${task.name}” and remove its checkout? The branch “${task.branch}” will be kept.`,
-                  { title: "Discard Isolated Task?", kind: "warning" },
+                  `Remove the worktree for “${task.name}”? The checkout folder will be deleted and the task will move to Removed tasks. The branch “${task.branch}” will be kept.`,
+                  { title: "Remove Task Worktree?", kind: "warning" },
                 ))) return;
                 await discardIsolatedTask(task);
               })}
             >
-              Discard Task…
+              Remove Worktree…
             </button>
           )}
+          <button
+            className="danger"
+            onClick={() => void runTaskAction("Delete Task Record", async () => {
+              if (!(await confirm(
+                `Permanently delete the task record “${task.name}”? Its stored plan, review links, and history will be removed. The worktree and branch will remain.`,
+                { title: "Delete Task Record?", kind: "warning" },
+              ))) return;
+              deleteIsolatedTaskRecord(task);
+            })}
+          >
+            Delete Task Record…
+          </button>
           <div className="ctx-menu-sep" />
         </>
       )}
@@ -583,7 +596,7 @@ export default function Titlebar() {
                 Open Worktree…
               </button>
               <button onClick={() => { setWorktreeDialog({ parent: active, mode: "create-agent" }); setAddMenu(null); }}>
-                New Worktree + Agent…
+                New Task…
               </button>
             </>
           )}

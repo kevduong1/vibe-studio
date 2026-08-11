@@ -226,32 +226,70 @@ const checkoutHasLiveGlobalTerminals = async (path: string): Promise<boolean> =>
   return true;
 };
 
-export async function discardIsolatedTask(task: IsolatedTask): Promise<void> {
-  if (task.cleanupProvenance !== "created-by-vibe") {
-    throw new Error("Vibe Studio did not create this checkout, so it will not remove it automatically.");
-  }
-  if (await checkoutHasLiveGlobalTerminals(task.worktreePath)) return;
-  await useWorkspacesStore.getState().closeWorkspace(task.worktreePath);
-  if (useWorkspacesStore.getState().workspaces.some((ws) => ws.path === task.worktreePath)) return;
-  if (await checkoutHasLiveGlobalTerminals(task.worktreePath)) return;
+/**
+ * Explicitly remove a linked checkout while retaining its branch. Workspace
+ * editor prompts and live global terminals get a chance to stop the removal
+ * before Git is invoked. Returns false when any safety gate stops the removal.
+ */
+export async function removeWorktreeCheckout(
+  repoPath: string,
+  worktreePath: string,
+  branch: string | null,
+): Promise<boolean> {
+  if (await checkoutHasLiveGlobalTerminals(worktreePath)) return false;
+  await useWorkspacesStore.getState().closeWorkspace(worktreePath);
+  if (useWorkspacesStore.getState().workspaces.some((ws) => ws.path === worktreePath)) return false;
+  if (await checkoutHasLiveGlobalTerminals(worktreePath)) return false;
   try {
-    await gitWorktreeRemove(task.parentWorkspacePath, task.worktreePath, false);
+    await gitWorktreeRemove(repoPath, worktreePath, false);
   } catch (error) {
     const force = await confirm(
-      `Git refused to remove the checkout:\n\n${String(error)}\n\nForce removal? The branch “${task.branch}” will be kept, but uncommitted checkout changes will be lost.`,
+      `Git refused to remove the checkout:\n\n${String(error)}\n\nForce removal? ${branch ? `The branch “${branch}” will be kept, but ` : ""}uncommitted checkout changes will be lost.`,
       { title: "Force Remove Worktree?", kind: "warning" },
     );
-    if (!force) return;
-    if (await checkoutHasLiveGlobalTerminals(task.worktreePath)) return;
-    await gitWorktreeRemove(task.parentWorkspacePath, task.worktreePath, true);
+    if (!force) return false;
+    if (await checkoutHasLiveGlobalTerminals(worktreePath)) return false;
+    await gitWorktreeRemove(repoPath, worktreePath, true);
   }
-  for (const terminalId of boundGlobalTerminalIds(task.worktreePath)) {
+  for (const terminalId of boundGlobalTerminalIds(worktreePath)) {
     closeAgentTerminal(terminalId);
   }
+  // Global terminal groupings remember their last workspace independently of
+  // their tabs. Clear that navigation target after the checkout is gone so an
+  // empty or background grouping can never try to reopen the deleted path.
+  useAgentTerminalsStore.getState().forgetWorkspace(
+    worktreePath,
+    useWorkspacesStore.getState().activePath,
+  );
+  return true;
+}
+
+/** Remove a task's checkout but retain its task record under Removed tasks. */
+export async function removeIsolatedTaskWorktree(task: IsolatedTask): Promise<boolean> {
+  const removed = await removeWorktreeCheckout(
+    task.parentWorkspacePath,
+    task.worktreePath,
+    task.branch,
+  );
+  if (!removed) return false;
   useIsolatedTasksStore.getState().patchTask(task.id, {
     outcome: "discarded",
     checkoutRemovedAt: Date.now(),
   });
+  return true;
+}
+
+export async function discardIsolatedTask(task: IsolatedTask): Promise<boolean> {
+  if (task.cleanupProvenance !== "created-by-vibe") {
+    throw new Error("Vibe Studio did not create this checkout, so it will not remove it automatically.");
+  }
+  return removeIsolatedTaskWorktree(task);
+}
+
+/** Permanently delete Vibe's metadata only; the checkout and branch remain. */
+export function deleteIsolatedTaskRecord(task: IsolatedTask): void {
+  useReviewCommentsStore.getState().clearTask(task.id);
+  useIsolatedTasksStore.getState().deleteTask(task.id);
 }
 
 export const activeTaskForPath = (path: string): IsolatedTask | undefined =>

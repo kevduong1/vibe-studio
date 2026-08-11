@@ -1,20 +1,30 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import {
   archiveIsolatedTask,
-  discardIsolatedTask,
+  deleteIsolatedTaskRecord,
   dispatchTaskPlanStep,
   keepIsolatedTaskBranch,
   launchReadOnlyReviewAgent,
   mergeIsolatedTask,
   forkIsolatedTask,
+  removeIsolatedTaskWorktree,
+  removeWorktreeCheckout,
   restoreTaskCode,
   restoreTaskConversation,
   sendIsolatedTaskFeedback,
 } from "../lib/isolatedTasks";
 import { reviewAgentChanges } from "../lib/agentInbox";
-import { gitLog, previewServers } from "../lib/ipc";
+import {
+  gitLog,
+  gitWorktreeList,
+  gitWorktreeOpen,
+  onRepoChanged,
+  previewServers,
+  type GitWorktree,
+} from "../lib/ipc";
 import { getWorkspaceLsp, useLspStatusVersionValue } from "../lib/lsp/servers";
+import { basename } from "../lib/path";
 import { useProjectColorVar } from "../lib/projectColors";
 import { checkStateFor, useAgentTasksStore } from "../stores/agentTasks";
 import {
@@ -25,7 +35,18 @@ import {
 import { useAgentRuntimeStore } from "../stores/agentRuntime";
 import { useReviewCommentsStore } from "../stores/reviewComments";
 import { useWorkspace, useWorkspacesStore } from "../stores/workspaces";
-import { IcBranch, IcCheck, IcChevronDown, IcChevronRight, IcDiff, IcTerminal } from "./icons";
+import {
+  IcBranch,
+  IcCheck,
+  IcChevronDown,
+  IcChevronRight,
+  IcDiff,
+  IcPlus,
+  IcRefresh,
+  IcTerminal,
+  IcTrash,
+} from "./icons";
+import { requestNewIsolatedTask } from "./WorktreeDialog";
 import "./IsolatedTasksPanel.css";
 
 const outcomeLabel: Record<IsolatedTask["outcome"], string> = {
@@ -36,8 +57,134 @@ const outcomeLabel: Record<IsolatedTask["outcome"], string> = {
   discarded: "Checkout removed",
 };
 
-function TaskCard({ task, initiallyExpanded }: { task: IsolatedTask; initiallyExpanded: boolean }) {
-  const projectColor = useProjectColorVar(task.parentWorkspacePath);
+function worktreeBranch(worktree: GitWorktree): string {
+  return worktree.branch ?? (worktree.detached ? "Detached HEAD" : "No branch");
+}
+
+function WorktreeCard({
+  worktree,
+  repoPath,
+  current,
+  onWorktreesChanged,
+}: {
+  worktree: GitWorktree;
+  repoPath: string;
+  current: boolean;
+  onWorktreesChanged: () => void;
+}) {
+  // Workspace tabs and the project-color picker are keyed by checkout path.
+  // Use that same identity here so a worktree keeps its color when opened.
+  const projectColor = useProjectColorVar(worktree.path);
+  const [operation, setOperation] = useState<"open" | "remove" | null>(null);
+  const busy = operation !== null;
+  const open = useWorkspacesStore((state) =>
+    state.workspaces.some((workspace) => workspace.path === worktree.path),
+  );
+
+  const openWorktree = async () => {
+    if (busy) return;
+    setOperation("open");
+    try {
+      await gitWorktreeOpen(repoPath, worktree.path);
+      await useWorkspacesStore.getState().openWorkspace(worktree.path);
+    } catch (error) {
+      await message(String(error), { title: "Open Worktree", kind: "error" });
+    } finally {
+      setOperation(null);
+    }
+  };
+
+  const removeWorktree = async () => {
+    if (busy || worktree.main) return;
+    const approved = await confirm(
+      `Remove worktree “${basename(worktree.path)}”? The checkout folder will be deleted, but ${worktree.branch ? `the branch “${worktree.branch}”` : "any referenced commits"} will be kept. Git will refuse if the checkout has uncommitted changes.`,
+      { title: "Remove Worktree?", kind: "warning" },
+    );
+    if (!approved) return;
+    setOperation("remove");
+    try {
+      if (await removeWorktreeCheckout(repoPath, worktree.path, worktree.branch)) {
+        onWorktreesChanged();
+      }
+    } catch (error) {
+      await message(String(error), { title: "Remove Worktree", kind: "error" });
+    } finally {
+      setOperation(null);
+    }
+  };
+
+  return (
+    <div
+      className={`worktree-card accent-scope ${current ? "current" : ""}`}
+      style={{ "--accent": projectColor } as CSSProperties}
+    >
+      <div className="worktree-card-content">
+        <div className="worktree-card-copy">
+          <div className="worktree-card-title-row">
+            <span className="worktree-card-name">{basename(worktree.path)}</span>
+            <span className="worktree-badges">
+              {current && <span className="worktree-badge current">Current</span>}
+              {!current && open && <span className="worktree-badge">Open</span>}
+              {worktree.main && <span className="worktree-badge">Main</span>}
+            </span>
+          </div>
+          <div className="worktree-card-meta">
+            <IcBranch />
+            <span className="worktree-card-branch">{worktreeBranch(worktree)}</span>
+            <span className="worktree-card-separator">·</span>
+            <span>{worktree.head ? worktree.head.slice(0, 8) : "Unborn HEAD"}</span>
+            {worktree.detached && <span>· Detached</span>}
+            {worktree.locked && <span>· Locked</span>}
+            {worktree.prunable && <span className="bad">· Prunable</span>}
+          </div>
+          <div className="worktree-card-path" title={worktree.path}>{worktree.path}</div>
+        </div>
+        {(!current || !worktree.main) && (
+          <div className="worktree-card-actions">
+            {!current && (
+              <button
+                className="worktree-card-action"
+                disabled={busy || worktree.prunable}
+                title={worktree.prunable ? "This checkout is prunable and cannot be opened" : undefined}
+                onClick={() => void openWorktree()}
+              >
+                {operation === "open" ? "Opening…" : open ? "Switch" : "Open"}
+              </button>
+            )}
+            {!worktree.main && (
+              <button
+                className="worktree-card-delete"
+                disabled={busy}
+                title="Remove worktree (branch is kept)"
+                aria-label={`Remove worktree ${basename(worktree.path)}`}
+                onClick={() => void removeWorktree()}
+              >
+                <IcTrash />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TaskCard({
+  task,
+  worktree,
+  current,
+  initiallyExpanded,
+  onWorktreesChanged,
+}: {
+  task: IsolatedTask;
+  worktree?: GitWorktree;
+  current: boolean;
+  initiallyExpanded: boolean;
+  onWorktreesChanged: () => void;
+}) {
+  // Live task rows match their worktree's workspace-tab color. A historical
+  // row has no checkout identity left, so it falls back to the parent project.
+  const projectColor = useProjectColorVar(worktree?.path ?? task.parentWorkspacePath);
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -108,6 +255,7 @@ function TaskCard({ task, initiallyExpanded }: { task: IsolatedTask; initiallyEx
     setBusy(true);
     try {
       await action();
+      onWorktreesChanged();
     } catch (error) {
       await message(String(error), { title, kind: "error" });
     } finally {
@@ -169,17 +317,40 @@ function TaskCard({ task, initiallyExpanded }: { task: IsolatedTask; initiallyEx
 
   return (
     <div
-      className={`isolated-task-card accent-scope outcome-${task.outcome}`}
+      className={`isolated-task-card accent-scope outcome-${task.outcome} ${current ? "current" : ""}`}
       style={{ "--accent": projectColor } as CSSProperties}
     >
-      <button className="isolated-task-summary" onClick={() => setExpanded(!expanded)}>
+      <button
+        className="isolated-task-summary"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+      >
         {expanded ? <IcChevronDown /> : <IcChevronRight />}
-        <span className="isolated-task-name">{task.name}</span>
-        <span className="isolated-task-outcome">{outcomeLabel[task.outcome]}</span>
+        <span className="worktree-summary-copy">
+          <span className="isolated-task-name">{task.name}</span>
+          <span className="worktree-summary-meta">
+            {worktree ? worktreeBranch(worktree) : task.branch} · {task.worktreePath}
+          </span>
+        </span>
+        <span className="worktree-badges">
+          {current && <span className="worktree-badge current">Current</span>}
+          {!current && open && worktree && <span className="worktree-badge">Open</span>}
+          {worktree && <span className="worktree-badge">{worktree.main ? "Main" : "Linked"}</span>}
+          <span className="worktree-badge task">Task</span>
+          <span className="isolated-task-outcome">{outcomeLabel[task.outcome]}</span>
+          {!worktree && task.outcome !== "discarded" && <span className="worktree-badge bad">Not linked</span>}
+        </span>
       </button>
       {expanded && (
         <div className="isolated-task-body">
-          <div className="isolated-task-branch"><IcBranch /> {task.branch}</div>
+          <div className="isolated-task-branch"><IcBranch /> {worktree ? worktreeBranch(worktree) : task.branch}</div>
+          {worktree && (worktree.locked || worktree.prunable || worktree.detached) && (
+            <div className="worktree-flags">
+              {worktree.detached && <span>Detached</span>}
+              {worktree.locked && <span>Locked</span>}
+              {worktree.prunable && <span className="bad">Prunable</span>}
+            </div>
+          )}
           <div className="isolated-task-evidence">
             <span><IcDiff /> {agentTask?.latestSnapshot?.changedFiles.length ?? 0} files</span>
             <span>{agentTask?.latestTurnChangedFiles.length ?? 0} latest turn</span>
@@ -191,8 +362,8 @@ function TaskCard({ task, initiallyExpanded }: { task: IsolatedTask; initiallyEx
             <span>{commitCount ?? "—"} commits</span>
             <span>{previewCount ?? "—"} previews</span>
           </div>
-          {agentTask?.latestSnapshot?.head && (
-            <div className="isolated-task-head">HEAD {agentTask.latestSnapshot.head.slice(0, 8)} · base {task.baseCommit.slice(0, 8)}</div>
+          {(agentTask?.latestSnapshot?.head || worktree?.head) && (
+            <div className="isolated-task-head">HEAD {(agentTask?.latestSnapshot?.head ?? worktree?.head)?.slice(0, 8)} · base {task.baseCommit.slice(0, 8)}</div>
           )}
           {runtime && (
             <div className="isolated-task-agent">
@@ -362,24 +533,24 @@ function TaskCard({ task, initiallyExpanded }: { task: IsolatedTask; initiallyEx
             </div>
           )}
           <div className="isolated-task-actions">
-            {task.outcome !== "discarded" && (
+            {task.outcome !== "discarded" && worktree && (
               <button disabled={busy} onClick={() => void run("Review Task", review)}>
                 {open ? "Compare Changes" : "Open & Compare"}
               </button>
             )}
-            {task.outcome === "archived" && (
+            {task.outcome === "archived" && worktree && (
               <button disabled={busy} onClick={() => void run("Restore Code", () => restoreTaskCode(task))}>Restore Code</button>
             )}
-            {task.outcome === "archived" && (
+            {task.outcome === "archived" && worktree && (
               <button disabled={busy} onClick={() => void run("Restore Conversation", () => restoreTaskConversation(task))}>Restore Conversation</button>
             )}
             {task.outcome !== "discarded" && (
               <button disabled={busy} onClick={() => void run("Fork Task", async () => { await forkIsolatedTask(task); })}>Fork</button>
             )}
-            {task.outcome === "active" && (
+            {task.outcome === "active" && worktree && (
               <button disabled={busy} onClick={() => void run("Apply Task", () => mergeIsolatedTask(task))}>Apply / Merge</button>
             )}
-            {task.outcome !== "discarded" && (
+            {task.outcome !== "discarded" && worktree && (
               <button disabled={busy} onClick={() => void run("Launch Review Agent", async () => {
                 launchReadOnlyReviewAgent(task);
               })}>Read-only Review Agent</button>
@@ -392,15 +563,24 @@ function TaskCard({ task, initiallyExpanded }: { task: IsolatedTask; initiallyEx
             {task.outcome !== "discarded" && task.outcome !== "archived" && (
               <button disabled={busy} onClick={() => void run("Archive Task", () => archiveIsolatedTask(task))}>Archive</button>
             )}
-            {task.outcome !== "discarded" && task.cleanupProvenance === "created-by-vibe" && (
-              <button className="danger" disabled={busy} onClick={() => void run("Discard Task", async () => {
+            {task.outcome !== "discarded" && worktree && !worktree.main && (
+              <button className="danger" disabled={busy} onClick={() => void run("Remove Worktree", async () => {
                 if (!(await confirm(
-                  `Discard “${task.name}” and remove its checkout? The branch “${task.branch}” will be kept.`,
-                  { title: "Discard Isolated Task?", kind: "warning" },
+                  `Remove the worktree for “${task.name}”? The checkout folder will be deleted and the task will move to Removed tasks. The branch “${task.branch}” will be kept.`,
+                  { title: "Remove Task Worktree?", kind: "warning" },
                 ))) return;
-                await discardIsolatedTask(task);
-              })}>Discard…</button>
+                await removeIsolatedTaskWorktree(task);
+              })}>Remove Worktree…</button>
             )}
+            <button className="danger" disabled={busy} onClick={() => void run("Delete Task Record", async () => {
+              if (!(await confirm(
+                worktree
+                  ? `Permanently delete the task record “${task.name}”? Its stored plan, review links, and history will be removed. The worktree and branch will remain.`
+                  : `Permanently delete the task record “${task.name}”? Its stored plan, review links, and history will be removed.`,
+                { title: "Delete Task Record?", kind: "warning" },
+              ))) return;
+              deleteIsolatedTaskRecord(task);
+            })}>Delete Task Record…</button>
           </div>
         </div>
       )}
@@ -411,51 +591,186 @@ function TaskCard({ task, initiallyExpanded }: { task: IsolatedTask; initiallyEx
 export default function IsolatedTasksPanel() {
   const ws = useWorkspace();
   const [query, setQuery] = useState("");
-  const [showAll, setShowAll] = useState(false);
+  const [showRemoved, setShowRemoved] = useState(false);
+  const [worktrees, setWorktrees] = useState<GitWorktree[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshSequence = useRef(0);
   const taskMap = useIsolatedTasksStore((state) => state.tasks);
   const tasks = useMemo(() => Object.values(taskMap), [taskMap]);
-  const currentTask = tasks.find((task) => task.worktreePath === ws.path);
-  const parentPath = currentTask?.parentWorkspacePath ?? ws.path;
+
+  const refreshWorktrees = useCallback(async (showProgress = true) => {
+    const sequence = ++refreshSequence.current;
+    if (showProgress) setRefreshing(true);
+    try {
+      const items = await gitWorktreeList(ws.path);
+      if (sequence !== refreshSequence.current) return;
+      setWorktrees(items);
+      setLoadError(null);
+    } catch (error) {
+      if (sequence !== refreshSequence.current) return;
+      setLoadError(String(error));
+    } finally {
+      if (sequence === refreshSequence.current) setRefreshing(false);
+    }
+  }, [ws.path]);
+
+  useEffect(() => {
+    setWorktrees(null);
+    void refreshWorktrees(false);
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onRepoChanged((change) => {
+      if (change.repoPath === ws.path && change.gitChanged) void refreshWorktrees(false);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch(() => {
+      // The manual refresh still works if the optional watcher listener could
+      // not be installed (for example while the app is tearing down).
+    });
+    return () => {
+      disposed = true;
+      refreshSequence.current += 1;
+      unlisten?.();
+    };
+  }, [refreshWorktrees, ws.path]);
+
   const normalized = query.trim().toLowerCase();
-  const relevant = tasks
-    .filter((task) => showAll || task.parentWorkspacePath === parentPath)
-    .filter((task) =>
-      !normalized || [task.name, task.branch, task.worktreePath, task.parentWorkspacePath, task.outcome]
-        .some((value) => value.toLowerCase().includes(normalized)),
-    )
+  const worktreePaths = useMemo(
+    () => new Set((worktrees ?? []).map((worktree) => worktree.path)),
+    [worktrees],
+  );
+  const repoPath = worktrees?.find((worktree) => worktree.main)?.path ?? ws.path;
+  const taskForPath = useMemo(() => {
+    const matches = new Map<string, IsolatedTask>();
+    for (const task of tasks) {
+      if (task.outcome === "discarded") continue;
+      const existing = matches.get(task.worktreePath);
+      if (!existing || existing.updatedAt < task.updatedAt) matches.set(task.worktreePath, task);
+    }
+    return matches;
+  }, [tasks]);
+  const matchesQuery = (worktree: GitWorktree, task?: IsolatedTask): boolean =>
+    !normalized || [
+      worktree.path,
+      worktree.branch ?? "",
+      worktree.head ?? "",
+      worktree.main ? "main" : "linked",
+      worktree.detached ? "detached" : "",
+      worktree.locked ? "locked" : "",
+      worktree.prunable ? "prunable" : "",
+      task?.name ?? "",
+      task?.outcome ?? "",
+    ].some((value) => value.toLowerCase().includes(normalized));
+  const visibleWorktrees = (worktrees ?? [])
+    .filter((worktree) => matchesQuery(worktree, taskForPath.get(worktree.path)))
+    .sort((left, right) =>
+      Number(right.main) - Number(left.main) ||
+      worktreeBranch(left).localeCompare(worktreeBranch(right)) ||
+      left.path.localeCompare(right.path),
+    );
+  const removedTasks = tasks
+    .filter((task) => !worktreePaths.has(task.worktreePath))
+    .filter((task) => worktreePaths.has(task.parentWorkspacePath))
     .sort((a, b) => b.updatedAt - a.updatedAt);
-  const initiallyExpandedTaskId = currentTask?.id
-    ?? relevant.find((task) => task.outcome === "active")?.id
-    ?? relevant[0]?.id;
-  const groups = new Map<string, IsolatedTask[]>();
-  for (const task of relevant) {
-    groups.set(task.parentWorkspacePath, [...(groups.get(task.parentWorkspacePath) ?? []), task]);
-  }
+  const visibleRemovedTasks = removedTasks
+    .filter((task) =>
+      !normalized || [task.name, task.branch, task.worktreePath, task.outcome]
+        .some((value) => value.toLowerCase().includes(normalized)),
+    );
+  const hasVisibleRemovedTasks = showRemoved && visibleRemovedTasks.length > 0;
+
   return (
     <div className="isolated-tasks-panel">
-      <div className="sidebar-header">
-        <span>Isolated Tasks</span>
+      <div className="sidebar-header worktree-sidebar-header">
+        <span>Worktrees</span>
+        <span className="worktree-count">{worktrees?.length ?? "—"}</span>
+        <button
+          className="worktree-new-task"
+          title="Create an isolated worktree and launch an agent"
+          onClick={() => requestNewIsolatedTask(ws.path)}
+        >
+          <IcPlus />
+          <span>New Task</span>
+        </button>
+        <button
+          className={`worktree-refresh ${refreshing ? "refreshing" : ""}`}
+          title="Refresh worktrees"
+          aria-label="Refresh worktrees"
+          disabled={refreshing}
+          onClick={() => void refreshWorktrees()}
+        >
+          <IcRefresh />
+        </button>
       </div>
       <div className="isolated-task-filter">
-        <input value={query} placeholder="Search tasks and archive" onChange={(event) => setQuery(event.target.value)} />
-        <button className={showAll ? "active" : ""} onClick={() => setShowAll(!showAll)}>{showAll ? "All projects" : "This project"}</button>
+        <input value={query} placeholder="Search worktrees" onChange={(event) => setQuery(event.target.value)} />
       </div>
-      {relevant.length === 0 ? (
-        <div className="isolated-tasks-empty">Create one from the titlebar + menu with New Worktree + Agent.</div>
+      {removedTasks.length > 0 && (
+        <button
+          className={`worktree-removed-toggle ${showRemoved ? "active" : ""}`}
+          title="Task records retained after their Git worktree was removed"
+          onClick={() => setShowRemoved(!showRemoved)}
+        >
+          {showRemoved ? <IcChevronDown /> : <IcChevronRight />}
+          <span>{showRemoved ? "Hide" : "Show"} {removedTasks.length} removed task{removedTasks.length === 1 ? "" : "s"}</span>
+        </button>
+      )}
+      {loadError && (
+        <div className="worktree-load-error">
+          <span>{loadError}</span>
+          <button onClick={() => void refreshWorktrees()}>Retry</button>
+        </div>
+      )}
+      {worktrees === null && !loadError ? (
+        <div className="isolated-tasks-empty">Loading repository worktrees…</div>
+      ) : visibleWorktrees.length === 0 && !hasVisibleRemovedTasks ? (
+        <div className="isolated-tasks-empty">
+          {normalized
+            ? `No worktrees${showRemoved ? " or removed tasks" : ""} match this search.`
+            : "Git returned no worktrees for this repository."}
+        </div>
       ) : (
         <div className="isolated-task-list">
-          {[...groups].map(([project, projectTasks]) => (
-            <div className="isolated-task-project" key={project}>
-              {showAll && <div className="isolated-task-project-title">{project}</div>}
-              {projectTasks.map((task) => (
+          {visibleWorktrees.map((worktree) => {
+            const task = taskForPath.get(worktree.path);
+            return task ? (
+              <TaskCard
+                key={task.id}
+                task={task}
+                worktree={worktree}
+                current={worktree.path === ws.path}
+                initiallyExpanded={worktree.path === ws.path}
+                onWorktreesChanged={() => void refreshWorktrees(false)}
+              />
+            ) : (
+              <WorktreeCard
+                key={worktree.path}
+                worktree={worktree}
+                repoPath={repoPath}
+                current={worktree.path === ws.path}
+                onWorktreesChanged={() => void refreshWorktrees(false)}
+              />
+            );
+          })}
+          {showRemoved && visibleRemovedTasks.length > 0 && (
+            <div className="worktree-history">
+              <div className="worktree-history-title">Removed tasks · Git checkout no longer exists</div>
+              {visibleRemovedTasks.map((task) => (
                 <TaskCard
                   key={task.id}
                   task={task}
-                  initiallyExpanded={task.id === initiallyExpandedTaskId}
+                  current={false}
+                  initiallyExpanded={false}
+                  onWorktreesChanged={() => void refreshWorktrees(false)}
                 />
               ))}
             </div>
-          ))}
+          )}
+          {showRemoved && visibleRemovedTasks.length === 0 && (
+            <div className="worktree-history-empty">No removed tasks match this search.</div>
+          )}
         </div>
       )}
     </div>

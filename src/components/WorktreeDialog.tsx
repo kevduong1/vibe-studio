@@ -19,6 +19,15 @@ import "./WorktreeDialog.css";
 
 export type WorktreeDialogMode = "create" | "create-agent" | "open";
 
+/** Open the app-level task/worktree dialog from repository-scoped UI such as
+ * the Worktrees sidebar. App owns the overlay so switching workspaces during
+ * creation cannot hide it inside an inactive workspace tree. */
+export const requestNewIsolatedTask = (workspacePath: string): void => {
+  window.dispatchEvent(new CustomEvent("vibe:new-isolated-task", {
+    detail: { workspacePath },
+  }));
+};
+
 export default function WorktreeDialog({
   parent,
   mode,
@@ -123,11 +132,13 @@ export default function WorktreeDialog({
         className="worktree-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={mode === "open" ? "Open Worktree" : "New Worktree"}
+        aria-label={
+          mode === "open" ? "Open Worktree" : mode === "create-agent" ? "New Task" : "New Worktree"
+        }
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="worktree-dialog-title">
-          {mode === "open" ? "Open Worktree" : "New Isolated Worktree"}
+          {mode === "open" ? "Open Worktree" : mode === "create-agent" ? "New Task" : "New Worktree"}
         </div>
         <div className="worktree-dialog-project">From {parent.path}</div>
 
@@ -216,6 +227,9 @@ export default function WorktreeDialog({
               </label>
             )}
             <div className="worktree-help">
+              {mode === "create-agent" && (
+                <>Creates and opens a linked worktree, then launches the selected agent. </>
+              )}
               Optional setup comes from <code>.vibe/worktrees.json</code>. Each task receives a distinct <code>PORT</code>.
             </div>
           </div>

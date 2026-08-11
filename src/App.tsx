@@ -32,7 +32,7 @@ import IsolatedTasksPanel from "./components/IsolatedTasksPanel";
 import EditorArea from "./components/EditorArea";
 import Panel from "./components/Panel";
 import { Resizer } from "./components/Resizer";
-import { IcBrain, IcBranch, IcFile, IcRows, IcSearch } from "./components/icons";
+import { IcBrain, IcBranch, IcFile, IcSearch, IcTree } from "./components/icons";
 import { listenAgentNotificationActivations } from "./lib/agentInbox";
 import { listenNativeAgentSessionCapture } from "./lib/nativeAgentSessions";
 import { listenAgentControlPlane } from "./lib/agentControlPlane";
@@ -56,10 +56,10 @@ function ActivityBar() {
       </button>
       <button
         className={`activity-btn ${active("tasks") ? "active" : ""}`}
-        title="Isolated Agent Tasks"
+        title="Git Worktrees"
         onClick={() => setSidebarTab("tasks")}
       >
-        <IcRows />
+        <IcTree />
       </button>
       <button
         className={`activity-btn ${active("search") ? "active" : ""}`}
@@ -254,6 +254,7 @@ export default function App() {
     parent: Workspace;
     profile: AgentLaunchProfile;
   } | null>(null);
+  const [newTaskWorkspace, setNewTaskWorkspace] = useState<Workspace | null>(null);
 
   useEffect(() => {
     const onLaunch = (event: Event) => {
@@ -268,9 +269,18 @@ export default function App() {
       if (parent) setProfileWorktree({ parent, profile: detail.profile });
     };
     window.addEventListener("vibe:new-worktree-agent", onWorktree);
+    const onNewTask = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspacePath: string }>).detail;
+      const parent = useWorkspacesStore
+        .getState()
+        .workspaces.find((workspace) => workspace.path === detail.workspacePath);
+      if (parent) setNewTaskWorkspace(parent);
+    };
+    window.addEventListener("vibe:new-isolated-task", onNewTask);
     return () => {
       window.removeEventListener("vibe:launch-agent", onLaunch);
       window.removeEventListener("vibe:new-worktree-agent", onWorktree);
+      window.removeEventListener("vibe:new-isolated-task", onNewTask);
     };
   }, []);
 
@@ -430,6 +440,13 @@ export default function App() {
           mode="create-agent"
           launchProfile={profileWorktree.profile}
           onClose={() => setProfileWorktree(null)}
+        />
+      )}
+      {newTaskWorkspace && (
+        <WorktreeDialog
+          parent={newTaskWorkspace}
+          mode="create-agent"
+          onClose={() => setNewTaskWorkspace(null)}
         />
       )}
     </div>
