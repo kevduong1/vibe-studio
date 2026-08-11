@@ -11,6 +11,10 @@ interface DetectionRule {
 
 export interface AgentDetectionProfile {
   kind: AgentKind;
+  /** Increment whenever authored rules change; shown in the internal
+   * diagnostics surface so a reported match is reproducible. */
+  version: number;
+  authoredFor: string;
   executableNames: readonly string[];
   rules: readonly DetectionRule[];
 }
@@ -19,6 +23,8 @@ export interface AgentDetectionProfile {
 // stable UI phrases and glyphs, not implementation-specific escape output.
 export const CLAUDE_PROFILE: AgentDetectionProfile = {
   kind: "claude",
+  version: 1,
+  authoredFor: "Claude Code 2.1.226",
   executableNames: ["claude"],
   rules: [
     { id: "claude.permission", lifecycle: "blocked", reason: "permission", strong: true, tailLines: 8, pattern: /(?:Do you want to proceed|Allow this action|Yes, allow|permission (?:is )?required)/i },
@@ -34,6 +40,8 @@ export const CLAUDE_PROFILE: AgentDetectionProfile = {
 // Authored independently against Codex CLI 0.147.0.
 export const CODEX_PROFILE: AgentDetectionProfile = {
   kind: "codex",
+  version: 1,
+  authoredFor: "Codex CLI 0.147.0",
   executableNames: ["codex"],
   rules: [
     { id: "codex.permission", lifecycle: "blocked", reason: "permission", strong: true, tailLines: 9, pattern: /(?:Would you like to run|Do you want to run|Approve (?:this|command)|approval required|Press enter to confirm)/i },

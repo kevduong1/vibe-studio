@@ -12,6 +12,7 @@ import { type WorkspaceTerminal } from "../stores/terminal";
 import { useWorkspace } from "../stores/workspaces";
 import { getSession } from "../lib/termSessions";
 import { setTerminalNotifications } from "../lib/agentNotifications";
+import { copyText } from "../lib/clipboard";
 import { useAgentRuntimeStore } from "../stores/agentRuntime";
 import {
   agentStateTooltip,
@@ -25,6 +26,8 @@ import {
 } from "../lib/workspaceSessions";
 import { Dock, type DockPaneProps } from "./Dock";
 import { ContextMenu } from "./ContextMenu";
+import { AgentSubagents } from "./AgentSubagents";
+import { requestAgentLaunch } from "./AgentLaunchDialog";
 import {
   ActivityGlyph,
   IcBell,
@@ -63,6 +66,7 @@ const TerminalPane = memo(function TerminalPane({
   }, [terminal.id, visible]);
 
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
+  const agentPresent = terminal.kind !== "shell" || runtime?.occupancy === "present";
   const display = displayAgentState(runtime);
   const summary =
     display === "working" || display === "starting" || display === "blocked" || display === "done"
@@ -81,35 +85,40 @@ const TerminalPane = memo(function TerminalPane({
       }}
     >
       <div className="dock-pane-host" ref={hostRef} />
-      {terminal.kind !== "shell" && summary && (
+      {agentPresent && summary && (
         <div className="agent-badge" title={runtime && agentStateTooltip(runtime)}>
           <span className="agent-badge-state">{summary}</span>
         </div>
       )}
+      {agentPresent && <AgentSubagents terminalId={terminal.id} />}
     </div>
   );
 });
 
 function TerminalTabIcon({ terminal }: { terminal: WorkspaceTerminal }) {
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
-  if (terminal.kind === "shell") return <IcTerminal />;
+  const kind = terminal.kind === "shell" && runtime?.occupancy === "present"
+    ? runtime.kind
+    : terminal.kind;
+  if (kind === "shell") return <IcTerminal />;
   return (
     <span
       className="dock-tab-agent-icon"
       title={
         runtime
           ? agentStateTooltip(runtime)
-          : `${terminal.kind === "claude" ? "Claude" : "Codex"} — No Agent`
+        : `${kind === "claude" ? "Claude" : "Codex"} — No Agent`
       }
     >
-      {terminal.kind === "claude" ? <IcClaude /> : <IcCodex />}
+      {kind === "claude" ? <IcClaude /> : <IcCodex />}
     </span>
   );
 }
 
 function TerminalTabBadge({ terminal }: { terminal: WorkspaceTerminal }) {
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
-  if (terminal.kind === "shell") return null;
+  const agentPresent = terminal.kind !== "shell" || runtime?.occupancy === "present";
+  if (!agentPresent) return null;
 
   const display = displayAgentState(runtime);
   const showStatus = display !== "idle" && display !== "unknown";
@@ -142,13 +151,13 @@ function TerminalEmpty() {
         </button>
         <button
           className="primary-btn"
-          onClick={() => openWorkspaceTerminal(ws, "claude")}
+          onClick={() => requestAgentLaunch({ workspacePath: ws.path, scope: "workspace", kind: "claude" })}
         >
           <IcSparkle /> Claude Agent
         </button>
         <button
           className="primary-btn"
-          onClick={() => openWorkspaceTerminal(ws, "codex")}
+          onClick={() => requestAgentLaunch({ workspacePath: ws.path, scope: "workspace", kind: "codex" })}
         >
           <IcSparkle /> Codex Agent
         </button>
@@ -191,7 +200,8 @@ export default function TerminalPanel() {
         TabBadge={TerminalTabBadge}
         Empty={TerminalEmpty}
         onTabContextMenu={(terminal, event) => {
-          if (terminal.kind === "shell") return;
+          const runtime = useAgentRuntimeStore.getState().states[terminal.id];
+          if (terminal.kind === "shell" && runtime?.occupancy !== "present") return;
           event.preventDefault();
           setTabMenu({ id: terminal.id, x: event.clientX, y: event.clientY });
         }}
@@ -199,6 +209,17 @@ export default function TerminalPanel() {
       />
       {tabMenu && (
         <ContextMenu x={tabMenu.x} y={tabMenu.y} onClose={() => setTabMenu(null)}>
+          <button onClick={() => {
+            const tail = getSession(tabMenu.id)?.readTail(50, 16_384).join("\n") ?? "";
+            void copyText(tail);
+            setTabMenu(null);
+          }}>Copy Last 50 Lines</button>
+          <button onClick={() => {
+            const tail = getSession(tabMenu.id)?.readTail(12, 4096).join("\n") ?? "Terminal no longer available";
+            window.dispatchEvent(new CustomEvent("vibe:open-agent-inbox", { detail: { message: tail } }));
+            setTabMenu(null);
+          }}>Open Last 12 Lines</button>
+          <div className="ctx-menu-sep" />
           <button
             onClick={() => {
               const id = tabMenu.id;

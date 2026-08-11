@@ -13,7 +13,7 @@ export interface DiffRequest {
   repoPath: string;
   path: string;
   kind: DiffKind;
-  /** Commit oid when kind === "commit". */
+  /** Commit oid for commit diffs; tree oid for checkpoint diffs. */
   oid?: string;
   /** Pre-rename path for status "R" — the diff's old side is read from it. */
   origPath?: string | null;
@@ -130,6 +130,8 @@ export const createEditorStore = (): EditorStore =>
             ? " (staged)"
             : req.kind === "commit"
               ? ` (${(req.oid ?? "").slice(0, 7)})`
+              : req.kind === "checkpoint"
+                ? " (latest turn)"
               : "";
         set({
           tabs: [

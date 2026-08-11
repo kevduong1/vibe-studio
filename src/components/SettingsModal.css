@@ -164,3 +164,73 @@
   outline: none;
   border-color: var(--focus-ring);
 }
+
+.settings-agent-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr auto;
+  gap: 5px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.settings-agent-add input,
+.settings-agent-add select {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--fg);
+  padding: 4px 6px;
+  font-size: var(--font-size-sm);
+}
+
+.settings-profile-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.settings-profile-versions code {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.settings-recipe-command {
+  overflow: hidden;
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-recipe-policy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-dim);
+  font-size: var(--font-size-sm);
+}
+
+.settings-recipe-add {
+  display: grid;
+  grid-template-columns: 0.8fr 1.5fr auto;
+  gap: 5px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.settings-recipe-add input {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--fg);
+  padding: 4px 6px;
+  font-size: var(--font-size-sm);
+}

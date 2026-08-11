@@ -27,7 +27,11 @@ behavior still requires manual verification. All agents should also follow
 | `src/lib/terminalActivity.ts` | Generic lifecycle fallback for dedicated agent terminals: sustained output, BEL/OSC 9/777 notifications, quiet completion, and OSC 133/633 shell marks |
 | `src/lib/termSession.ts` / `trackedCommand.ts` | Framework-free xterm+PTY session (attach/detach reparenting; ONLY `dispose()` kills the PTY); semantic screen inspection/acknowledgement, `XTERM_THEME`, and the multiline nonce-bound check-command wrapper live here |
 | `src/lib/termSessions.ts` | Session registry for ALL dock terminals (`getOrCreateSession`/`getSession`/`disposeSession`) — sessions outlive React unmounts |
-| `src/lib/agentSessions.ts` | Global-agent glue on the registry: semantic metadata, close paths, and intentional `claude`/`codex --yolo` launch defaults; restored layouts intentionally remain fresh shells |
+| `src/lib/agentSessions.ts` / `agentLaunchProgram.ts` / `agentCheckpointPrompt.ts` | Global-agent glue on the registry: semantic metadata, close paths, setup-before-baseline plus launch-shell environment, shared raw-Enter checkpoint handling, and intentional `claude`/`codex --yolo` launch defaults; restored layouts intentionally remain fresh shells |
+| `src/lib/agentPromptQueue.ts` | Session-only, 8,192-character-bounded prompt queue pinned to terminal occupant generations; queue waits for safe input, steer is explicit, and both checkpoint isolated-task state before sending |
+| `src/lib/agentControlPlane.ts` | Frontend half of the authenticated local control plane: semantic snapshot sync plus generation-checked focus/prompt/start routing; see `docs/architecture/agent-control.md` |
+| `src/lib/nativeAgentSessions.ts` | Unambiguous isolated-Codex native-thread capture on semantic process/turn edges; stores only an opaque task reference |
+| `src/lib/editorAgentContext.ts` | Safe same-project routing for bounded editor selection/file/diff context into an idle/question-owned agent prompt |
 | `src/lib/agentNotifications.ts` | Opt-in semantic blocked/Done alerts for both docks; one banner ID per terminal, shared sound/banner settings, edge-triggered delivery, and acknowledgement/resume/exit/close/disable dismissal |
 | `src/lib/workspaceSessions.ts` | Workspace terminal glue on the registry, including dedicated-agent semantic metadata, the intentional `codex --yolo` default, and launch/close paths |
 | `src/lib/termFileDrop.ts` | Native file drops onto terminal panes (both docks) paste shell-quoted paths: Tauri webview drag-drop events (the DOM never sees native drags) → pane hit-test → `term.paste()` (bracketed paste is how Claude Code detects image paths). Drag positions are LOGICAL px despite the PhysicalPosition type (macOS wry quirk, documented in-file) — never divide by devicePixelRatio, but DO divide by `currentZoom()` (page zoom shrinks the CSS viewport) |
@@ -37,6 +41,7 @@ behavior still requires manual verification. All agents should also follow
 | `src/lib/taskRunner.ts` | Task execution glue: types the assembled command into a workspace dock terminal (reused per `presentation.panel` shared/dedicated/new; ^C first on reuse), reveals per `presentation.reveal` |
 | `src/lib/checkPipelines.ts` / `pipelineModel.ts` | Agent review-check DAG validation/execution: reachable-only validation, parallel/sequential dependencies, fresh reserved terminals, pre/post fingerprint + one formatter rerun, nonce-bound exit evidence, revocable trust-gated autorun, and bounded history |
 | `src/lib/agentInbox.ts` | Shared exact-terminal focus router for inbox rows, attention cycling, check nodes, and typed notification activations |
+| `src/lib/isolatedTasks.ts` / `src/stores/isolatedTasks.ts` | Persistent isolated-worktree task lifecycle: setup/ignored-file/port policy, terminal ownership, archive/merge/keep/discard safety, native Codex restore, and dependency-aware queue/steer/worktree/Best-of-N plans; see `docs/architecture/isolated-agent-tasks.md` |
 | `src/lib/dockTree.ts` | Pure dock layout-tree model shared by both docks: split/group types, `normalize()` invariants, move/split/resize state ops, persistence sanitizer |
 | `src/lib/lsp/` | LSP client service, layered and framework-free below cmLsp (a future IDE MCP server consumes the same API): `servers.ts` is the ONLY entry point (WorkspaceLsp facade registry keyed by workspace root — lazy per-language server start that follows the ACTIVE workspace (background/idle auto-stop with doc replay on resume), diagnostics store, crash policy, `getLspForFile` editor gate) → `client.ts` (JSON-RPC correlation + lifecycle + incremental didChange coalescing — the protocol brain) → `transport.ts` (IPC glue) → `lsp.rs`. `settings.ts` = session-scoped master mode (`LspMode` Disabled \| Dynamic — every launch starts Disabled, never persisted; ANDed into `isLanguageEnabled` so all gates + the change fan-out inherit it) over persisted `vibe-studio:lsp` per-language toggles + `LSP_LANGUAGES` UI metadata; `types.ts` = wire types + `serverLangForPath`; `uri.ts` = path↔file:// (NEVER concat URIs elsewhere); `markdown.ts` = sanitized hover/doc renderer (textContent only; fenced blocks async-highlighted via lazy language-data load + oneDarkHighlightStyle classes); `cmLsp.ts` = the CodeMirror bundle (doc-sync ViewPlugin, squiggles via `setDiagnostics` push, hover, completion override, ⌘-click/F12 go-to-def) |
 | `src/lib/markdownDoc.ts` | Full-document markdown → DOM renderer for the preview (MarkdownPreview.tsx): @lezer/markdown GFM parse tree walked with createElement/textContent ONLY (lsp/markdown.ts discipline — raw HTML renders inert, no sanitizer dep). Links are `data-href`, never real hrefs (the webview must never navigate); images are placeholders (CSP allows no image sources); fenced code reuses lsp/markdown's `highlightInto` and mounts the oneDark token classes itself (style-mod) since no editor view may exist yet |
@@ -52,6 +57,8 @@ behavior still requires manual verification. All agents should also follow
 | `src/stores/agentRuntime.ts` | One ephemeral semantic runtime store for both docks: registration, occupancy polling, generation-safe transitions, authority fallback, acknowledgement, and workspace/group rollup selectors |
 | `src/stores/agentTasks.ts` | Session-only generation-owned task/review store: cheap launch HEAD + async stable fingerprints, sequence-guarded/shared refreshes, runtime reconciliation after frontend hot reload, independent human review/check states, and stable inbox attention age |
 | `src/stores/agentTerminals.ts` | GLOBAL terminal-groupings store: any number of named dockTree layouts (`groupings`, one panel tab each; `activeGroupingId`) over ONE shared terminals map, terminal↔project bindings, deduped default titles, ephemeral live pane titles (`paneTitle`), per-terminal `notificationsEnabled` opt-in, localStorage persistence (`vibe-studio:agent-terminals`, v3; older layouts migrate on load), and `groupingDockStore(id)` — the cached per-grouping read-only store facade the generic Dock consumes |
+| `src/stores/agentDefinitions.ts` | Typed built-in/custom agent definitions and launch profiles; visible `codex --yolo` default, stable definition IDs, command assembly, and restore/folder policy metadata |
+| `src/stores/terminalRecipes.ts` | Persisted, user-owned per-workspace terminal commands; restore execution is disabled per recipe unless explicitly enabled |
 | `src/stores/ui.ts` | Global (workspace-independent) sidebar/panel visibility, sizes, panel group (`terminal`/`agent`, `useEffectivePanelGroup`), panel maximize (`panelMaximized` — cleared by hiding the panel or opening an editor tab), markdown-preview toggle (`markdownPreview` — app-wide reading mode, not per-tab) |
 | `src/App.tsx` | Shell layout, per-workspace `WorkspaceView`s (all mounted; inactive hidden), global shortcuts (⌘\` ⌘B ⌘⇧B ⌘P ⌘⇧F ⌘W ⌘1–9 ⌘±/⌘0 zoom), welcome screen |
 | `src/components/Titlebar.tsx` | Workspace tab strip (switch/close/add; double-click → inline rename; right-click → rename / copy path / project color) + active repo's branch pill and fetch |
@@ -68,8 +75,10 @@ behavior still requires manual verification. All agents should also follow
 | `src/components/TerminalPanel.tsx` | Workspace flavor of Dock: shell and dedicated-agent sessions, semantic icons/text badges/tooltips, ephemeral notification toggle, and auto-first-terminal |
 | `src/components/TaskPicker.tsx` | ⌘⇧B quick-pick overlay (filter + arrow/enter keyboard nav); a lone default build task skips it (App.tsx) |
 | `src/components/QuickOpen.tsx` | ⌘P fuzzy file picker overlay (TaskPicker pattern); fetches the gitignore-aware file list per open, renders top 100 with match highlighting |
-| `src/components/SettingsModal.tsx` | ⌘, settings modal (gear in status bar): per-language LSP enable toggles + live server status / install hints / restart, agent-notification attention-sound picker (system sounds + custom file, self-previewing; "Choose file…" is a distinct option value because re-selecting the selected option never fires onChange) + banner-visibility mode (always / app-in-background / never); sections are plain blocks — append future settings here |
+| `src/components/SettingsModal.tsx` | ⌘, settings modal (gear in status bar): LSP controls, agent integration/profile diagnostics, workspace terminal recipes, local-control paths, and agent notification/usage settings; sections are plain blocks — append future settings here |
 | `src/components/AttentionInbox.tsx` | Titlebar inbox over both docks: strict attention ordering, exact navigation, independent review actions, bounded live context peek, pipeline controls, and keyboard operation |
+| `src/components/IsolatedTasksPanel.tsx` | Searchable task/archive sidebar combining whole/latest-turn changes, checks, diagnostics, commits, previews, line feedback, outcomes, native restore/fork/compare, editable plans, dependency dispatch, Best-of-N children, and read-only review-agent launch; each card is an accent scope pinned to its parent project's color |
+| `src/components/WorktreeDialog.tsx` / `AgentLaunchDialog.tsx` | Worktree create/open UI and the profile-driven launch sheet shared by both terminal docks |
 | `src/components/MemoriesPanel.tsx` | Memories sidebar view (ActivityBar brain icon): the active project's agent memories (Claude files + Codex sqlite + AGENTS.md, via memories.rs) in per-agent sections, fetched fresh per mount + refresh button (stale-response seq guard); cards expand inline through `renderMarkdownDoc`, and the hover action / double-click promotes one to an editor tab (`openMemory`) |
 | `src/components/MemoryPreview.tsx` | Editor-area pane for `Tab` kind "memory": document header (source/type chips, title, description) over the `.md-doc` markdown body; renders the tab's snapshot only (no IPC — the sidebar owns fetching, `openMemory` refreshes an open tab in place), links via `open_url` |
 | `src/components/PreviewPicker.tsx` | Workspace-bound **Open Preview** dialog: normalizes manual loopback URLs, scans through typed preview IPC, groups detected servers as **This project** / **Other local servers**, and opens a fresh session-only preview tab for every selection |
@@ -79,8 +88,10 @@ behavior still requires manual verification. All agents should also follow
 | `src/components/Resizer.tsx` | Generic drag-to-resize handle (sidebar, panel, dock splits) |
 | `src/components/ContextMenu.tsx` | Shared fixed-position context menu (viewport clamp, backdrop/Escape close) — GitGraph commit actions, Titlebar tab menu |
 | `src/components/FileExplorer.tsx` | Lazy directory tree (per-dir cache + expanded set) with ⌘/Ctrl toggle, Shift-range, and ⌘A multi-selection; pointer-capture drag-and-drop (HTML drag events are unreliable in WKWebView) moves the selected files/folders onto folders or the repo root. Right-click file management (new file/folder + rename via inline in-row inputs, multi-item cut/copy/paste/trash/copy-path, reveal in Finder; F2 rename, ⌘⌫ delete) repoints open editor tabs after renames/moves via the editor store's `retargetFileTabs`, confirming first when unsaved drafts would be lost |
-| `src-tauri/src/git.rs` | All git2 commands plus cheap `git_review_head` and privacy-bounded, moving-repo-revalidated `git_review_snapshot` (modes/conflict stages/dirty submodules included); network/history mutations shell out to `git` CLI where user auth/safety behavior matters |
-| `src-tauri/src/pty.rs` | PTY sessions, flow control, and process-group teardown; macOS aggregated privacy-bounded agent descendant snapshots; PTY capability setup and host-only environment-variable isolation |
+| `src-tauri/src/git.rs` | Git/source-control plus isolated worktree list/open/create/remove/merge; cheap `git_review_head` and privacy-bounded, moving-repo-revalidated whole/per-file review fingerprints (modes/conflict stages/dirty submodules included); network/history mutations shell out to `git` CLI where user auth/safety behavior matters |
+| `src-tauri/src/pty.rs` | PTY sessions, flow control, and process-group teardown; macOS aggregated privacy-bounded agent descendant snapshots with matching-agent ancestry; PTY capability setup and host-only environment-variable isolation |
+| `src-tauri/src/agent_sessions.rs` | Read-only, privacy-bounded Codex state-database lookup for exact-cwd native thread candidates and restore validation |
+| `src-tauri/src/control.rs` | Mode-0600 per-user Unix-socket control plane: Rust semantic snapshots/event ring, timeouts/cancellation, generation waits, frontend action routing, and project-scoped capabilities |
 | `src-tauri/src/lsp.rs` | Language-server stdio transport (pty.rs sibling, deliberately protocol-blind): spawn as process-group leader with the login-shell PATH injected, Content-Length frame parser → raw `lsp-message:<id>` events, `lsp_send` owns outgoing framing, `lsp_resolve` finds binaries via `$SHELL -lc` (cached, `__VIBE_PATH__` marker); kill = SIGTERM → 500 ms → SIGKILL group |
 | `src-tauri/src/notify.rs` | UserNotifications banners + activation: retained delegate handles foreground presentation and response clicks, focuses the main window, and queues one terminal-id activation until the frontend listener is ready; `play_sound` uses preemptive detached afplay |
 | `src-tauri/src/watcher.rs` | Debounced repo watchers (one per open repo, keyed by root) → `repo-changed` event `{repoPath, gitChanged}` |
@@ -181,7 +192,9 @@ cd src-tauri && cargo test      # backend unit tests
   `DiffViewer`) or it will react to other workspaces' changes.
 - WKWebView: `window.alert/confirm/prompt` are NO-OPS — always use
   `@tauri-apps/plugin-dialog`. Vite build target is `safari16`; avoid newer
-  JS/CSS features than that.
+  JS/CSS features than that. Every DOM modal/popover that can cover an editor
+  must call `useNativeOverlay()` so a native preview child webview cannot sit
+  above it regardless of CSS z-index.
 - Watcher debounce layering (rationale documented in `watcher.rs`): Rust waits
   for a 250 ms quiet period (max 1 s), `repo.ts` adds 150 ms coalescing +
   skips watcher echoes within 400 ms of an explicit mutation refresh,
@@ -194,12 +207,13 @@ cd src-tauri && cargo test      # backend unit tests
   the session's ResizeObserver refits + `term.refresh()`es IMMEDIATELY (no
   debounce) — xterm's renderer is paused while hidden and the WebGL canvas
   can come back blank, so a debounced refit reads as flicker.
-- Dedicated Claude/Codex tabs in BOTH docks register in the ephemeral
-  `agentRuntime` store; requested terminal kind is launch metadata, never proof
-  of occupancy. macOS `pty_agent_process_snapshot` establishes whether the
-  exact agent executable is a descendant of that PTY shell. Only then may the
-  bounded xterm tail classifier own lifecycle. Screen > OSC > activity;
-  delayed evidence must match the occupant generation. Read
+- Dedicated Claude/Codex tabs and discovery-enabled plain shell tabs in BOTH
+  docks register in the ephemeral `agentRuntime` store; requested terminal
+  kind is launch metadata, never proof of occupancy. macOS
+  `pty_agent_process_snapshot` establishes whether the exact agent executable
+  is a descendant of that PTY shell. Only then may the bounded xterm tail
+  classifier own lifecycle. Screen > OSC > activity; delayed evidence must
+  match the occupant generation. Read
   `docs/architecture/agent-runtime.md` before changing this pipeline.
 - Agent PTYs set `TERM_PROGRAM=ghostty` so supported CLIs emit OSC 9/777
   notifications and OSC 0 titles. Known cost: TERM_PROGRAM-sniffing image CLIs
@@ -214,11 +228,37 @@ cd src-tauri && cargo test      # backend unit tests
   and seen state are never persisted; restored global tabs are fresh shells.
 - Every detected dedicated-agent generation owns one session-only `AgentTask`.
   Lifecycle and review are independent: Done never means checks passed.
-  Review scope is the entire shared repository since base HEAD; never
-  attribute files to one terminal. See `docs/architecture/attention-review.md`.
+  Shared-checkout review scope is the entire repository since base HEAD;
+  isolated agents additionally capture a stable `IsolatedTask` owner. See
+  `docs/architecture/attention-review.md` and
+  `docs/architecture/isolated-agent-tasks.md`.
+- Worktree cleanup never deletes a branch. Normal Git removal must refuse a
+  dirty checkout before the UI may offer a confirmed force retry; a live
+  global terminal bound to the checkout blocks removal, and successful removal
+  prunes non-live persisted terminal records for that path. Merge must prove
+  both paths belong to the same Git worktree set. Workspace close, task archive,
+  and checkout removal are distinct transitions.
 - Review fingerprints are backend-only content hashes. Plain-text context
-  peek is explicit, capped at 12 logical lines/4 KiB, and component-only.
+  peek is explicit, capped at 12 logical lines/4,096 characters, and component-only.
   Never log or persist terminal snapshots or check output.
+- A prompt-owned user Enter in a detected agent terminal is delayed until
+  `git_checkpoint_create` snapshots tracked/untracked non-ignored content into
+  an unreachable Git tree through a private index. The real index is never
+  mutated. A checkpoint error must withhold Enter and be surfaced; never
+  silently submit an uncheckpointed prompt. Checkpoint diffs are read-only
+  evidence and cannot undo external effects.
+- Queued/steered automation prompts are session-only, capped at 8,192 characters, pinned
+  to the detected occupant generation, and checkpoint before sending. Timeout
+  or cancellation removes pending text before it can reach the PTY. Never
+  persist a prompt queue, truncate instructions silently, or retarget it after
+  process replacement. Multiline
+  programmatic prompts must go through `TermSession.sendPrompt()` so terminal
+  controls are stripped and only one final Enter is submitted.
+- The local agent-control socket synchronizes privacy-bounded semantic state
+  into Rust; Rust never reads screen text or writes PTYs directly. Keep the
+  global token out of repository processes, enforce exact project scope for
+  short-lived capabilities, and preserve snapshot → ordered events → resync
+  semantics. See `docs/architecture/agent-control.md`.
 - Check completion comes only from a random-nonce private OSC marker. Never
   parse terminal prose for exit status. Closed/exited sessions cancel evidence;
   automatic checks require persisted project trust. A pass is valid only when

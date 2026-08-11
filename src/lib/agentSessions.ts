@@ -14,6 +14,14 @@ import {
 import type { TerminalKind } from "../stores/terminal";
 import { createAgentTask, removeAgentTask } from "../stores/agentTasks";
 import { useAgentRuntimeStore } from "../stores/agentRuntime";
+import { openTerminalLink } from "./terminalLinks";
+import { checkpointBeforeUserSubmit } from "./agentCheckpointPrompt";
+import {
+  agentLaunchProgram,
+  combineAgentPreludes,
+  isolatedTaskAgentPrelude,
+} from "./agentLaunchProgram";
+import { isolatedTaskForPath } from "../stores/isolatedTasks";
 
 /** The (possibly already-running) session for an agent terminal. */
 export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
@@ -21,6 +29,9 @@ export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
     id: t.id,
     cwd: t.workspacePath,
     agent: t.kind !== "shell",
+    workspacePath: t.workspacePath,
+    agentScope: "global",
+    discoverAgents: t.kind === "shell",
     ...(t.kind !== "shell" && {
       agentKind: t.kind,
       workspacePath: t.workspacePath,
@@ -28,6 +39,8 @@ export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
     }),
     onTitle: (title) =>
       useAgentTerminalsStore.getState().setPaneTitle(t.id, title),
+    onLink: (url) => openTerminalLink(t.workspacePath, url),
+    onUserSubmit: () => checkpointBeforeUserSubmit(t.id),
     onExit: (_code, early) => {
       // Normal exit closes the tab (like the workspace docks); an early
       // failure keeps the corpse readable and the user closes it manually.
@@ -78,25 +91,53 @@ const AGENT_COMMAND: Record<Exclude<TerminalKind, "shell">, string> = {
  */
 export function openAgentTerminal(
   workspacePath: string,
-  opts?: { groupId?: string; kind?: TerminalKind },
+  opts?: {
+    groupId?: string;
+    kind?: TerminalKind;
+    prelude?: string;
+    command?: string;
+    setupCommand?: string;
+  },
 ): string {
   const kind = opts?.kind ?? "claude";
   const id = useAgentTerminalsStore.getState().newTerminal(workspacePath, {
-    ...opts,
+    groupId: opts?.groupId,
     kind,
   });
   const t = useAgentTerminalsStore.getState().terminals[id];
   if (t && kind !== "shell") {
     const session = getOrCreateAgentSession(t);
-    session.markAgentLaunching();
-    const generation = (useAgentRuntimeStore.getState().states[id]?.generation ?? 0) + 1;
-    void createAgentTask({
-      terminalId: id,
-      generation,
-      workspacePath,
-      scope: "global",
-      kind,
-    }).finally(() => session.sendText(`${AGENT_COMMAND[kind]}\r`));
+    const launch = () => {
+      session.markAgentLaunching();
+      const generation = (useAgentRuntimeStore.getState().states[id]?.generation ?? 0) + 1;
+      const command = opts?.command ?? AGENT_COMMAND[kind];
+      const isolatedTask = isolatedTaskForPath(workspacePath);
+      const prelude = combineAgentPreludes(
+        isolatedTask && isolatedTaskAgentPrelude(isolatedTask.id, isolatedTask.previewPort),
+        opts?.prelude,
+      );
+      const launchLine = agentLaunchProgram(command, prelude);
+      void createAgentTask({
+        terminalId: id,
+        generation,
+        workspacePath,
+        scope: "global",
+        kind,
+      }).finally(() => session.sendText(`${launchLine}\r`));
+    };
+    if (opts?.setupCommand) {
+      // Bootstrap is task setup, not agent-authored work: finish it before
+      // capturing the review baseline and launching the agent. Its own shell
+      // output remains visible; a failed setup leaves a usable terminal and
+      // deliberately does not start the agent.
+      void session
+        .runTrackedCommand(opts.setupCommand, `task-bootstrap:${id}`)
+        .then((result) => {
+          if (result.status === "exited" && result.exitCode === 0) launch();
+        });
+    } else {
+      launch();
+    }
   }
   return id;
 }
@@ -105,4 +146,7 @@ export function openAgentTerminal(
 export const openGlobalTerminal = (
   workspacePath: string,
   kind: TerminalKind,
-): string => openAgentTerminal(workspacePath, { kind });
+  prelude?: string,
+  command?: string,
+  setupCommand?: string,
+): string => openAgentTerminal(workspacePath, { kind, prelude, command, setupCommand });

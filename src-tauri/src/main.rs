@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod fsops;
+mod agent_sessions;
+mod control;
 mod git;
 mod lsp;
 mod memories;
@@ -18,8 +20,16 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(pty::PtyState::default())
+        .manage(control::ControlState::default())
         .manage(lsp::LspState::default())
         .manage(watcher::WatcherState::default())
+        .setup(|app| {
+            if let Err(error) = control::start(app.handle(), &app.state::<control::ControlState>())
+            {
+                eprintln!("agent control socket unavailable: {error}");
+            }
+            Ok(())
+        })
         // A page (re)load loses all frontend terminal and LSP-client state
         // (dev HMR full reload): kill the now-unreachable sessions instead
         // of leaking them — a flow-parked PTY reader would otherwise never
@@ -37,8 +47,14 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             // git
             git::git_open,
+            git::git_worktree_list,
+            git::git_worktree_open,
+            git::git_worktree_create,
+            git::git_worktree_remove,
+            git::git_worktree_merge,
             git::git_review_head,
             git::git_review_snapshot,
+            git::git_checkpoint_create,
             git::git_status,
             git::git_stage,
             git::git_unstage,
@@ -63,6 +79,13 @@ fn main() {
             git::git_cherry_pick,
             git::git_list_refs,
             git::git_generate_commit_message,
+            // privacy-bounded native agent session metadata
+            agent_sessions::codex_native_session_candidates,
+            agent_sessions::codex_native_session_exists,
+            control::agent_control_sync,
+            control::agent_control_respond,
+            control::agent_control_info,
+            control::agent_control_issue_capability,
             // fs
             fsops::fs_read_dir,
             fsops::fs_read_file,
@@ -99,6 +122,7 @@ fn main() {
             pty::pty_ack,
             pty::pty_kill,
             pty::pty_agent_process_snapshot,
+            pty::executable_version,
             // lsp
             lsp::lsp_resolve,
             lsp::lsp_start,
@@ -130,6 +154,7 @@ fn main() {
             // groups) would survive. LSP servers self-exit on stdin EOF, so
             // their async kill is fine.
             if let tauri::RunEvent::Exit = event {
+                control::stop(&app_handle.state::<control::ControlState>());
                 preview::close_all(&app_handle);
                 pty::kill_all_blocking(&app_handle.state::<pty::PtyState>());
                 lsp::kill_all(&app_handle.state::<lsp::LspState>());

@@ -57,6 +57,9 @@ A global dock for persistent shells and AI coding agents:
   live agent from the shell it returns to, with accessible text, icons, and
   priority rollups across the dock, titlebar tabs, and status bar; each leaf
   terminal tab keeps its Claude/Codex icon beside its state indicator
+- Claude or Codex launched manually inside a plain shell is discovered too;
+  Settings shows versioned detection-profile and current-match diagnostics
+  without retaining terminal text, arguments, prompts, or environment
 - Live badges combine semantic state with each agent's current topic; tooltips
   explain the state authority and structured reason
 - Optional per-terminal sound and macOS banners alert once for background
@@ -86,7 +89,7 @@ and project terminals:
   and terminal. Closed global-terminal projects are reopened when possible.
   **⌘⌥↓** and **⌘⌥↑** cycle through actionable agents.
 - **Peek context** explicitly reads only the last 12 logical terminal lines,
-  capped at 4 KiB. The text stays in the open popover and is never persisted,
+  capped at 4,096 characters. The text stays in the open popover and is never persisted,
   logged, or added to task history.
 - macOS notification clicks use the same exact-terminal routing. A notification
   for a terminal that has since closed opens the inbox with a nonfatal message.
@@ -110,10 +113,39 @@ or was approved.
   review; checks are optional evidence and do not gate it. **Needs changes**
   records feedback and returns to the terminal without sending text. If the
   repository changes after acceptance, the inbox marks that approval stale.
-- Because agents currently share the normal working tree, review scope is
-  always “all repository changes since the base commit.” Vibe Studio does not
-  claim that an individual agent authored particular files and does not expose
-  Apply, Merge, or Discard actions until isolated worktrees are supported.
+- Agents in a normal workspace still use “all repository changes since the
+  base commit” scope. For isolated ownership, choose **New Worktree + Agent…**
+  from the titlebar **+** menu.
+
+### 🌿 Isolated agent tasks
+
+- **New Worktree…**, **Open Worktree…**, and **New Worktree + Agent…** create
+  or open linked checkouts as ordinary workspaces. The root is configurable;
+  repositories can opt into bootstrap, ignored-file includes, and a preview
+  port range with `.vibe/worktrees.json`.
+- The Tasks sidebar combines whole-task/latest-turn changes, conflicts, checks,
+  diagnostics, commits, previews, agent state, and read-only child-agent rows;
+  each card keeps its parent project's accent color while workspaces switch.
+  Prompt-owned turns snapshot into a private Git tree first, so latest-turn
+  files open as checkpoint-to-current diffs without changing the real index.
+  Line comments can be batched into a follow-up only while the same agent
+  generation owns an idle/question prompt.
+- Editable task plans support dependencies, explicit queue versus steer, one
+  isolated worktree per approved independent step, and two-to-four-candidate
+  Best-of-N runs whose results remain separate comparable task cards.
+- Archives keep code restoration separate from conversation restoration. An
+  unambiguous local Codex thread can be validated and resumed after approval;
+  absent, stale, or ambiguous references fall back to a fresh shell without
+  guessing or using `--last`.
+- Task outcomes are explicit: **Apply / Merge**, **Keep Branch**, **Archive**,
+  and **Discard**. Closing, archiving, and checkout deletion are separate. Git
+  gets the first dirty-removal refusal; force requires confirmation; live
+  global terminals block removal; branches are never deleted implicitly.
+- Agent buttons open a launch sheet for model, reasoning, permissions, sandbox,
+  environment, extra arguments, and current/worktree folder choice. Conversation
+  restore remains an explicit archived-task action. The initial Codex profile remains
+  `codex --yolo`. Integrations reports
+  executable health/version/capabilities and supports stable-ID custom commands.
 
 Repository checks come from `.vscode/tasks.json`:
 
@@ -150,6 +182,8 @@ Repository checks come from `.vscode/tasks.json`:
   explicit, revocable per-project approval. Checks use fresh reserved terminals
   and compare the repository before/after execution, rerunning once when a
   formatter changes the tree rather than certifying untested edits
+- Settings can save user-owned commands as per-project terminal recipes. Each
+  recipe has its own explicit run-on-restore switch; recipes default to off.
 
 ### ✍️ Editor & navigation
 
@@ -162,6 +196,22 @@ Repository checks come from `.vscode/tasks.json`:
 - **⌘F find & replace** — floating VS Code-style widget in every editor
   and diff
 - Lazy file explorer, whole-app zoom (**⌘+ / ⌘− / ⌘0**)
+- A file tab's context menu can send the bounded current selection, file
+  reference, or diff-review request to a safe idle/question-owned agent in the
+  same project; working or permission-blocked agents are never steered implicitly
+
+### 🔌 Local agent automation
+
+- The bundled `vibe-agent` CLI lists privacy-bounded semantic snapshots,
+  follows ordered events, starts isolated agents, focuses terminals, queues or
+  explicitly steers prompts, and waits with timeouts/cancellation pinned to the
+  exact occupant generation.
+- A fresh mode-0600 token and Unix socket live in the per-user app-data
+  directory. Short-lived capabilities restrict repository automation to one
+  exact project; the global credential is never injected into terminal shells.
+- The bundle also includes an agent skill describing the CLI contract. Settings
+  shows and can copy the bundled CLI path, and shows socket/token/skill paths,
+  but never displays the token value or silently changes your `PATH`.
 
 ### 📱 Responsive localhost previews
 
@@ -219,7 +269,11 @@ Contributor guidance lives in [`AGENTS.md`](AGENTS.md) and
 boundary are documented in
 [`docs/architecture/agent-runtime.md`](docs/architecture/agent-runtime.md),
 with task review and checks in
-[`docs/architecture/attention-review.md`](docs/architecture/attention-review.md).
+[`docs/architecture/attention-review.md`](docs/architecture/attention-review.md),
+isolated ownership in
+[`docs/architecture/isolated-agent-tasks.md`](docs/architecture/isolated-agent-tasks.md),
+and local automation in
+[`docs/architecture/agent-control.md`](docs/architecture/agent-control.md).
 
 ## Development
 

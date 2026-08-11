@@ -7,9 +7,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::io::Read;
 #[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
-use std::path::{Component, Path};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use git2::build::CheckoutBuilder;
 use git2::{
@@ -66,6 +67,9 @@ pub struct GitReviewSnapshot {
     pub base_ancestry: String,
     pub changed_files: Vec<String>,
     pub conflicted_files: Vec<String>,
+    /// Per-path opaque hashes used to compare the latest agent turn without
+    /// sending file contents across IPC.
+    pub file_fingerprints: BTreeMap<String, String>,
     pub fingerprint: String,
 }
 
@@ -127,6 +131,25 @@ pub struct StashInfo {
 pub struct GitOpResult {
     pub ok: bool,
     pub output: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorktree {
+    pub path: String,
+    pub head: Option<String>,
+    pub branch: Option<String>,
+    pub detached: bool,
+    pub locked: bool,
+    pub prunable: bool,
+    pub main: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorktreeCreateResult {
+    pub worktree: GitWorktree,
+    pub base_commit: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +468,237 @@ fn run_git(repo_path: &str, args: &[&str]) -> GitOpResult {
     }
 }
 
+fn parse_worktree_list(bytes: &[u8]) -> Result<Vec<GitWorktree>, String> {
+    let mut records = Vec::new();
+    let mut current: Option<GitWorktree> = None;
+    for raw in bytes.split(|byte| *byte == 0) {
+        if raw.is_empty() {
+            if let Some(value) = current.take() {
+                records.push(value);
+            }
+            continue;
+        }
+        let value = String::from_utf8_lossy(raw);
+        if let Some(path) = value.strip_prefix("worktree ") {
+            if let Some(previous) = current.take() {
+                records.push(previous);
+            }
+            current = Some(GitWorktree {
+                path: path.to_string(),
+                head: None,
+                branch: None,
+                detached: false,
+                locked: false,
+                prunable: false,
+                main: records.is_empty(),
+            });
+        } else if let Some(worktree) = current.as_mut() {
+            if let Some(head) = value.strip_prefix("HEAD ") {
+                worktree.head =
+                    (head != "0000000000000000000000000000000000000000").then(|| head.to_string());
+            } else if let Some(branch) = value.strip_prefix("branch refs/heads/") {
+                worktree.branch = Some(branch.to_string());
+            } else if value == "detached" {
+                worktree.detached = true;
+            } else if value == "locked" || value.starts_with("locked ") {
+                worktree.locked = true;
+            } else if value == "prunable" || value.starts_with("prunable ") {
+                worktree.prunable = true;
+            }
+        }
+    }
+    if let Some(value) = current {
+        records.push(value);
+    }
+    if records.is_empty() {
+        return Err("git returned no worktrees".to_string());
+    }
+    Ok(records)
+}
+
+fn worktree_list(repo_path: &str) -> Result<Vec<GitWorktree>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["worktree", "list", "--porcelain", "-z"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    parse_worktree_list(&output.stdout)
+}
+
+fn safe_include_path(value: &str) -> Result<&Path, String> {
+    let path = Path::new(value);
+    if value.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err(format!(
+            "ignored-file include must be a relative path: {value}"
+        ));
+    }
+    Ok(path)
+}
+
+fn copy_included_path(source: &Path, target: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(source)
+        .map_err(|error| format!("cannot include {}: {error}", source.display()))?;
+    if metadata.file_type().is_symlink() {
+        let link = std::fs::read_link(source).map_err(|error| error.to_string())?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(link, target).map_err(|error| error.to_string())?;
+        #[cfg(not(unix))]
+        return Err("including symlinks is not supported on this platform".to_string());
+    } else if metadata.is_dir() {
+        std::fs::create_dir_all(target).map_err(|error| error.to_string())?;
+        for entry in std::fs::read_dir(source).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            copy_included_path(&entry.path(), &target.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::copy(source, target).map_err(|error| error.to_string())?;
+    } else {
+        return Err(format!("cannot include special file {}", source.display()));
+    }
+    Ok(())
+}
+
+fn cleanup_created_worktree(repo_path: &str, target: &Path) -> Result<(), String> {
+    let target = target.to_string_lossy();
+    let result = run_git(
+        repo_path,
+        &["worktree", "remove", "--force", target.as_ref()],
+    );
+    if result.ok {
+        Ok(())
+    } else if result.output.is_empty() {
+        Err("git worktree remove --force failed".to_string())
+    } else {
+        Err(result.output)
+    }
+}
+
+struct PrivateTempDirectory(PathBuf);
+
+impl Drop for PrivateTempDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn private_checkpoint_directory() -> Result<PrivateTempDirectory, String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    for _ in 0..1000 {
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "vibe-checkpoint-{}-{stamp}-{sequence}",
+            std::process::id()
+        ));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        builder.mode(0o700);
+        match builder.create(&path) {
+            Ok(()) => return Ok(PrivateTempDirectory(path)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot create private checkpoint directory: {error}"
+                ))
+            }
+        }
+    }
+    Err("cannot allocate a private checkpoint directory".to_string())
+}
+
+fn checkpoint_tree_once(repo_path: &str) -> Result<String, String> {
+    let temporary = private_checkpoint_directory()?;
+    let index_path = temporary.0.join("index");
+    let run = |args: &[&str]| -> GitOpResult {
+        match Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(args)
+            .env("GIT_INDEX_FILE", &index_path)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+        {
+            Ok(output) => GitOpResult {
+                ok: output.status.success(),
+                output: {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if stderr.trim().is_empty() {
+                        stdout.trim().to_string()
+                    } else {
+                        stderr.trim().to_string()
+                    }
+                },
+            },
+            Err(error) => GitOpResult {
+                ok: false,
+                output: error.to_string(),
+            },
+        }
+    };
+    let repo = open_repo(repo_path)?;
+    let seed = if repo.head().is_ok() {
+        run(&["read-tree", "HEAD"])
+    } else {
+        run(&["read-tree", "--empty"])
+    };
+    drop(repo);
+    let result = if !seed.ok {
+        Err(seed.output)
+    } else {
+        let add = run(&["add", "-A", "--", "."]);
+        if !add.ok {
+            Err(add.output)
+        } else {
+            let tree = run(&["write-tree"]);
+            if tree.ok
+                && tree.output.len() == 40
+                && tree.output.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                Ok(tree.output)
+            } else {
+                Err(if tree.output.is_empty() {
+                    "git write-tree failed".to_string()
+                } else {
+                    tree.output
+                })
+            }
+        }
+    };
+    result
+}
+
+fn checkpoint_tree(repo_path: &str) -> Result<String, String> {
+    for _ in 0..3 {
+        let before = repository_generation(repo_path)?;
+        let tree = checkpoint_tree_once(repo_path)?;
+        if before == repository_generation(repo_path)? {
+            return Ok(tree);
+        }
+    }
+    Err("repository kept changing while the turn checkpoint was captured".to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -464,6 +718,321 @@ pub async fn git_open(path: String) -> Result<RepoInfo, String> {
         Ok(RepoInfo { root, tab_group_id })
     })
     .await
+}
+
+/// List every checkout that shares this repository's common Git directory.
+/// Paths are worktree identities; branch names are presentation/action data.
+#[tauri::command]
+pub async fn git_worktree_list(repo_path: String) -> Result<Vec<GitWorktree>, String> {
+    blocking(move || worktree_list(&repo_path)).await
+}
+
+#[tauri::command]
+pub async fn git_worktree_open(repo_path: String, path: String) -> Result<RepoInfo, String> {
+    blocking(move || {
+        let requested = PathBuf::from(&path)
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if !worktree_list(&repo_path)?
+            .into_iter()
+            .any(|item| Path::new(&item.path).canonicalize().ok().as_ref() == Some(&requested))
+        {
+            return Err(format!("not a worktree of this repository: {path}"));
+        }
+        let repo = open_repo(&path)?;
+        let workdir = repo
+            .workdir()
+            .ok_or_else(|| "bare repository".to_string())?;
+        Ok(RepoInfo {
+            root: workdir.to_string_lossy().trim_end_matches('/').to_string(),
+            tab_group_id: repo_tab_group_id(&repo),
+        })
+    })
+    .await
+}
+
+/// Create an isolated checkout and optionally copy an explicit allowlist of
+/// ignored files from the parent checkout. The include list is deliberately
+/// repository-relative and never inferred from ignored contents.
+#[tauri::command]
+pub async fn git_worktree_create(
+    repo_path: String,
+    path: String,
+    branch: Option<String>,
+    base: String,
+    include_ignored: Vec<String>,
+) -> Result<GitWorktreeCreateResult, String> {
+    blocking(move || {
+        let target = PathBuf::from(&path);
+        if !target.is_absolute() {
+            return Err("worktree path must be absolute".to_string());
+        }
+        if target.exists() {
+            return Err(format!(
+                "worktree path already exists: {}",
+                target.display()
+            ));
+        }
+        if base.starts_with('-') {
+            return Err(format!("invalid base ref: {base}"));
+        }
+        if let Some(name) = branch.as_deref() {
+            if name.trim().is_empty() || name.starts_with('-') {
+                return Err(format!("invalid branch name: {name}"));
+            }
+        }
+        // Validate the complete allowlist before creating anything. A bad
+        // later entry must not leave a checkout behind.
+        for value in &include_ignored {
+            safe_include_path(value)?;
+        }
+
+        let repo = open_repo(&repo_path)?;
+        let parent = repo
+            .workdir()
+            .ok_or_else(|| "bare repositories cannot create worktrees".to_string())?
+            .to_path_buf();
+        for value in &include_ignored {
+            let relative = safe_include_path(value)?;
+            if std::fs::symlink_metadata(parent.join(relative)).is_err() {
+                return Err(format!("ignored-file include does not exist: {value}"));
+            }
+            let ignored = Command::new("git")
+                .arg("-C")
+                .arg(&parent)
+                .args(["check-ignore", "-q", "--"])
+                .arg(value)
+                .status()
+                .map_err(|error| format!("failed to validate ignored include: {error}"))?;
+            if !ignored.success() {
+                return Err(format!("include path is not ignored by Git: {value}"));
+            }
+        }
+        let base_commit = repo
+            .revparse_single(&base)
+            .and_then(|object| object.peel_to_commit())
+            .map_err(|error| format!("cannot resolve worktree base '{base}': {error}"))?
+            .id()
+            .to_string();
+        drop(repo);
+
+        let mut command = Command::new("git");
+        command.arg("-C").arg(&repo_path).args(["worktree", "add"]);
+        if let Some(name) = branch.as_deref() {
+            command.arg("-b").arg(name);
+        } else {
+            command.arg("--detach");
+        }
+        command.arg(&target).arg(&base_commit);
+        let output = command
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|error| format!("failed to run git: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            } else {
+                stderr
+            });
+        }
+
+        let finish_creation = (|| -> Result<GitWorktree, String> {
+            for value in &include_ignored {
+                let relative = safe_include_path(value)?;
+                let source = parent.join(relative);
+                let destination = target.join(relative);
+                if std::fs::symlink_metadata(&destination).is_ok() {
+                    return Err(format!("include destination already exists: {value}"));
+                }
+                copy_included_path(&source, &destination)?;
+            }
+
+            let target_canonical = target.canonicalize().unwrap_or(target.clone());
+            worktree_list(&repo_path)?
+                .into_iter()
+                .find(|item| {
+                    Path::new(&item.path)
+                        .canonicalize()
+                        .unwrap_or_else(|_| PathBuf::from(&item.path))
+                        == target_canonical
+                })
+                .ok_or_else(|| "created worktree was not returned by git".to_string())
+        })();
+        let worktree = match finish_creation {
+            Ok(worktree) => worktree,
+            Err(error) => {
+                // No caller-visible task exists yet, so cleanup cannot discard
+                // user work. The newly created branch is intentionally kept.
+                return Err(match cleanup_created_worktree(&repo_path, &target) {
+                    Ok(()) => error,
+                    Err(cleanup) => format!(
+                        "{error}\nCleanup also failed; checkout remains at {}: {cleanup}",
+                        target.display()
+                    ),
+                });
+            }
+        };
+        Ok(GitWorktreeCreateResult {
+            worktree,
+            base_commit,
+        })
+    })
+    .await
+}
+
+/// Remove only the checkout. Git's first refusal is preserved for dirty
+/// worktrees; callers may retry with force after explicit confirmation.
+/// Associated branches are never deleted here.
+#[tauri::command]
+pub async fn git_worktree_remove(
+    repo_path: String,
+    path: String,
+    force: bool,
+) -> Result<(), String> {
+    blocking(move || {
+        let requested = PathBuf::from(&path);
+        let requested_key = requested.canonicalize().unwrap_or(requested.clone());
+        let item = worktree_list(&repo_path)?
+            .into_iter()
+            .find(|candidate| {
+                Path::new(&candidate.path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&candidate.path))
+                    == requested_key
+            })
+            .ok_or_else(|| format!("not a worktree of this repository: {path}"))?;
+        if item.main {
+            return Err("the main worktree cannot be removed".to_string());
+        }
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["worktree", "remove"]);
+        if force {
+            command.arg("--force");
+        }
+        let output = command
+            .arg(&item.path)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|error| format!("failed to run git: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(if stderr.is_empty() {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            } else {
+                stderr
+            })
+        }
+    })
+    .await
+}
+
+/// Merge an isolated task branch into the currently checked-out parent.
+/// Both checkouts must be clean; Git owns conflict handling and diagnostics.
+fn merge_worktree(parent_path: &str, worktree_path: &str) -> Result<(), String> {
+    let path_key = |value: &str| {
+        Path::new(value)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(value))
+    };
+    let parent_key = path_key(parent_path);
+    let child_key = path_key(worktree_path);
+    if parent_key == child_key {
+        return Err("the parent and task checkout must be different worktrees".to_string());
+    }
+    let worktrees = worktree_list(parent_path)?;
+    let parent = worktrees
+        .iter()
+        .find(|item| path_key(&item.path) == parent_key)
+        .ok_or_else(|| "the parent path is not a worktree of this repository".to_string())?;
+    let child = worktrees
+        .iter()
+        .find(|item| path_key(&item.path) == child_key)
+        .ok_or_else(|| "the task path is not a worktree of the parent repository".to_string())?;
+    if child.main {
+        return Err("the main worktree cannot be used as an isolated task checkout".to_string());
+    }
+    let branch = child
+        .branch
+        .clone()
+        .ok_or_else(|| "the task checkout must be on a branch before merging".to_string())?;
+    let parent_path = parent.path.clone();
+    let child_path = child.path.clone();
+
+    let parent_repo = open_repo(&parent_path)?;
+    if parent_repo.head_detached().unwrap_or(false) {
+        return Err("cannot merge into a detached parent checkout".to_string());
+    }
+    let parent_status = run_git(&parent_path, &["status", "--porcelain"]);
+    if !parent_status.ok || !parent_status.output.is_empty() {
+        return Err(if parent_status.output.is_empty() {
+            "the parent checkout must be clean before merging".to_string()
+        } else {
+            format!(
+                "the parent checkout must be clean before merging:\n{}",
+                parent_status.output
+            )
+        });
+    }
+    let child_status = run_git(&child_path, &["status", "--porcelain"]);
+    if !child_status.ok || !child_status.output.is_empty() {
+        return Err(if child_status.output.is_empty() {
+            "the task checkout must be clean and committed before merging".to_string()
+        } else {
+            format!(
+                "the task checkout must be clean and committed before merging:\n{}",
+                child_status.output
+            )
+        });
+    }
+    let child_head = run_git(&child_path, &["symbolic-ref", "--short", "HEAD"]);
+    if !child_head.ok || child_head.output != branch {
+        return Err("the task checkout branch changed while preparing the merge".to_string());
+    }
+    let full_ref = format!("refs/heads/{branch}");
+    parent_repo
+        .find_reference(&full_ref)
+        .map_err(|error| format!("cannot find task branch '{branch}': {error}"))?;
+    drop(parent_repo);
+    let result = run_git(&parent_path, &["merge", "--no-ff", &full_ref]);
+    if result.ok {
+        let child_after = run_git(&child_path, &["status", "--porcelain"]);
+        let child_head_after = run_git(&child_path, &["symbolic-ref", "--short", "HEAD"]);
+        let includes_tip = run_git(
+            &parent_path,
+            &["merge-base", "--is-ancestor", &full_ref, "HEAD"],
+        );
+        if child_after.ok
+            && child_after.output.is_empty()
+            && child_head_after.ok
+            && child_head_after.output == branch
+            && includes_tip.ok
+        {
+            Ok(())
+        } else {
+            Err(
+                "the task checkout changed while merging; earlier commits may be applied, but the task remains active so you can review and merge again"
+                    .to_string(),
+            )
+        }
+    } else {
+        let _ = run_git(&parent_path, &["merge", "--abort"]);
+        Err(if result.output.is_empty() {
+            "git merge failed".to_string()
+        } else {
+            result.output
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn git_worktree_merge(parent_path: String, worktree_path: String) -> Result<(), String> {
+    blocking(move || merge_worktree(&parent_path, &worktree_path)).await
 }
 
 fn hash_tag(hasher: &mut Sha256, value: &[u8]) {
@@ -722,20 +1291,43 @@ fn review_snapshot_once(
     let mut hasher = Sha256::new();
     hash_tag(&mut hasher, b"vibe-review-v1");
     hash_tag(&mut hasher, head.as_deref().unwrap_or("unborn").as_bytes());
-    for ((path, source), ()) in sources {
+    for ((path, source), ()) in &sources {
         hash_tag(&mut hasher, source.as_bytes());
         hash_tag(&mut hasher, path.as_bytes());
         if source == "index" {
-            hash_index_path(&mut hasher, &repo, &index, &path)?;
+            hash_index_path(&mut hasher, &repo, &index, path)?;
         } else {
-            hash_worktree_path(&mut hasher, root, &path)?;
+            hash_worktree_path(&mut hasher, root, path)?;
         }
+    }
+    let head_tree = repo.head().ok().and_then(|value| value.peel_to_tree().ok());
+    let mut file_fingerprints = BTreeMap::new();
+    for path in &changed {
+        let mut file_hasher = Sha256::new();
+        hash_tag(&mut file_hasher, b"vibe-review-file-v1");
+        hash_tag(&mut file_hasher, path.as_bytes());
+        if let Some(entry) = head_tree
+            .as_ref()
+            .and_then(|tree| tree.get_path(Path::new(path)).ok())
+        {
+            hash_tag(&mut file_hasher, b"head");
+            file_hasher.update(entry.filemode().to_le_bytes());
+            hash_tag(&mut file_hasher, entry.id().to_string().as_bytes());
+        } else {
+            hash_tag(&mut file_hasher, b"no-head");
+        }
+        hash_tag(&mut file_hasher, b"index");
+        hash_index_path(&mut file_hasher, &repo, &index, path)?;
+        hash_tag(&mut file_hasher, b"worktree");
+        hash_worktree_path(&mut file_hasher, root, path)?;
+        file_fingerprints.insert(path.clone(), format!("{:x}", file_hasher.finalize()));
     }
     Ok(GitReviewSnapshot {
         head,
         base_ancestry,
         changed_files: changed.into_iter().collect(),
         conflicted_files: conflicted.into_iter().collect(),
+        file_fingerprints,
         fingerprint: format!("{:x}", hasher.finalize()),
     })
 }
@@ -833,6 +1425,14 @@ pub async fn git_review_snapshot(
     base_unborn: bool,
 ) -> Result<GitReviewSnapshot, String> {
     blocking(move || review_snapshot(&repo_path, base_head.as_deref(), base_unborn)).await
+}
+
+/// Snapshot tracked and untracked (non-ignored) worktree content into an
+/// unreachable Git tree using a private temporary index. The real index and
+/// worktree are not changed; object retention follows normal Git GC.
+#[tauri::command]
+pub async fn git_checkpoint_create(repo_path: String) -> Result<String, String> {
+    blocking(move || checkpoint_tree(&repo_path)).await
 }
 
 #[tauri::command]
@@ -1288,6 +1888,20 @@ pub async fn git_diff_file(
                     .map(|p| short_oid(p.id()))
                     .unwrap_or_else(|| "(none)".to_string());
                 (old, old_label, new, short_oid(cid))
+            }
+            "checkpoint" => {
+                let tree_oid =
+                    oid.ok_or_else(|| "tree oid is required for checkpoint diffs".to_string())?;
+                let tid = Oid::from_str(&tree_oid).map_err(|error| error.to_string())?;
+                let tree = repo.find_tree(tid).map_err(|error| error.to_string())?;
+                let old = blob_from_tree(&repo, Some(&tree), old_rel);
+                let new = worktree_text(&repo, rel);
+                (
+                    old,
+                    format!("Checkpoint {}", short_oid(tid)),
+                    new,
+                    "Current".to_string(),
+                )
             }
             other => return Err(format!("unknown diff kind: {other}")),
         };
@@ -1918,8 +2532,16 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_repo() -> (std::path::PathBuf, Repository) {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("vibe-review-{}-{stamp}", std::process::id()));
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "vibe-review-{}-{stamp}-{sequence}",
+            std::process::id(),
+        ));
         let repo = Repository::init(&path).unwrap();
         (path, repo)
     }
@@ -2069,5 +2691,160 @@ mod tests {
         for remote in ["/tmp/repo.git", "../repo.git", "file:///tmp/repo.git"] {
             assert_eq!(hosted_remote_id(remote), None);
         }
+    }
+
+    #[test]
+    fn parses_porcelain_worktree_records_without_losing_flags() {
+        let raw = b"worktree /repo\0HEAD 1111111111111111111111111111111111111111\0branch refs/heads/main\0\0worktree /repo-task\0HEAD 2222222222222222222222222222222222222222\0detached\0locked user reason\0prunable stale\0\0";
+        let items = parse_worktree_list(raw).unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items[0].main);
+        assert_eq!(items[0].branch.as_deref(), Some("main"));
+        assert!(!items[0].detached);
+        assert!(!items[1].main);
+        assert!(items[1].detached);
+        assert!(items[1].locked);
+        assert!(items[1].prunable);
+    }
+
+    #[test]
+    fn ignored_file_includes_reject_absolute_and_parent_paths() {
+        assert!(safe_include_path(".env").is_ok());
+        assert!(safe_include_path("config/local.json").is_ok());
+        assert!(safe_include_path("/tmp/secret").is_err());
+        assert!(safe_include_path("../secret").is_err());
+        assert!(safe_include_path("config/../secret").is_err());
+    }
+
+    #[test]
+    fn worktree_helpers_follow_git_safety_and_keep_the_branch() {
+        let (path, repo) = temp_repo();
+        commit_file(&repo, Path::new("tracked.txt"), b"base\n", "base");
+        drop(repo);
+        let checkout = path.with_file_name(format!(
+            "{}-isolated",
+            path.file_name().unwrap().to_string_lossy()
+        ));
+        let checkout_text = checkout.to_string_lossy().into_owned();
+        let created = run_git(
+            path.to_str().unwrap(),
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "vibe/test-task",
+                &checkout_text,
+                "HEAD",
+            ],
+        );
+        assert!(created.ok, "{}", created.output);
+        let listed = worktree_list(path.to_str().unwrap()).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[1].branch.as_deref(), Some("vibe/test-task"));
+
+        std::fs::write(checkout.join("tracked.txt"), b"dirty\n").unwrap();
+        let refused = run_git(
+            path.to_str().unwrap(),
+            &["worktree", "remove", &checkout_text],
+        );
+        assert!(!refused.ok);
+        let forced = run_git(
+            path.to_str().unwrap(),
+            &["worktree", "remove", "--force", &checkout_text],
+        );
+        assert!(forced.ok, "{}", forced.output);
+        let repository = open_repo(path.to_str().unwrap()).unwrap();
+        assert!(repository
+            .find_branch("vibe/test-task", BranchType::Local)
+            .is_ok());
+        drop(repository);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_tree_captures_worktree_without_mutating_the_real_index() {
+        let (path, repo) = temp_repo();
+        commit_file(&repo, Path::new("tracked.txt"), b"base\n", "base");
+        let clean_tree = checkpoint_tree(path.to_str().unwrap()).unwrap();
+        std::fs::write(path.join("tracked.txt"), b"edited\n").unwrap();
+        std::fs::write(path.join("new.txt"), b"new\n").unwrap();
+        let changed_tree = checkpoint_tree(path.to_str().unwrap()).unwrap();
+        assert_ne!(clean_tree, changed_tree);
+        let tree = repo
+            .find_tree(Oid::from_str(&changed_tree).unwrap())
+            .unwrap();
+        assert!(tree.get_path(Path::new("new.txt")).is_ok());
+        let index = repo.index().unwrap();
+        assert!(index.get_path(Path::new("new.txt"), 0).is_none());
+        drop(tree);
+        drop(repo);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn checkpoint_directory_is_private() {
+        let directory = private_checkpoint_directory().unwrap();
+        let metadata = std::fs::metadata(&directory.0).unwrap();
+        assert_eq!(metadata.mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn merge_rejects_a_checkout_from_an_unrelated_repository() {
+        let (parent_path, parent_repo) = temp_repo();
+        commit_file(&parent_repo, Path::new("parent.txt"), b"parent\n", "parent");
+        let (other_path, other_repo) = temp_repo();
+        commit_file(&other_repo, Path::new("other.txt"), b"other\n", "other");
+        drop(parent_repo);
+        drop(other_repo);
+
+        let error = merge_worktree(parent_path.to_str().unwrap(), other_path.to_str().unwrap())
+            .unwrap_err();
+        assert!(error.contains("not a worktree of the parent repository"));
+
+        std::fs::remove_dir_all(parent_path).unwrap();
+        std::fs::remove_dir_all(other_path).unwrap();
+    }
+
+    #[test]
+    fn merge_accepts_a_clean_branch_from_the_same_worktree_set() {
+        let (parent_path, parent_repo) = temp_repo();
+        commit_file(&parent_repo, Path::new("base.txt"), b"base\n", "base");
+        let mut config = parent_repo.config().unwrap();
+        config.set_str("user.name", "Vibe Test").unwrap();
+        config.set_str("user.email", "vibe@example.test").unwrap();
+        drop(config);
+        drop(parent_repo);
+
+        let checkout = parent_path.with_extension("merge-worktree");
+        let checkout_text = checkout.to_string_lossy().into_owned();
+        let created = run_git(
+            parent_path.to_str().unwrap(),
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "vibe/merge-test",
+                &checkout_text,
+                "HEAD",
+            ],
+        );
+        assert!(created.ok, "{}", created.output);
+        let child_repo = open_repo(checkout.to_str().unwrap()).unwrap();
+        commit_file(&child_repo, Path::new("child.txt"), b"child\n", "child");
+        drop(child_repo);
+
+        merge_worktree(parent_path.to_str().unwrap(), checkout.to_str().unwrap()).unwrap();
+        assert_eq!(
+            std::fs::read(parent_path.join("child.txt")).unwrap(),
+            b"child\n"
+        );
+
+        let removed = run_git(
+            parent_path.to_str().unwrap(),
+            &["worktree", "remove", &checkout_text],
+        );
+        assert!(removed.ok, "{}", removed.output);
+        std::fs::remove_dir_all(parent_path).unwrap();
     }
 }

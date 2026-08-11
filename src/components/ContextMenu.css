@@ -34,6 +34,9 @@
 .ctx-menu > button:not(:disabled):hover {
   background: var(--bg-hover);
 }
+.ctx-menu > button.danger {
+  color: var(--danger);
+}
 /* disabled stays hoverable (no pointer-events:none) so its title tooltip —
    e.g. the squash-ineligibility reason — still surfaces */
 .ctx-menu > button:disabled {

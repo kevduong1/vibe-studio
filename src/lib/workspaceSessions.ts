@@ -15,6 +15,14 @@ import type { TerminalStore } from "../stores/terminal";
 import type { Workspace } from "../stores/workspaces";
 import { createAgentTask, removeAgentTask } from "../stores/agentTasks";
 import { useAgentRuntimeStore } from "../stores/agentRuntime";
+import { openTerminalLink } from "./terminalLinks";
+import { checkpointBeforeUserSubmit } from "./agentCheckpointPrompt";
+import {
+  agentLaunchProgram,
+  combineAgentPreludes,
+  isolatedTaskAgentPrelude,
+} from "./agentLaunchProgram";
+import { isolatedTaskForPath } from "../stores/isolatedTasks";
 
 /** The (possibly already-running) session for a workspace terminal. */
 export function getOrCreateWorkspaceSession(
@@ -26,12 +34,16 @@ export function getOrCreateWorkspaceSession(
     id,
     cwd: ws.path,
     agent: terminal?.kind !== "shell",
+    workspacePath: ws.path,
+    agentScope: "workspace",
+    discoverAgents: terminal?.kind === "shell",
     ...(terminal && terminal.kind !== "shell" && {
       agentKind: terminal.kind,
-      workspacePath: ws.path,
       agentScope: "workspace" as const,
     }),
     onTitle: (title) => ws.terminal.getState().setPaneTitle(id, title),
+    onLink: (url) => openTerminalLink(ws.path, url),
+    onUserSubmit: () => checkpointBeforeUserSubmit(id),
     onExit: (_code, early) => {
       // Normal exit closes the tab; an early failure keeps the corpse
       // readable (spawn error, bad dotfiles) for the user to close.
@@ -51,21 +63,40 @@ const AGENT_COMMAND = {
 export function openWorkspaceTerminal(
   ws: Workspace,
   kind: "shell" | "claude" | "codex",
+  command?: string,
+  prelude?: string,
+  setupCommand?: string,
 ): string {
   const id = ws.terminal.getState().newTerminal(undefined, kind);
   if (kind !== "shell") {
     const session = getOrCreateWorkspaceSession(ws, id);
-    session.markAgentLaunching();
     const generation = (useAgentRuntimeStore.getState().states[id]?.generation ?? 0) + 1;
     // Baseline capture is ordered before the app-initiated launch. Failure is
     // recorded on the task and never prevents the command from starting.
-    void createAgentTask({
-      terminalId: id,
-      generation,
-      workspacePath: ws.path,
-      scope: "workspace",
-      kind,
-    }).finally(() => session.sendText(`${AGENT_COMMAND[kind]}\r`));
+    const launch = () => {
+      session.markAgentLaunching();
+      const agentCommand = command ?? AGENT_COMMAND[kind];
+      const isolatedTask = isolatedTaskForPath(ws.path);
+      const environmentPrelude = combineAgentPreludes(
+        isolatedTask && isolatedTaskAgentPrelude(isolatedTask.id, isolatedTask.previewPort),
+        prelude,
+      );
+      const launchLine = agentLaunchProgram(agentCommand, environmentPrelude);
+      void createAgentTask({
+        terminalId: id,
+        generation,
+        workspacePath: ws.path,
+        scope: "workspace",
+        kind,
+      }).finally(() => session.sendText(`${launchLine}\r`));
+    };
+    if (setupCommand) {
+      void session.runTrackedCommand(setupCommand, `agent-setup:${id}`).then((result) => {
+        if (result.status === "exited" && result.exitCode === 0) launch();
+      });
+    } else {
+      launch();
+    }
   }
   return id;
 }

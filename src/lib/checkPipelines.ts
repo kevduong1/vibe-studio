@@ -21,20 +21,12 @@ import { subscribeAgentTransitions } from "../stores/agentRuntime";
 import { useWorkspacesStore, type Workspace } from "../stores/workspaces";
 import { useUiStore } from "../stores/ui";
 
-const leases = new Map<string, string>();
-
-function leaseTerminal(ws: Workspace, label: string, runId: string): string {
+function createCheckTerminal(ws: Workspace, label: string): string {
   // Check panes remain inspectable after a run, so a user may type into one.
   // Never inject a later check into a session whose prompt ownership is no
   // longer app-controlled; every node invocation gets a fresh reserved pane.
-  const id = ws.terminal.getState().newTerminal(`Check: ${label}`);
-  leases.set(id, runId);
-  return id;
+  return ws.terminal.getState().newTerminal(`Check: ${label}`);
 }
-
-const releaseTerminal = (id: string, runId: string): void => {
-  if (leases.get(id) === runId) leases.delete(id);
-};
 
 const running = new Map<string, Promise<CheckRun>>();
 const followup = new Map<string, { rootLabel: string; source: "auto" }>();
@@ -86,6 +78,11 @@ async function executePipeline(
   const document = await loadTaskDocument(owner.workspacePath);
   const validation = validatePipeline(document, rootLabel);
   if (!validation.root || validation.errors.length) throw new Error(validation.errors.join("\n"));
+  const preparedOwner = useAgentTasksStore.getState().tasks[terminalId];
+  if (!preparedOwner || preparedOwner.generation !== owner.generation) {
+    throw new Error("The terminal occupant changed while checks were being prepared");
+  }
+  const ownerGeneration = owner.generation;
 
   const runId = crypto.randomUUID();
   let run: CheckRun = {
@@ -106,8 +103,8 @@ async function executePipeline(
       exitCode: null,
     })),
   };
-  const publish = () => updateCheckRun(terminalId, run);
-  beginCheckRun(terminalId, run);
+  const publish = () => updateCheckRun(terminalId, ownerGeneration, run);
+  beginCheckRun(terminalId, ownerGeneration, run);
   const byLabel = new Map(validation.nodes.map((task) => [task.label, task]));
   const promises = new Map<string, Promise<CheckNodeRun["status"]>>();
 
@@ -129,32 +126,33 @@ async function executePipeline(
         publish();
         return "skipped";
       }
+      if (useAgentTasksStore.getState().tasks[terminalId]?.generation !== ownerGeneration) {
+        const finishedAt = Date.now();
+        run = patchNode(run, label, { status: "cancelled", finishedAt, durationMs: 0 });
+        return "cancelled";
+      }
       if (!task.command) {
         const now = Date.now();
         run = patchNode(run, label, { status: "passed", startedAt: now, finishedAt: now, durationMs: 0 });
         publish();
         return "passed";
       }
-      const nodeTerminalId = leaseTerminal(ws, label, runId);
+      const nodeTerminalId = createCheckTerminal(ws, label);
       const startedAt = Date.now();
       run = patchNode(run, label, { status: "running", terminalId: nodeTerminalId, startedAt });
       publish();
-      try {
-        const session = getOrCreateWorkspaceSession(ws, nodeTerminalId);
-        const result = await session.runTrackedCommand(shellCommandLine(task, ws), runId);
-        const finishedAt = Date.now();
-        const status = result.status === "cancelled" ? "cancelled" : result.exitCode === 0 ? "passed" : "failed";
-        run = patchNode(run, label, {
-          status,
-          finishedAt,
-          durationMs: finishedAt - startedAt,
-          exitCode: result.status === "exited" ? result.exitCode : null,
-        });
-        publish();
-        return status;
-      } finally {
-        releaseTerminal(nodeTerminalId, runId);
-      }
+      const session = getOrCreateWorkspaceSession(ws, nodeTerminalId);
+      const result = await session.runTrackedCommand(shellCommandLine(task, ws), runId);
+      const finishedAt = Date.now();
+      const status = result.status === "cancelled" ? "cancelled" : result.exitCode === 0 ? "passed" : "failed";
+      run = patchNode(run, label, {
+        status,
+        finishedAt,
+        durationMs: finishedAt - startedAt,
+        exitCode: result.status === "exited" ? result.exitCode : null,
+      });
+      publish();
+      return status;
     })();
     promises.set(label, promise);
     return promise;
@@ -225,10 +223,16 @@ async function executePipeline(
     run = { ...run, status: "invalidated", finishedAt: Date.now(), fingerprint: null };
     throw error;
   } finally {
-    updateCheckRun(terminalId, run);
-    await refreshAgentTask(terminalId);
+    updateCheckRun(terminalId, ownerGeneration, run);
+    if (useAgentTasksStore.getState().tasks[terminalId]?.generation === ownerGeneration) {
+      await refreshAgentTask(terminalId);
+    }
   }
-  if (source === "auto" && (run.status === "failed" || run.status === "invalidated")) {
+  if (
+    source === "auto" &&
+    useAgentTasksStore.getState().tasks[terminalId]?.generation === ownerGeneration &&
+    (run.status === "failed" || run.status === "invalidated")
+  ) {
     notifyAgentAttention(terminalId, "checks_failed");
   }
   return run;

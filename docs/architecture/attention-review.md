@@ -25,10 +25,12 @@ agent generation without a matching task is reconciled as a late-baseline task;
 the inbox shows an initializing message during capture instead of silently
 hiding review and check controls.
 
-Tasks contain only workspace/scope, agent kind, base HEAD, timestamps, selected
-pipeline/autorun preference, review metadata, current fingerprint, and the last
-20 structured check runs. They reset with the app. Project approval for
-automatic commands is the only persisted piece; task selection and runs are not.
+Tasks contain workspace/scope, optional persistent isolated-task identity,
+agent kind, base HEAD, timestamps, selected pipeline/autorun preference,
+review metadata, whole/per-file fingerprints, latest-turn paths, and the last
+20 structured check runs. Semantic task/check state resets with the app.
+Isolated task/Git/cleanup metadata persists separately. Project approval for
+automatic commands is also persisted.
 
 Lifecycle, human review, conflicts, and checks are independent. Human review
 states are `clean`, `unreviewed`, `reviewed`, `feedback`, `stale`, and
@@ -40,15 +42,17 @@ repository fingerprint turns an accepted decision into `stale`; reviewing the
 new fingerprint enables acceptance again. Occupant generations replace all
 prior evidence.
 
-Shared working trees remain supported. Scope is always **all repository changes
+Shared working trees remain supported. Their scope is **all repository changes
 since the base HEAD**, including committed `base..HEAD` changes plus staged,
 working-tree, and untracked changes. Vibe Studio never claims per-agent file
-attribution and offers no Apply, Merge, or Discard without isolated worktrees.
+attribution there. Isolated agents additionally own a stable task/worktree and
+use the lifecycle in [`isolated-agent-tasks.md`](isolated-agent-tasks.md).
 
 ## Review snapshot and privacy
 
 `git_review_snapshot` returns current HEAD, base ancestry, sorted changed and
-conflicted paths, and one deterministic SHA-256 fingerprint. Rust hashes HEAD
+conflicted paths, one deterministic whole-task SHA-256 fingerprint, and opaque
+per-path fingerprints for latest-turn comparison. Rust hashes HEAD
 plus sorted staged/worktree/untracked content, Git executable modes, every
 conflict stage, and nested dirty submodule state. Worktree files are read in
 64 KiB chunks; contents never cross IPC. Capture revalidates HEAD, status, index,
@@ -63,9 +67,14 @@ reset elapsed age or oldest-first ordering.
 
 Evidence refreshes at task creation, repo watcher events, working→idle turn
 completion, inbox/detail opening, check start/completion, and acceptance.
+For prompt-owned user turns, Enter waits for `git_checkpoint_create`: a private
+temporary index writes an unreachable tree without touching the real index.
+The capture revalidates repository generation and retries a moving checkout up
+to three times. The tree backs read-only latest-turn file diffs; it is
+inspection evidence, not a restore or rollback facility.
 
 **Peek context** is a separate boundary: an explicit click reads at most 12
-logical xterm lines and 4 KiB. Plaintext exists only in the mounted detail
+logical xterm lines and 4,096 characters. Plaintext exists only in the mounted detail
 component, supports refresh/hide, and is never logged, persisted, or copied into
 runtime/task/check stores.
 
@@ -140,5 +149,10 @@ Baseline/read errors are visible and retryable. Invalid pipelines do not start.
 Closed terminals cancel their node. Missing agent targets remain stale instead
 of being silently retargeted. No raw terminal output is retained.
 
-Quick reply, prompt writes, isolated worktrees, destructive outcomes,
-persistent task/check history, full diffs, and line comments are out of scope.
+Arbitrary terminal writes remain out of scope. The bounded programmatic paths
+are isolated-task line feedback, task-plan queue/steer, editor context, and the
+authenticated local control plane. Every path pins the live occupant generation
+and checkpoints before sending; implicit routing additionally requires an idle
+or question-owned prompt. Exact native Codex conversation restore is available
+only from an unambiguous persisted opaque reference. Persistent semantic/check
+history and restorable filesystem checkpoints remain out of scope.

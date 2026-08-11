@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   gitReviewHead,
   gitReviewSnapshot,
+  gitCheckpointCreate,
   onRepoChanged,
   type GitReviewSnapshot,
 } from "../lib/ipc";
@@ -15,6 +16,7 @@ import {
   subscribeAgentTransitions,
   useAgentRuntimeStore,
 } from "./agentRuntime";
+import { isolatedTaskForPath } from "./isolatedTasks";
 
 export type ReviewState =
   | "clean"
@@ -67,6 +69,8 @@ export interface AgentTask {
   workspacePath: string;
   scope: "global" | "workspace";
   kind: AgentKind;
+  /** Stable isolated-checkout owner when this generation was launched there. */
+  isolatedTaskId: string | null;
   createdAt: number;
   /** Last meaningful task/review transition (not a no-op evidence refresh). */
   updatedAt: number;
@@ -82,6 +86,12 @@ export interface AgentTask {
   autoRun: boolean;
   latestSnapshot: GitReviewSnapshot | null;
   latestFingerprint: string | null;
+  /** Opaque per-path boundary captured when the current/last turn began. */
+  turnBaseFileFingerprints: Record<string, string> | null;
+  /** Unreachable Git tree captured immediately before the latest user turn. */
+  turnBaseTree: string | null;
+  /** Paths whose opaque hashes changed during the current/last turn. */
+  latestTurnChangedFiles: string[];
   reviewedFingerprint: string | null;
   feedbackFingerprint: string | null;
   acceptedFingerprint: string | null;
@@ -144,6 +154,15 @@ export function checkStateFor(task: AgentTask): CheckState {
 const snapshotRequests = new Map<string, Promise<GitReviewSnapshot>>();
 const refreshSequences = new Map<string, number>();
 
+export function changedReviewPaths(
+  before: Record<string, string>,
+  after: Record<string, string>,
+): string[] {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((path) => before[path] !== after[path])
+    .sort();
+}
+
 function sharedSnapshot(
   workspacePath: string,
   baseHead: string | null,
@@ -168,10 +187,14 @@ function taskWithSnapshot(task: AgentTask, snapshot: GitReviewSnapshot): AgentTa
     latestFingerprint: snapshot.fingerprint,
     lastRefreshedAt: now,
   };
+  const latestTurnChangedFiles = task.turnBaseFileFingerprints
+    ? changedReviewPaths(task.turnBaseFileFingerprints, snapshot.fileFingerprints)
+    : task.latestTurnChangedFiles;
   const reviewState = reviewStateFor(candidate, snapshot);
   const meaningful = task.latestFingerprint !== snapshot.fingerprint || task.reviewState !== reviewState;
   return {
     ...candidate,
+    latestTurnChangedFiles,
     reviewState,
     updatedAt: meaningful ? now : task.updatedAt,
     attentionSince: meaningful ? now : task.attentionSince,
@@ -219,6 +242,7 @@ export function createAgentTask(meta: {
   const now = Date.now();
   const task: AgentTask = {
     ...meta,
+    isolatedTaskId: isolatedTaskForPath(meta.workspacePath)?.id ?? null,
     createdAt: now,
     updatedAt: now,
     lastRefreshedAt: null,
@@ -233,6 +257,9 @@ export function createAgentTask(meta: {
     autoRun: false,
     latestSnapshot: null,
     latestFingerprint: null,
+    turnBaseFileFingerprints: null,
+    turnBaseTree: null,
+    latestTurnChangedFiles: [],
     reviewedFingerprint: null,
     feedbackFingerprint: null,
     acceptedFingerprint: null,
@@ -329,6 +356,63 @@ export function setAgentTaskAutoRun(terminalId: string, enabled: boolean): void 
   if (task) replaceTask({ ...task, autoRun: enabled, updatedAt: Date.now() });
 }
 
+const runtimeAcceptsPrompt = (
+  runtime: AgentRuntimeState,
+  allowWorking: boolean,
+): boolean =>
+  runtime.occupancy === "present" &&
+  (runtime.lifecycle === "idle" ||
+    (runtime.lifecycle === "blocked" && runtime.reason === "question") ||
+    (allowWorking && runtime.lifecycle === "working"));
+
+/** Capture the exact generation selected by a programmatic prompt action.
+ * Unlike the raw-keyboard helper below, invalid ownership is an error: callers
+ * must never continue and silently send uncheckpointed text. */
+export async function captureAgentTurnCheckpoint(
+  terminalId: string,
+  generation: number,
+  allowWorking = false,
+): Promise<void> {
+  const task = useAgentTasksStore.getState().tasks[terminalId];
+  const runtime = useAgentRuntimeStore.getState().states[terminalId];
+  if (!task || task.generation !== generation) {
+    throw new Error("The task checkpoint owner is no longer available.");
+  }
+  if (!runtime || runtime.generation !== generation || !runtimeAcceptsPrompt(runtime, allowWorking)) {
+    throw new Error("The terminal occupant changed or no longer owns an agent prompt.");
+  }
+  const [tree, checkpointSnapshot] = await Promise.all([
+    gitCheckpointCreate(task.workspacePath),
+    gitReviewSnapshot(task.workspacePath, task.baseHead, task.baseHead === null),
+  ]);
+  const latest = useAgentTasksStore.getState().tasks[terminalId];
+  const latestRuntime = useAgentRuntimeStore.getState().states[terminalId];
+  if (
+    !latest ||
+    latest.generation !== generation ||
+    !latestRuntime ||
+    latestRuntime.generation !== generation ||
+    !runtimeAcceptsPrompt(latestRuntime, allowWorking)
+  ) {
+    throw new Error("The terminal occupant changed while its checkpoint was being created.");
+  }
+  const refreshed = taskWithSnapshot(latest, checkpointSnapshot);
+  replaceTask({
+    ...refreshed,
+    turnBaseTree: tree,
+    turnBaseFileFingerprints: checkpointSnapshot.fileFingerprints,
+    latestTurnChangedFiles: [],
+  });
+}
+
+/** A physical Enter is also used for permission UIs and shell interaction.
+ * Checkpoint only when semantic state proves that Enter submits a new turn. */
+export async function checkpointAgentUserSubmit(terminalId: string): Promise<void> {
+  const runtime = useAgentRuntimeStore.getState().states[terminalId];
+  if (!runtime || !runtimeAcceptsPrompt(runtime, false)) return;
+  await captureAgentTurnCheckpoint(terminalId, runtime.generation);
+}
+
 export function markAgentTaskFeedback(terminalId: string): void {
   const task = useAgentTasksStore.getState().tasks[terminalId];
   if (!task?.latestFingerprint) return;
@@ -371,15 +455,15 @@ export function acceptAgentTask(terminalId: string): void {
   void refreshAgentTask(terminalId);
 }
 
-export function beginCheckRun(terminalId: string, run: CheckRun): void {
+export function beginCheckRun(terminalId: string, generation: number, run: CheckRun): void {
   const task = useAgentTasksStore.getState().tasks[terminalId];
-  if (!task) return;
+  if (!task || task.generation !== generation) return;
   replaceTask({ ...task, checkRuns: [...task.checkRuns, run].slice(-20), updatedAt: Date.now() });
 }
 
-export function updateCheckRun(terminalId: string, run: CheckRun): void {
+export function updateCheckRun(terminalId: string, generation: number, run: CheckRun): void {
   const task = useAgentTasksStore.getState().tasks[terminalId];
-  if (!task) return;
+  if (!task || task.generation !== generation) return;
   const checkRuns = task.checkRuns.map((item) => item.id === run.id ? run : item).slice(-20);
   replaceTask({ ...task, checkRuns, updatedAt: Date.now() });
 }
@@ -432,6 +516,16 @@ subscribeAgentTransitions(({ previous, current }) => {
   }
   if (previous?.lifecycle === "working" && current.lifecycle === "idle") {
     void refreshAgentTask(current.terminalId);
+  }
+  if (previous?.lifecycle !== "working" && current.lifecycle === "working") {
+    const task = useAgentTasksStore.getState().tasks[current.terminalId];
+    if (task) {
+      replaceTask({
+        ...task,
+        turnBaseFileFingerprints: task.latestSnapshot?.fileFingerprints ?? {},
+        latestTurnChangedFiles: [],
+      });
+    }
   }
 });
 

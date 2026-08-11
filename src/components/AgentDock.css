@@ -67,3 +67,40 @@
 .agent-badge-separator {
   color: var(--fg-faint);
 }
+
+/* Read-only child-agent process rows. They intentionally expose only the
+   privacy-bounded executable basename and PID from the semantic poller. */
+.agent-subagents {
+  position: absolute;
+  z-index: 7;
+  top: 32px;
+  right: 14px;
+  min-width: 168px;
+  max-width: 260px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-overlay);
+  color: var(--fg-dim);
+  font-size: var(--font-size-sm);
+  opacity: 0.88;
+}
+.agent-subagents-title {
+  margin: 0 2px 4px;
+  color: var(--fg-faint);
+}
+.agent-subagent-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+}
+.agent-subagent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+}
+.agent-subagent-dot.foreground { background: var(--success); }
+.agent-subagent-pid { color: var(--fg-faint); }

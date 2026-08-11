@@ -20,7 +20,9 @@ import {
   type BannerMode,
 } from "../lib/agentNotifications";
 import { copyText } from "../lib/clipboard";
+import { agentControlInfo, executableVersion, lspResolve } from "../lib/ipc";
 import { useNativeOverlay } from "../lib/nativeOverlays";
+import { AGENT_PROFILES } from "../lib/agentProfiles";
 import { basename } from "../lib/path";
 import {
   getWorkspaceLsp,
@@ -40,6 +42,16 @@ import type { ServerLang } from "../lib/lsp/types";
 import { useActiveWorkspace, type Workspace } from "../stores/workspaces";
 import { useUsageStore } from "../stores/usage";
 import { useCodexUsageStore } from "../stores/codexUsage";
+import {
+  allAgentDefinitions,
+  useAgentDefinitionsStore,
+  type AgentDefinition,
+} from "../stores/agentDefinitions";
+import { useAgentRuntimeStore } from "../stores/agentRuntime";
+import {
+  runTerminalRecipe,
+  useTerminalRecipesStore,
+} from "../stores/terminalRecipes";
 import { IcClose, IcPlay, IcRefresh } from "./icons";
 import "./SettingsModal.css";
 
@@ -228,6 +240,237 @@ function BannerModeRow() {
         <option value="background">App in background</option>
         <option value="never">Never</option>
       </select>
+    </div>
+  );
+}
+
+function AgentIntegrationRow({ definition }: { definition: AgentDefinition }) {
+  const [status, setStatus] = useState("Checking…");
+  const probeSequence = useRef(0);
+  const probe = (refresh: boolean) => {
+    const sequence = ++probeSequence.current;
+    setStatus("Checking…");
+    void lspResolve(definition.executable, [], refresh).then(async (result) => {
+      if (sequence !== probeSequence.current) return;
+      if (!result.path) {
+        setStatus("Unavailable — not found in login-shell PATH");
+        return;
+      }
+      try {
+        const version = await executableVersion(result.path);
+        if (sequence === probeSequence.current) setStatus(version);
+      } catch (error) {
+        if (sequence === probeSequence.current) setStatus(`Probe failed — ${String(error)}`);
+      }
+    }, (error) => {
+      if (sequence === probeSequence.current) setStatus(`Unavailable — ${String(error)}`);
+    });
+  };
+  useEffect(() => {
+    probe(false);
+    return () => {
+      probeSequence.current += 1;
+    };
+  }, [definition.executable]); // eslint-disable-line react-hooks/exhaustive-deps
+  const capabilities = Object.entries(definition.capabilities)
+    .filter(([, enabled]) => enabled)
+    .map(([name]) => name)
+    .join(", ");
+  return (
+    <div className="settings-row">
+      <div className="settings-row-main">
+        <span className="settings-row-name">{definition.name}</span>
+        <span className="settings-row-status">
+          <span className={`lsp-dot ${status.startsWith("Unavailable") || status.startsWith("Probe failed") ? "crashed" : status === "Checking…" ? "idle" : "ok"}`} />
+          {status}
+        </span>
+        <span className="settings-row-status">
+          {definition.transport} · {definition.detectionProfile} detection · resume {definition.resumeSupport} · {capabilities}
+        </span>
+      </div>
+      <button className="icon-btn" title="Refresh integration health" onClick={() => probe(true)}><IcRefresh /></button>
+    </div>
+  );
+}
+
+function AgentIntegrations() {
+  const customDefinitions = useAgentDefinitionsStore((state) => state.customDefinitions);
+  const [name, setName] = useState("");
+  const [executable, setExecutable] = useState("");
+  const [profile, setProfile] = useState<"claude" | "codex">("claude");
+  const definitions = allAgentDefinitions();
+  const add = () => {
+    if (!name.trim() || !executable.trim()) return;
+    const id = `custom.${crypto.randomUUID()}`;
+    useAgentDefinitionsStore.getState().upsertDefinition({
+      id,
+      name: name.trim(),
+      executable: executable.trim(),
+      defaultArguments: [],
+      transport: "terminal",
+      detectionProfile: profile,
+      resumeSupport: "none",
+      capabilities: { models: true, reasoning: profile === "codex", permissions: true, sandbox: profile === "codex", subagents: true },
+      builtin: false,
+    });
+    useAgentDefinitionsStore.getState().upsertProfile({
+      id: `profile.${crypto.randomUUID()}`,
+      name: `${name.trim()} — Default`,
+      definitionId: id,
+      model: null,
+      reasoning: null,
+      permissionMode: null,
+      sandbox: null,
+      environment: {},
+      extraArguments: [],
+      folderChoice: "current",
+      builtin: false,
+    });
+    setName("");
+    setExecutable("");
+  };
+  return (
+    <>
+      {definitions.map((definition) => <AgentIntegrationRow key={definition.id} definition={definition} />)}
+      <div className="settings-agent-add">
+        <input value={name} placeholder="Custom agent name" onChange={(event) => setName(event.target.value)} />
+        <input value={executable} placeholder="Executable" onChange={(event) => setExecutable(event.target.value)} />
+        <select value={profile} onChange={(event) => setProfile(event.target.value as "claude" | "codex")}>
+          <option value="claude">Claude screen profile</option>
+          <option value="codex">Codex screen profile</option>
+        </select>
+        <button disabled={!name.trim() || !executable.trim()} onClick={add}>Add</button>
+      </div>
+      {customDefinitions.length > 0 && (
+        <p className="settings-hint">Custom commands keep their definition IDs. Missing definitions disable their profiles instead of silently launching another agent.</p>
+      )}
+    </>
+  );
+}
+
+/** Privacy-bounded explain view: configuration versions plus the semantic
+ * fields already held in memory. It deliberately never renders terminal
+ * text, process arguments, environment, or submitted prompts. */
+function AgentDetectionDiagnostics() {
+  const states = useAgentRuntimeStore((state) => state.states);
+  const rows = Object.values(states).sort((a, b) =>
+    a.workspacePath.localeCompare(b.workspacePath) || a.terminalId.localeCompare(b.terminalId),
+  );
+  return (
+    <>
+      <div className="settings-profile-versions">
+        {Object.values(AGENT_PROFILES).map((profile) => (
+          <code key={profile.kind}>
+            {profile.kind} v{profile.version} · {profile.authoredFor} · {profile.rules.length} rules
+          </code>
+        ))}
+      </div>
+      {rows.length === 0 ? (
+        <p className="settings-hint">No monitored terminal sessions.</p>
+      ) : rows.map((runtime) => (
+        <div className="settings-row" key={runtime.terminalId}>
+          <div className="settings-row-main">
+            <span className="settings-row-name">
+              {runtime.kind} · {runtime.terminalId.slice(0, 8)} · generation {runtime.generation}
+            </span>
+            <span className="settings-row-status">
+              {runtime.occupancy} / {runtime.lifecycle} · authority {runtime.authority ?? "none"} · rule {runtime.matchedRule ?? "none"}
+            </span>
+            <span className="settings-row-status" title={runtime.workspacePath}>
+              {runtime.scope} · {runtime.workspacePath}
+            </span>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+const EMPTY_RECIPES: never[] = [];
+
+function TerminalRecipes({ ws }: { ws: Workspace | null }) {
+  const recipes = useTerminalRecipesStore((state) =>
+    ws ? (state.projects[ws.path] ?? EMPTY_RECIPES) : EMPTY_RECIPES,
+  );
+  const [name, setName] = useState("");
+  const [command, setCommand] = useState("");
+  if (!ws) return <p className="settings-hint">Open a project to configure its recipes.</p>;
+  const add = () => {
+    if (!name.trim() || !command.trim()) return;
+    useTerminalRecipesStore.getState().add(ws.path, name, command);
+    setName("");
+    setCommand("");
+  };
+  return (
+    <>
+      {recipes.map((recipe) => (
+        <div className="settings-row" key={recipe.id}>
+          <div className="settings-row-main">
+            <span className="settings-row-name">{recipe.name}</span>
+            <code className="settings-recipe-command">{recipe.command}</code>
+            <label className="settings-recipe-policy">
+              <input
+                type="checkbox"
+                checked={recipe.runOnRestore}
+                onChange={(event) => useTerminalRecipesStore.getState().update(ws.path, {
+                  ...recipe,
+                  runOnRestore: event.target.checked,
+                })}
+              />
+              Run automatically only when this workspace is restored at app launch
+            </label>
+          </div>
+          <button onClick={() => runTerminalRecipe(ws, recipe)}>Run</button>
+          <button
+            className="icon-btn"
+            title="Remove recipe"
+            onClick={() => useTerminalRecipesStore.getState().remove(ws.path, recipe.id)}
+          >
+            <IcClose />
+          </button>
+        </div>
+      ))}
+      <div className="settings-recipe-add">
+        <input value={name} placeholder="Recipe name" onChange={(event) => setName(event.target.value)} />
+        <input value={command} placeholder="Command" onChange={(event) => setCommand(event.target.value)} />
+        <button disabled={!name.trim() || !command.trim()} onClick={add}>Add</button>
+      </div>
+    </>
+  );
+}
+
+function AgentControlInfo() {
+  const [info, setInfo] = useState<{
+    socketPath: string;
+    tokenPath: string;
+    cliPath: string;
+    skillPath: string;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    void agentControlInfo().then(
+      (value) => { if (!disposed) setInfo(value); },
+      (reason) => { if (!disposed) setError(String(reason)); },
+    );
+    return () => { disposed = true; };
+  }, []);
+  if (error) return <p className="settings-hint">Unavailable: {error}</p>;
+  if (!info) return <p className="settings-hint">Starting local control socket…</p>;
+  return (
+    <div className="settings-row">
+      <div className="settings-row-main">
+        <span className="settings-row-name">Authenticated Unix socket</span>
+        <code className="settings-recipe-command">{info.socketPath}</code>
+        <span className="settings-row-name">Bundled CLI</span>
+        <code className="settings-recipe-command">{info.cliPath}</code>
+        <span className="settings-row-name">Bundled skill</span>
+        <code className="settings-recipe-command">{info.skillPath}</code>
+        <span className="settings-row-status">
+          Mode-0600 bearer token: {info.tokenPath}. Use project-scoped, expiring capabilities for repository automation; never inject the global token into a terminal.
+        </span>
+      </div>
+      <button onClick={() => void copyText(info.cliPath)}>Copy CLI path</button>
     </div>
   );
 }
@@ -432,6 +675,34 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 modeOn={modeOn}
               />
             ))}
+          </section>
+          <section className="settings-section">
+            <h3>Agent Integrations</h3>
+            <p className="settings-hint">
+              Executable health, version, detection identity, and structured capabilities used by the launch sheet. Claude and Codex remain terminal-native; custom commands select an existing screen profile as fallback detection.
+            </p>
+            <AgentIntegrations />
+          </section>
+          <section className="settings-section">
+            <h3>Agent Detection Diagnostics</h3>
+            <p className="settings-hint">
+              Internal explain view for versioned screen profiles and current semantic matches. No terminal text, commands, arguments, environment, or prompts are retained here.
+            </p>
+            <AgentDetectionDiagnostics />
+          </section>
+          <section className="settings-section">
+            <h3>Workspace Terminal Recipes</h3>
+            <p className="settings-hint">
+              Local, user-owned commands for {ws?.path ?? "the active project"}. Nothing runs on app restore unless its per-recipe policy is enabled here.
+            </p>
+            <TerminalRecipes ws={ws} />
+          </section>
+          <section className="settings-section">
+            <h3>Local Agent Control</h3>
+            <p className="settings-hint">
+              The bundled vibe-agent CLI supports semantic snapshots, ordered events, isolated starts, generation-pinned prompts, focus, waits, cancellation, and short-lived project capabilities.
+            </p>
+            <AgentControlInfo />
           </section>
           <section className="settings-section">
             <h3>Agent Notifications</h3>

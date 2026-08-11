@@ -5,7 +5,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useStore } from "zustand";
-import { open as openDialog, message } from "@tauri-apps/plugin-dialog";
+import { confirm, open as openDialog, message } from "@tauri-apps/plugin-dialog";
 import {
   useActiveWorkspace,
   useWorkspacesStore,
@@ -29,8 +29,16 @@ import {
   useProjectDisplayNames,
 } from "../lib/projectNames";
 import { copyText } from "../lib/clipboard";
+import {
+  archiveIsolatedTask,
+  discardIsolatedTask,
+  keepIsolatedTaskBranch,
+  mergeIsolatedTask,
+} from "../lib/isolatedTasks";
+import { useIsolatedTasksStore } from "../stores/isolatedTasks";
 import { ContextMenu } from "./ContextMenu";
 import AttentionInbox from "./AttentionInbox";
+import WorktreeDialog, { type WorktreeDialogMode } from "./WorktreeDialog";
 import {
   ActivityGlyph,
   IcBranch,
@@ -62,8 +70,64 @@ function ProjectTabMenu({
   onRename: () => void;
 }) {
   const colorIndex = useProjectColorIndex(path);
+  const task = useIsolatedTasksStore((state) =>
+    Object.values(state.tasks).find(
+      (candidate) => candidate.worktreePath === path && candidate.outcome !== "discarded",
+    ),
+  );
+  const runTaskAction = async (label: string, action: () => Promise<void>) => {
+    onClose();
+    try {
+      await action();
+    } catch (error) {
+      await message(String(error), { title: label, kind: "error" });
+    }
+  };
   return (
     <ContextMenu x={x} y={y} onClose={onClose}>
+      {task && (
+        <>
+          <div className="ws-task-menu-label">
+            Isolated task · {task.outcome}
+          </div>
+          {task.outcome === "active" && (
+            <button onClick={() => void runTaskAction("Apply Task", async () => {
+              if (!(await confirm(
+                `Merge “${task.branch}” into the parent checkout? Both checkouts must be clean and the task must be committed.`,
+                { title: "Apply Isolated Task?", kind: "info" },
+              ))) return;
+              await mergeIsolatedTask(task);
+            })}>
+              Apply / Merge into Parent
+            </button>
+          )}
+          {task.outcome === "active" && (
+            <button onClick={() => { keepIsolatedTaskBranch(task); onClose(); }}>
+              Keep Branch
+            </button>
+          )}
+          {task.outcome !== "archived" && (
+            <button onClick={() => void runTaskAction("Archive Task", () => archiveIsolatedTask(task))}>
+              Archive Task
+            </button>
+          )}
+          {task.cleanupProvenance === "created-by-vibe" && (
+            <button
+              className="danger"
+              onClick={() => void runTaskAction("Discard Task", async () => {
+                if (!(await confirm(
+                  `Discard “${task.name}” and remove its checkout? The branch “${task.branch}” will be kept.`,
+                  { title: "Discard Isolated Task?", kind: "warning" },
+                ))) return;
+                await discardIsolatedTask(task);
+              })}
+            >
+              Discard Task…
+            </button>
+          )}
+          <div className="ctx-menu-sep" />
+        </>
+      )}
       <button
         onClick={() => {
           onClose();
@@ -403,6 +467,11 @@ export default function Titlebar() {
   // inline edit on any tab.
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  const [worktreeDialog, setWorktreeDialog] = useState<{
+    parent: Workspace;
+    mode: WorktreeDialogMode;
+  } | null>(null);
 
   const pickFolder = async () => {
     const dir = await openDialog({ directory: true, multiple: false });
@@ -471,8 +540,11 @@ export default function Titlebar() {
         )}
         <button
           className="icon-btn ws-tab-add"
-          title="Open Repository…"
-          onClick={() => void pickFolder()}
+          title="Open repository or create worktree"
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            setAddMenu({ x: rect.left, y: rect.bottom });
+          }}
         >
           <IcPlus />
         </button>
@@ -494,6 +566,34 @@ export default function Titlebar() {
           y={tabMenu.y}
           onClose={() => setTabMenu(null)}
           onRename={() => setRenamingPath(tabMenu.path)}
+        />
+      )}
+      {addMenu && (
+        <ContextMenu x={addMenu.x} y={addMenu.y} onClose={() => setAddMenu(null)}>
+          <button onClick={() => { setAddMenu(null); void pickFolder(); }}>
+            Open Repository…
+          </button>
+          {active && (
+            <>
+              <div className="ctx-menu-sep" />
+              <button onClick={() => { setWorktreeDialog({ parent: active, mode: "create" }); setAddMenu(null); }}>
+                New Worktree…
+              </button>
+              <button onClick={() => { setWorktreeDialog({ parent: active, mode: "open" }); setAddMenu(null); }}>
+                Open Worktree…
+              </button>
+              <button onClick={() => { setWorktreeDialog({ parent: active, mode: "create-agent" }); setAddMenu(null); }}>
+                New Worktree + Agent…
+              </button>
+            </>
+          )}
+        </ContextMenu>
+      )}
+      {worktreeDialog && (
+        <WorktreeDialog
+          parent={worktreeDialog.parent}
+          mode={worktreeDialog.mode}
+          onClose={() => setWorktreeDialog(null)}
         />
       )}
     </div>

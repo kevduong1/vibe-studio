@@ -34,6 +34,7 @@ import {
 } from "../stores/agentRuntime";
 import { trackActivity, type ActivityTracker } from "./terminalActivity";
 import { trackedCommandProgram } from "./trackedCommand";
+import { terminalPromptInput } from "./terminalPrompt";
 import "@xterm/xterm/css/xterm.css";
 
 /** Terminal colors, mirroring theme.css (sanctioned hardcoded-color site:
@@ -86,6 +87,8 @@ export interface TermSessionOptions {
   agent: boolean;
   /** Dedicated agent identity and rollup metadata. Plain shells omit these. */
   agentKind?: AgentKind;
+  /** Monitor an ordinary shell for exact Claude/Codex descendants. */
+  discoverAgents?: boolean;
   workspacePath?: string;
   agentScope?: "global" | "workspace";
   /** Semantic transition callback, after the runtime state has changed. */
@@ -95,6 +98,11 @@ export interface TermSessionOptions {
    *  recognized terminals — the TERM_PROGRAM masquerade satisfies its
    *  allowlist. An empty title (Claude Code's exit reset) clears it. */
   onTitle?: (title: string) => void;
+  /** Web link activation. Owners route loopback URLs into native Preview. */
+  onLink?: (url: string) => void;
+  /** Called before an Enter reaches a live agent prompt. Used to snapshot the
+   * task checkout without retaining the submitted text. */
+  onUserSubmit?: () => Promise<void>;
   /** PTY exit. `early` = non-zero exit within EARLY_EXIT_MS of spawn (the
    *  corpse is kept readable; the caller should NOT remove the terminal). */
   onExit?: (code: number | null, early: boolean) => void;
@@ -120,6 +128,9 @@ export interface TermSession {
    *  safe immediately after the session is created — the task runner sends
    *  the command line before the pane host has even mounted). */
   sendText(data: string): void;
+  /** Submit one sanitized prompt. Multiline content uses bracketed paste when
+   * the live terminal mode supports it, then exactly one Enter. */
+  sendPrompt(text: string): Promise<void>;
   /** Privacy-bounded logical tail for an explicit, in-memory context peek. */
   readTail(maxLines: number, maxChars: number): string[];
   /** Run a shell line with an unforgeable private OSC completion marker.
@@ -176,7 +187,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
   const ensureRuntime = () => {
     if (
       runtimeRegistered ||
-      !opts.agentKind ||
+      (!opts.agentKind && !opts.discoverAgents) ||
       !opts.workspacePath ||
       !opts.agentScope
     ) return;
@@ -185,7 +196,8 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       terminalId: id,
       workspacePath: opts.workspacePath,
       scope: opts.agentScope,
-      kind: opts.agentKind,
+      kind: opts.agentKind ?? "claude",
+      discovery: opts.discoverAgents,
     });
     let runtimeState = useAgentRuntimeStore.getState().states[id];
     let generation = runtimeState?.generation;
@@ -215,7 +227,10 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
 
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.loadAddon(new WebLinksAddon());
+  term.loadAddon(new WebLinksAddon((event, uri) => {
+    event.preventDefault();
+    opts.onLink?.(uri);
+  }));
 
   // WebGL renderer with silent fallback to the DOM renderer. Unlike the
   // static panes, dock sessions get reparented, and moving a live canvas can
@@ -248,8 +263,23 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     }
   };
 
+  let inputChain = Promise.resolve();
   const dataSub = term.onData((data) => {
-    void ptyWrite(id, data).catch(() => {});
+    inputChain = inputChain
+      .then(async () => {
+        if ((data.includes("\r") || data.includes("\n")) && opts.onUserSubmit) {
+          try {
+            await opts.onUserSubmit();
+          } catch {
+            // Keep the already-typed prompt at the agent input. Its Enter is
+            // withheld so the user can retry after the owner surfaces the
+            // checkpoint failure.
+            return;
+          }
+        }
+        await ptyWrite(id, data);
+      })
+      .catch(() => {});
   });
   const resizeSub = term.onResize(({ cols, rows }) => {
     lastDockFitDims = { cols, rows };
@@ -262,8 +292,9 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
   // Activity fallback. A pane is considered watched whenever it is visible
   // in the foreground app: semantic completion is about unseen results, not
   // which split currently owns keyboard focus.
+  const semanticEnabled = Boolean(opts.agentKind || opts.discoverAgents);
   let tracker: ActivityTracker | null =
-    agent && opts.agentKind
+    semanticEnabled
       ? trackActivity(
           term,
           watched,
@@ -327,11 +358,11 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
   };
 
   const inspectSemanticScreen = () => {
-    if (!opts.agentKind || !runtimeRegistered || disposed) return;
+    if (!semanticEnabled || !runtimeRegistered || disposed) return;
     const state = useAgentRuntimeStore.getState().states[id];
     if (!state) return;
     const generation = state.generation;
-    const classification = classifyAgentScreen(opts.agentKind, logicalScreenTail());
+    const classification = classifyAgentScreen(state.kind, logicalScreenTail());
     const delay = classification.strong
       ? 0
       : classification.lifecycle === "idle"
@@ -345,11 +376,11 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       applyAgentScreen(id, generation, classification, watched());
     }, delay);
   };
-  const semanticSub = opts.agentKind ? term.onWriteParsed(inspectSemanticScreen) : null;
+  const semanticSub = semanticEnabled ? term.onWriteParsed(inspectSemanticScreen) : null;
   const onWindowFocus = () => {
     if (el.offsetParent !== null) acknowledgeAgentRuntime(id);
   };
-  if (opts.agentKind) window.addEventListener("focus", onWindowFocus);
+  if (semanticEnabled) window.addEventListener("focus", onWindowFocus);
 
   // Attach listeners BEFORE spawning so no early output is lost; guard
   // every await against dispose-before-resolve (listen() resolves late).
@@ -505,6 +536,22 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       else pendingInput += data;
     },
 
+    async sendPrompt(text) {
+      if (disposed || exited) {
+        throw new Error("The terminal is no longer live.");
+      }
+      const data = terminalPromptInput(text, term.modes.bracketedPasteMode);
+      const write = inputChain.then(async () => {
+        if (disposed || exited) throw new Error("The terminal is no longer live.");
+        if (shellReady) await ptyWrite(id, data);
+        else pendingInput += data;
+      });
+      // Programmatic prompts share the same ordering boundary as keystrokes,
+      // so a paste cannot interleave with user input already headed to the PTY.
+      inputChain = write.catch(() => {});
+      await write;
+    },
+
     readTail,
 
     runTrackedCommand(command, runId) {
@@ -549,7 +596,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       semanticSub?.dispose();
       trackedMarkerSub.dispose();
       cancelTracked();
-      if (opts.agentKind) window.removeEventListener("focus", onWindowFocus);
+      if (semanticEnabled) window.removeEventListener("focus", onWindowFocus);
       unRuntime?.();
       if (semanticTimer !== null) window.clearTimeout(semanticTimer);
       if (tracker) {

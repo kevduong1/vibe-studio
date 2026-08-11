@@ -17,8 +17,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use parking_lot::{Condvar, Mutex};
@@ -63,6 +64,72 @@ pub struct PtyState {
     sessions: Mutex<HashMap<String, PtySession>>,
 }
 
+/// Bounded health/version probe for a binary already resolved through the
+/// user's login-shell PATH. No shell is involved and no repository input is
+/// passed as an argument.
+#[tauri::command]
+pub async fn executable_version(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let executable = std::path::Path::new(&path);
+        if !executable.is_absolute() || !executable.is_file() {
+            return Err("executable path must be an absolute file".to_string());
+        }
+        let mut child = Command::new(executable)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("version probe failed: {error}"))?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if child
+                .try_wait()
+                .map_err(|error| error.to_string())?
+                .is_some()
+            {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|error| error.to_string())?;
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let text = if stdout.trim().is_empty() {
+                    stderr.trim()
+                } else {
+                    stdout.trim()
+                };
+                if !output.status.success() {
+                    return Err(if text.is_empty() {
+                        format!("version probe exited with {}", output.status)
+                    } else {
+                        text.lines()
+                            .next()
+                            .unwrap_or("version probe failed")
+                            .chars()
+                            .take(240)
+                            .collect()
+                    });
+                }
+                return Ok(text
+                    .lines()
+                    .next()
+                    .unwrap_or("Available")
+                    .chars()
+                    .take(240)
+                    .collect());
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("version probe timed out".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentProcessTarget {
@@ -83,6 +150,10 @@ struct ProcessRow {
 pub struct AgentProcessInfo {
     pid: u32,
     parent_pid: u32,
+    /// Nearest matching agent ancestor, skipping non-agent helper processes.
+    parent_agent_pid: Option<u32>,
+    /// First matching agent below this PTY shell.
+    root_agent_pid: u32,
     executable: String,
     foreground: bool,
 }
@@ -126,25 +197,35 @@ fn matching_descendants(
     for row in rows {
         children.entry(row.parent_pid).or_default().push(row.pid);
     }
-    let mut stack = vec![shell_pid];
+    let mut stack = vec![(shell_pid, None, None)];
     let mut seen = HashSet::new();
     let mut result = Vec::new();
-    while let Some(pid) = stack.pop() {
+    while let Some((pid, parent_agent_pid, root_agent_pid)) = stack.pop() {
         if !seen.insert(pid) {
             continue;
         }
+        let mut next_parent_agent_pid = parent_agent_pid;
+        let mut next_root_agent_pid = root_agent_pid;
         if let Some(row) = by_pid.get(&pid) {
             if pid != shell_pid && names.contains(row.executable.as_str()) {
+                let root = root_agent_pid.unwrap_or(pid);
                 result.push(AgentProcessInfo {
                     pid: row.pid,
                     parent_pid: row.parent_pid,
+                    parent_agent_pid,
+                    root_agent_pid: root,
                     executable: row.executable.clone(),
                     foreground: foreground_pgid == Some(row.process_group),
                 });
+                next_parent_agent_pid = Some(pid);
+                next_root_agent_pid = Some(root);
             }
         }
         if let Some(kids) = children.get(&pid) {
-            stack.extend(kids);
+            stack.extend(
+                kids.iter()
+                    .map(|child| (*child, next_parent_agent_pid, next_root_agent_pid)),
+            );
         }
     }
     result.sort_by_key(|process| (!process.foreground, process.pid));
@@ -609,10 +690,30 @@ mod tests {
             vec![AgentProcessInfo {
                 pid: 21,
                 parent_pid: 20,
+                parent_agent_pid: None,
+                root_agent_pid: 21,
                 executable: "claude".into(),
                 foreground: true,
             }]
         );
+    }
+
+    #[test]
+    fn distinguishes_agent_children_from_shell_siblings() {
+        let rows = parse_process_table(
+            "10 1 10 /bin/zsh\n20 10 20 /usr/local/bin/codex\n21 20 20 /bin/node\n22 21 20 /usr/local/bin/codex\n30 10 30 /usr/local/bin/codex\n",
+        );
+        let names = HashSet::from(["codex"]);
+        let processes = matching_descendants(&rows, 10, Some(20), &names);
+        assert_eq!(processes.len(), 3);
+        assert_eq!(processes[0].pid, 20);
+        assert_eq!(processes[0].parent_agent_pid, None);
+        assert_eq!(processes[1].pid, 22);
+        assert_eq!(processes[1].parent_agent_pid, Some(20));
+        assert_eq!(processes[1].root_agent_pid, 20);
+        assert_eq!(processes[2].pid, 30);
+        assert_eq!(processes[2].parent_agent_pid, None);
+        assert_eq!(processes[2].root_agent_pid, 30);
     }
 
     #[test]

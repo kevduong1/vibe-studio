@@ -8,6 +8,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { AgentRuntimeState } from "./agentState";
 
 // ---------------------------------------------------------------------------
 // Localhost preview types
@@ -148,6 +149,8 @@ export interface GitReviewSnapshot {
   baseAncestry: "same" | "ahead" | "diverged" | "unavailable";
   changedFiles: string[];
   conflictedFiles: string[];
+  /** Opaque per-path hashes for latest-turn comparison; never file contents. */
+  fileFingerprints: Record<string, string>;
   /** SHA-256 over HEAD plus sorted staged/worktree/untracked content. */
   fingerprint: string;
 }
@@ -182,7 +185,7 @@ export interface CommitFile {
   status: StatusCode;
 }
 
-export type DiffKind = "worktree" | "staged" | "commit";
+export type DiffKind = "worktree" | "staged" | "commit" | "checkpoint";
 
 export interface DiffPayload {
   oldText: string;
@@ -210,6 +213,22 @@ export interface RepoInfo {
   root: string;
   /** Opaque presentation identity for equivalent clone/worktree header tabs. */
   tabGroupId: string;
+}
+
+export interface GitWorktree {
+  path: string;
+  head: string | null;
+  branch: string | null;
+  detached: boolean;
+  locked: boolean;
+  prunable: boolean;
+  /** The primary checkout, which is never removable through task cleanup. */
+  main: boolean;
+}
+
+export interface GitWorktreeCreateResult {
+  worktree: GitWorktree;
+  baseCommit: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +290,34 @@ export interface SearchResult {
 export const gitOpen = (path: string): Promise<RepoInfo> =>
   invoke("git_open", { path });
 
+export const gitWorktreeList = (repoPath: string): Promise<GitWorktree[]> =>
+  invoke("git_worktree_list", { repoPath });
+
+export const gitWorktreeOpen = (repoPath: string, path: string): Promise<RepoInfo> =>
+  invoke("git_worktree_open", { repoPath, path });
+
+export const gitWorktreeCreate = (
+  repoPath: string,
+  path: string,
+  branch: string | null,
+  base: string,
+  includeIgnored: string[],
+): Promise<GitWorktreeCreateResult> =>
+  invoke("git_worktree_create", { repoPath, path, branch, base, includeIgnored });
+
+/** Remove the checkout only; its branch is intentionally retained. */
+export const gitWorktreeRemove = (
+  repoPath: string,
+  path: string,
+  force = false,
+): Promise<void> => invoke("git_worktree_remove", { repoPath, path, force });
+
+/** Merge a clean, committed task checkout into its clean parent checkout. */
+export const gitWorktreeMerge = (
+  parentPath: string,
+  worktreePath: string,
+): Promise<void> => invoke("git_worktree_merge", { parentPath, worktreePath });
+
 export const gitReviewSnapshot = (
   repoPath: string,
   baseHead?: string | null,
@@ -282,6 +329,10 @@ export const gitReviewSnapshot = (
  * captured unborn repository, while rejection means no boundary was proven. */
 export const gitReviewHead = (repoPath: string): Promise<string | null> =>
   invoke("git_review_head", { repoPath });
+
+/** Unreachable Git tree snapshot made through a private temporary index. */
+export const gitCheckpointCreate = (repoPath: string): Promise<string> =>
+  invoke("git_checkpoint_create", { repoPath });
 
 export const gitStatus = (repoPath: string): Promise<StatusResult> =>
   invoke("git_status", { repoPath });
@@ -323,6 +374,7 @@ export const gitCommitFiles = (
  *  - worktree: index (or HEAD if not in index) vs working tree
  *  - staged:   HEAD vs index
  *  - commit:   first parent of `oid` vs `oid` (oid required)
+ *  - checkpoint: private checkpoint tree `oid` vs current worktree (read-only)
  * For renames pass `origPath` so the old side is read from the pre-rename
  * path instead of showing a whole-file add.
  */
@@ -573,6 +625,82 @@ export const ptyResize = (
 
 export const ptyKill = (id: string): Promise<void> => invoke("pty_kill", { id });
 
+/** Bounded `<resolved executable> --version` health probe. */
+export const executableVersion = (path: string): Promise<string> =>
+  invoke("executable_version", { path });
+
+export interface NativeSessionCandidate {
+  id: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+/** Opaque Codex thread ids created in an exact checkout after a launch
+ * boundary. No prompt, title, preview, or transcript data crosses IPC. */
+export const codexNativeSessionCandidates = (
+  projectPath: string,
+  branch: string | null,
+  createdAfterMs: number,
+): Promise<NativeSessionCandidate[]> =>
+  invoke("codex_native_session_candidates", { projectPath, branch, createdAfterMs });
+
+export const codexNativeSessionExists = (
+  projectPath: string,
+  id: string,
+): Promise<boolean> => invoke("codex_native_session_exists", { projectPath, id });
+
+export interface AgentControlRequest {
+  requestId: string;
+  action: "focus" | "prompt" | "start";
+  terminalId: string | null;
+  generation: number | null;
+  text: string | null;
+  mode: "queue" | "steer" | null;
+  workspacePath: string | null;
+  kind: "claude" | "codex" | null;
+  taskName: string | null;
+  isolated: boolean;
+}
+
+export interface AgentControlInfo {
+  socketPath: string;
+  tokenPath: string;
+  cliPath: string;
+  skillPath: string;
+}
+
+export const agentControlSync = (agents: AgentRuntimeState[]): Promise<void> =>
+  invoke("agent_control_sync", { agents });
+
+export const agentControlRespond = (
+  requestId: string,
+  ok: boolean,
+  result?: unknown,
+  error?: string,
+): Promise<void> => invoke("agent_control_respond", {
+  requestId,
+  ok,
+  result: result ?? null,
+  error: error ?? null,
+});
+
+export const agentControlInfo = (): Promise<AgentControlInfo> =>
+  invoke("agent_control_info");
+
+export const onAgentControlRequest = (
+  callback: (request: AgentControlRequest) => void,
+): Promise<UnlistenFn> => listen<AgentControlRequest>(
+  "agent-control-request",
+  (event) => callback(event.payload),
+);
+
+export const onAgentControlCancel = (
+  callback: (requestId: string) => void,
+): Promise<UnlistenFn> => listen<string>(
+  "agent-control-cancel",
+  (event) => callback(event.payload),
+);
+
 /**
  * Flow control: acknowledge `bytes` of PTY output as consumed (xterm finished
  * parsing them). The Rust reader thread parks once too many bytes are in
@@ -591,6 +719,10 @@ export interface AgentProcessTarget {
 export interface AgentProcessInfo {
   pid: number;
   parentPid: number;
+  /** Nearest matching agent ancestor; helper processes are skipped. */
+  parentAgentPid: number | null;
+  /** First matching agent process below the PTY shell. */
+  rootAgentPid: number;
   executable: string;
   foreground: boolean;
 }

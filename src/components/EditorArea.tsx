@@ -18,6 +18,11 @@ import { useUiStore } from "../stores/ui";
 import { statusColor } from "../lib/status";
 import { copyText } from "../lib/clipboard";
 import { fsReveal } from "../lib/ipc";
+import {
+  currentEditorSelection,
+  sendEditorContextToAgent,
+} from "../lib/editorAgentContext";
+import { message } from "@tauri-apps/plugin-dialog";
 import { isMarkdownPath } from "../lib/path";
 import { ContextMenu } from "./ContextMenu";
 import PreviewPane from "./PreviewPane";
@@ -132,6 +137,12 @@ function TabMenu({
     onClose();
     void closeTabsSafely(ws.editor, ids);
   };
+  const sendContext = (context: Parameters<typeof sendEditorContextToAgent>[1]) => {
+    onClose();
+    void sendEditorContextToAgent(ws.path, context).catch((error) =>
+      message(String(error), { title: "Send to Agent", kind: "error" }),
+    );
+  };
   return (
     <ContextMenu x={x} y={y} onClose={onClose}>
       <button onClick={() => close([tab.id])}>Close</button>
@@ -150,6 +161,22 @@ function TabMenu({
       <button onClick={() => close(tabs.map((t) => t.id))}>Close All</button>
       {tab.kind === "file" && (
         <>
+          <div className="ctx-menu-sep" />
+          <button
+            onClick={() => {
+              const selection = currentEditorSelection(ws.path, tab.id);
+              if (selection) sendContext({ kind: "selection", selection });
+              else {
+                onClose();
+                void message("Select text in the editor first.", { title: "Send Selection to Agent" });
+              }
+            }}
+          >
+            Send Selection to Agent
+          </button>
+          <button onClick={() => sendContext({ kind: "file", path: tab.path })}>
+            Send File to Agent
+          </button>
           <div className="ctx-menu-sep" />
           <button
             onClick={() => {
@@ -179,6 +206,18 @@ function TabMenu({
             }}
           >
             Reveal in Finder
+          </button>
+        </>
+      )}
+      {tab.kind === "diff" && (
+        <>
+          <div className="ctx-menu-sep" />
+          <button onClick={() => sendContext({
+            kind: "diff",
+            path: tab.diff.path,
+            diffKind: tab.diff.kind,
+          })}>
+            Send Diff to Agent
           </button>
         </>
       )}

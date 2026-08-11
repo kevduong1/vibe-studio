@@ -236,3 +236,9 @@
   /* @keyframes spin lives in theme.css */
   animation: spin 1s linear infinite;
 }
+.ws-task-menu-label {
+  padding: 5px 10px 3px;
+  color: var(--fg-faint);
+  font-size: var(--font-size-sm);
+  text-transform: capitalize;
+}

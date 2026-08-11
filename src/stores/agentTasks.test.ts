@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 import type { GitReviewSnapshot } from "../lib/ipc";
 import type { AgentRuntimeState } from "../lib/agentState";
 import {
+  beginCheckRun,
   checkStateFor,
+  changedReviewPaths,
   inboxTier,
   isInboxActionable,
   nextActionableId,
   reviewStateFor,
   sortInboxItems,
+  updateCheckRun,
+  useAgentTasksStore,
+  type CheckRun,
   type AgentInboxItem,
   type AgentTask,
 } from "./agentTasks";
@@ -30,6 +35,7 @@ const task = (state: AgentTask["reviewState"], updatedAt = 10): AgentTask => ({
   workspacePath: "/repo/t",
   scope: "workspace",
   kind: "claude",
+  isolatedTaskId: null,
   createdAt: 1,
   updatedAt,
   lastRefreshedAt: null,
@@ -44,6 +50,9 @@ const task = (state: AgentTask["reviewState"], updatedAt = 10): AgentTask => ({
   autoRun: false,
   latestSnapshot: null,
   latestFingerprint: null,
+  turnBaseFileFingerprints: null,
+  turnBaseTree: null,
+  latestTurnChangedFiles: [],
   reviewedFingerprint: null,
   feedbackFingerprint: null,
   acceptedFingerprint: null,
@@ -63,11 +72,39 @@ const snapshot = (patch: Partial<GitReviewSnapshot> = {}): GitReviewSnapshot => 
   baseAncestry: "same",
   changedFiles: ["a.ts"],
   conflictedFiles: [],
+  fileFingerprints: { "a.ts": "file-fp" },
   fingerprint: "fp",
   ...patch,
 });
 
 describe("agent review state", () => {
+  it("pins check evidence to the terminal occupant generation", () => {
+    useAgentTasksStore.setState({ tasks: { t: task("unreviewed") } });
+    const run: CheckRun = {
+      id: "run",
+      pipelineLabel: "test",
+      source: "manual",
+      status: "running",
+      startedAt: 1,
+      finishedAt: null,
+      fingerprint: null,
+      nodes: [],
+    };
+    beginCheckRun("t", 2, run);
+    expect(useAgentTasksStore.getState().tasks.t.checkRuns).toEqual([]);
+    beginCheckRun("t", 1, run);
+    updateCheckRun("t", 2, { ...run, status: "failed" });
+    expect(useAgentTasksStore.getState().tasks.t.checkRuns[0].status).toBe("running");
+    useAgentTasksStore.setState({ tasks: {} });
+  });
+
+  it("derives latest-turn paths from opaque per-file fingerprints", () => {
+    expect(changedReviewPaths(
+      { "same.ts": "1", "edited.ts": "before", "removed.ts": "old" },
+      { "same.ts": "1", "edited.ts": "after", "added.ts": "new" },
+    )).toEqual(["added.ts", "edited.ts", "removed.ts"]);
+  });
+
   it("tracks human decisions by fingerprint and marks changed approvals stale", () => {
     const base = task("unreviewed");
     expect(reviewStateFor(base, snapshot({ changedFiles: [] }))).toBe("clean");

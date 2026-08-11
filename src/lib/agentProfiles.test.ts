@@ -103,7 +103,7 @@ describe("agent screen profiles", () => {
     }
   });
 
-  it("bounds snapshots to 40 logical lines and 16 KiB", () => {
+  it("bounds snapshots to 40 logical lines and 16,384 characters", () => {
     const tail = boundedLogicalTail(Array.from({ length: 80 }, (_, i) => `${i}:${"x".repeat(600)}`));
     expect(tail.length).toBeLessThanOrEqual(40);
     expect(tail.reduce((sum, line) => sum + line.length, 0)).toBeLessThanOrEqual(16 * 1024);

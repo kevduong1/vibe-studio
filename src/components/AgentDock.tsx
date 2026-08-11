@@ -31,9 +31,12 @@ import {
 } from "../lib/agentSessions";
 import { getSession } from "../lib/termSessions";
 import { setTerminalNotifications } from "../lib/agentNotifications";
+import { copyText } from "../lib/clipboard";
 import { useProjectColorVar } from "../lib/projectColors";
 import { Dock, type DockPaneProps } from "./Dock";
 import { ContextMenu } from "./ContextMenu";
+import { AgentSubagents } from "./AgentSubagents";
+import { requestAgentLaunch } from "./AgentLaunchDialog";
 import {
   ActivityGlyph,
   IcBell,
@@ -103,6 +106,7 @@ const AgentPane = memo(function AgentPane({
   const activeProject = useWorkspacesStore(
     (s) => s.activePath === terminal.workspacePath,
   );
+  const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
 
   // Mount = attach the (possibly already-running) session; unmount = detach
   // ONLY. Disposal happens exclusively through closeAgentTerminal — drag
@@ -138,6 +142,9 @@ const AgentPane = memo(function AgentPane({
     >
       <div className="dock-pane-host" ref={hostRef} />
       <AgentBadge terminal={terminal} connected={connected} />
+      {(terminal.kind !== "shell" || runtime?.occupancy === "present") && (
+        <AgentSubagents terminalId={terminal.id} />
+      )}
     </div>
   );
 });
@@ -145,7 +152,10 @@ const AgentPane = memo(function AgentPane({
 function AgentTabIcon({ terminal }: { terminal: AgentTerminal }) {
   const projectColor = useProjectColorVar(terminal.workspacePath);
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
-  if (terminal.kind === "shell") {
+  const kind = terminal.kind === "shell" && runtime?.occupancy === "present"
+    ? runtime.kind
+    : terminal.kind;
+  if (kind === "shell") {
     return <IcTerminal style={{ color: projectColor }} />;
   }
   return (
@@ -154,10 +164,10 @@ function AgentTabIcon({ terminal }: { terminal: AgentTerminal }) {
       title={
         runtime
           ? agentStateTooltip(runtime)
-          : `${terminal.kind === "claude" ? "Claude" : "Codex"} — No Agent`
+        : `${kind === "claude" ? "Claude" : "Codex"} — No Agent`
       }
     >
-      {terminal.kind === "claude" ? (
+      {kind === "claude" ? (
         <IcClaude style={{ color: projectColor }} />
       ) : (
         <IcCodex style={{ color: projectColor }} />
@@ -169,7 +179,8 @@ function AgentTabIcon({ terminal }: { terminal: AgentTerminal }) {
 function AgentTabBadge({ terminal }: { terminal: AgentTerminal }) {
   const connected = useConnected(terminal.workspacePath);
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
-  const activity = terminal.kind === "shell" ? "absent" : displayAgentState(runtime);
+  const agentPresent = terminal.kind !== "shell" || runtime?.occupancy === "present";
+  const activity = agentPresent ? displayAgentState(runtime) : "absent";
   const showStatus = activity !== "idle" && activity !== "unknown";
   const projectColor = useProjectColorVar(terminal.workspacePath);
   // Live store read (AgentTabMenu pattern) — the toggle must reflect
@@ -179,7 +190,7 @@ function AgentTabBadge({ terminal }: { terminal: AgentTerminal }) {
   );
   return (
     <>
-      {terminal.kind !== "shell" && showStatus && (
+      {agentPresent && showStatus && (
         <span
           className="dock-tab-agent-status"
           title={
@@ -219,6 +230,17 @@ function AgentTabMenu({
   );
   return (
     <ContextMenu x={x} y={y} onClose={onClose}>
+      <button onClick={() => {
+        const tail = getSession(terminalId)?.readTail(50, 16_384).join("\n") ?? "";
+        void copyText(tail);
+        onClose();
+      }}>Copy Last 50 Lines</button>
+      <button onClick={() => {
+        const tail = getSession(terminalId)?.readTail(12, 4096).join("\n") ?? "Terminal no longer available";
+        window.dispatchEvent(new CustomEvent("vibe:open-agent-inbox", { detail: { message: tail } }));
+        onClose();
+      }}>Open Last 12 Lines</button>
+      <div className="ctx-menu-sep" />
       <button
         onClick={() => {
           onClose();
@@ -253,14 +275,14 @@ function AgentEmpty() {
         <button
           className="primary-btn"
           disabled={!activePath}
-          onClick={() => activePath && openGlobalTerminal(activePath, "claude")}
+          onClick={() => activePath && requestAgentLaunch({ workspacePath: activePath, scope: "global", kind: "claude" })}
         >
           <IcSparkle /> Claude Agent
         </button>
         <button
           className="primary-btn"
           disabled={!activePath}
-          onClick={() => activePath && openGlobalTerminal(activePath, "codex")}
+          onClick={() => activePath && requestAgentLaunch({ workspacePath: activePath, scope: "global", kind: "codex" })}
         >
           <IcSparkle /> Codex Agent
         </button>
@@ -292,7 +314,8 @@ export default function AgentDock({ groupingId }: { groupingId: string }) {
         onSelectTerminal={(t) => void switchToProject(t.workspacePath)}
         onTabContextMenu={(t, e) => {
           e.preventDefault();
-          if (t.kind !== "shell")
+          const runtime = useAgentRuntimeStore.getState().states[t.id];
+          if (t.kind !== "shell" || runtime?.occupancy === "present")
             setTabMenu({ id: t.id, x: e.clientX, y: e.clientY });
         }}
         closeTerminal={closeAgentTerminal}

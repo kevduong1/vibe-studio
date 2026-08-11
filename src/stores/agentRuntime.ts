@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import { agentProcessSnapshot, type AgentProcessTarget } from "../lib/ipc";
+import {
+  agentProcessSnapshot,
+  type AgentProcessInfo,
+  type AgentProcessTarget,
+} from "../lib/ipc";
 import { AGENT_PROFILES, type ScreenClassification } from "../lib/agentProfiles";
 import {
   displayAgentState,
@@ -22,8 +26,29 @@ interface FallbackSignal {
   activity: AgentActivitySignal;
 }
 
+export interface AgentSubagentProcess {
+  /** Stable only for this occupant generation; never persisted. */
+  id: string;
+  pid: number;
+  parentPid: number;
+  executable: string;
+  foreground: boolean;
+}
+
+const NO_SUBAGENT_PROCESSES: readonly AgentSubagentProcess[] = [];
+
+/** Stable selector fallback: useSyncExternalStore requires referentially
+ * stable snapshots when a terminal has no child processes. */
+export const selectAgentSubagents = (
+  state: { subagents: Record<string, AgentSubagentProcess[]> },
+  terminalId: string,
+): readonly AgentSubagentProcess[] =>
+  state.subagents[terminalId] ?? NO_SUBAGENT_PROCESSES;
+
 interface AgentRuntimeStore {
   states: Record<string, AgentRuntimeState>;
+  /** Additional matching agent processes below the primary occupant. */
+  subagents: Record<string, AgentSubagentProcess[]>;
 }
 
 export interface AgentSemanticTransition {
@@ -32,9 +57,52 @@ export interface AgentSemanticTransition {
 }
 
 const fallbacks = new Map<string, FallbackSignal>();
+/** Plain-shell tabs participate in process discovery without claiming a
+ * requested agent identity until an exact executable match is present. */
+const discoveryTerminals = new Set<string>();
 const listeners = new Set<(transition: AgentSemanticTransition) => void>();
 
-export const useAgentRuntimeStore = create<AgentRuntimeStore>(() => ({ states: {} }));
+export const useAgentRuntimeStore = create<AgentRuntimeStore>(() => ({
+  states: {},
+  subagents: {},
+}));
+
+const replaceSubagents = (
+  terminalId: string,
+  primaryPid: number | undefined,
+  processes: AgentProcessInfo[],
+): void => {
+  const generation = useAgentRuntimeStore.getState().states[terminalId]?.generation ?? 0;
+  const next = primaryPid === undefined
+    ? []
+    : processes
+        .filter((process) => process.pid !== primaryPid)
+        .map((process) => ({
+          id: `${terminalId}:${generation}:${process.pid}`,
+          pid: process.pid,
+          parentPid: process.parentPid,
+          executable: process.executable,
+          foreground: process.foreground,
+        }))
+        .sort((a, b) => Number(b.foreground) - Number(a.foreground) || a.pid - b.pid);
+  useAgentRuntimeStore.setState((store) => {
+    const previous = store.subagents[terminalId] ?? [];
+    if (
+      previous.length === next.length &&
+      previous.every((item, index) =>
+        item.id === next[index].id &&
+        item.pid === next[index].pid &&
+        item.parentPid === next[index].parentPid &&
+        item.executable === next[index].executable &&
+        item.foreground === next[index].foreground,
+      )
+    ) return store;
+    const subagents = { ...store.subagents };
+    if (next.length > 0) subagents[terminalId] = next;
+    else delete subagents[terminalId];
+    return { subagents };
+  });
+};
 
 const emit = (previous?: AgentRuntimeState, current?: AgentRuntimeState) => {
   if (previous === current) return;
@@ -97,10 +165,12 @@ export function registerAgentRuntime(meta: {
   workspacePath: string;
   scope: "global" | "workspace";
   kind: AgentKind;
+  discovery?: boolean;
 }): void {
   if (useAgentRuntimeStore.getState().states[meta.terminalId]) return;
+  const { discovery, ...runtimeMeta } = meta;
   replaceState(meta.terminalId, {
-    ...meta,
+    ...runtimeMeta,
     occupancy: "absent",
     generation: 0,
     lifecycle: "unknown",
@@ -110,11 +180,14 @@ export function registerAgentRuntime(meta: {
   fallbacks.set(meta.terminalId, {
     activity: { busy: false, attention: false },
   });
+  if (discovery) discoveryTerminals.add(meta.terminalId);
   ensureMonitor();
 }
 
 export function unregisterAgentRuntime(terminalId: string): void {
   fallbacks.delete(terminalId);
+  discoveryTerminals.delete(terminalId);
+  replaceSubagents(terminalId, undefined, []);
   replaceState(terminalId, undefined);
   stopMonitorIfEmpty();
 }
@@ -273,6 +346,43 @@ export function applyAgentProcessResult(
   );
 }
 
+export function applyAgentProcessSnapshot(
+  terminalId: string,
+  processes: AgentProcessInfo[],
+  queryGeneration: number,
+): void {
+  const current = useAgentRuntimeStore.getState().states[terminalId];
+  if (!current || current.generation !== queryGeneration) return;
+  const discovery = discoveryTerminals.has(terminalId);
+  const candidateNames = discovery
+    ? ([...AGENT_PROFILES.claude.executableNames, ...AGENT_PROFILES.codex.executableNames] as string[])
+    : [...AGENT_PROFILES[current.kind].executableNames];
+  const matches = processes
+    .filter((process) => candidateNames.includes(process.executable))
+    .sort((a, b) => Number(b.foreground) - Number(a.foreground) || a.pid - b.pid);
+  const roots = matches.filter((process) => process.parentAgentPid == null);
+  const primary = roots.sort((a, b) => {
+    const aForeground = matches.some((process) => process.rootAgentPid === a.pid && process.foreground);
+    const bForeground = matches.some((process) => process.rootAgentPid === b.pid && process.foreground);
+    return Number(bForeground) - Number(aForeground) || a.pid - b.pid;
+  })[0];
+  const discoveredKind = primary
+    ? (AGENT_PROFILES.codex.executableNames.includes(primary.executable) ? "codex" : "claude")
+    : current.kind;
+  if (discovery && primary && current.kind !== discoveredKind) {
+    replaceState(terminalId, changed(current, { kind: discoveredKind }));
+  }
+  applyAgentProcessResult(terminalId, primary?.pid, queryGeneration);
+  replaceSubagents(
+    terminalId,
+    primary?.pid,
+    matches.filter((process) =>
+      process.rootAgentPid === primary?.pid &&
+      AGENT_PROFILES[discoveredKind].executableNames.includes(process.executable),
+    ),
+  );
+}
+
 export function markAgentProcessQueryFailed(terminalIds: readonly string[]): void {
   for (const id of terminalIds) {
     const current = useAgentRuntimeStore.getState().states[id];
@@ -288,6 +398,7 @@ export function markAgentProcessQueryFailed(terminalIds: readonly string[]): voi
         matchedRule: undefined,
       }),
     );
+    replaceSubagents(id, undefined, []);
   }
 }
 
@@ -298,7 +409,12 @@ export async function pollAgentProcesses(): Promise<void> {
   polling = true;
   const targets: AgentProcessTarget[] = states.map((state) => ({
     terminalId: state.terminalId,
-    executableNames: [...AGENT_PROFILES[state.kind].executableNames],
+    executableNames: discoveryTerminals.has(state.terminalId)
+      ? [...new Set([
+          ...AGENT_PROFILES.claude.executableNames,
+          ...AGENT_PROFILES.codex.executableNames,
+        ])]
+      : [...AGENT_PROFILES[state.kind].executableNames],
   }));
   const generations = new Map(states.map((state) => [state.terminalId, state.generation]));
   try {
@@ -306,10 +422,11 @@ export async function pollAgentProcesses(): Promise<void> {
     const byId = new Map(snapshots.map((snapshot) => [snapshot.terminalId, snapshot]));
     for (const state of states) {
       const snapshot = byId.get(state.terminalId);
-      const match = snapshot?.processes
-        .filter((process) => targets.find((target) => target.terminalId === state.terminalId)!.executableNames.includes(process.executable))
-        .sort((a, b) => Number(b.foreground) - Number(a.foreground))[0];
-      applyAgentProcessResult(state.terminalId, match?.pid, generations.get(state.terminalId)!);
+      applyAgentProcessSnapshot(
+        state.terminalId,
+        snapshot?.processes ?? [],
+        generations.get(state.terminalId)!,
+      );
     }
   } catch {
     markAgentProcessQueryFailed(states.map((state) => state.terminalId));

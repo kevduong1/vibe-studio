@@ -1,0 +1,16 @@
+.agent-launch-backdrop { position: fixed; inset: 0; z-index: 920; display: grid; place-items: center; background: var(--bg-backdrop); }
+.agent-launch-dialog { width: min(650px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; display: grid; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-overlay); box-shadow: 0 18px 60px rgb(0 0 0 / 55%); }
+.agent-launch-title { font-size: 17px; font-weight: 600; }
+.agent-launch-dialog label { display: grid; gap: 5px; color: var(--fg-dim); font-size: var(--font-size-sm); }
+.agent-launch-dialog input,
+.agent-launch-dialog select,
+.agent-launch-dialog textarea { min-width: 0; box-sizing: border-box; width: 100%; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-input); color: var(--fg); padding: 6px 8px; }
+.agent-launch-dialog textarea { min-height: 62px; resize: vertical; font-family: var(--font-mono); }
+.agent-launch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.agent-launch-health { color: var(--fg-dim); }
+.agent-launch-health.available { color: var(--success); }
+.agent-launch-health.missing,
+.agent-launch-error { color: var(--danger); }
+.agent-launch-command { overflow-wrap: anywhere; padding: 7px; border-radius: 4px; background: var(--bg-input); color: var(--fg-faint); }
+.agent-launch-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.agent-launch-actions .primary { background: var(--accent); border-color: var(--accent); color: var(--button-fg); }

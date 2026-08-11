@@ -3,10 +3,12 @@ import {
   acknowledgeAgentRuntime,
   applyAgentActivity,
   applyAgentProcessResult,
+  applyAgentProcessSnapshot,
   applyAgentScreen,
   markAgentLaunching,
   markAgentProcessQueryFailed,
   registerAgentRuntime,
+  selectAgentSubagents,
   selectTerminalRollup,
   selectWorkspaceRollup,
   unregisterAgentRuntime,
@@ -34,6 +36,12 @@ afterEach(() => {
 });
 
 describe("agent runtime transitions", () => {
+  it("returns one stable empty child-process snapshot", () => {
+    const first = selectAgentSubagents({ subagents: {} }, "missing");
+    const second = selectAgentSubagents({ subagents: {} }, "missing");
+    expect(first).toBe(second);
+  });
+
   it("transitions absent → starting → present", () => {
     register("a");
     expect(displayAgentState(state("a"))).toBe("absent");
@@ -84,6 +92,43 @@ describe("agent runtime transitions", () => {
     makePresent("a");
     applyAgentProcessResult("a", undefined, 1);
     expect(state("a")).toMatchObject({ occupancy: "absent", lifecycle: "unknown" });
+  });
+
+  it("exposes additional matching processes as generation-owned read-only subagents", () => {
+    register("a");
+    applyAgentProcessSnapshot("a", [
+      { pid: 10, parentPid: 1, parentAgentPid: null, rootAgentPid: 10, executable: "claude", foreground: true },
+      { pid: 11, parentPid: 10, parentAgentPid: 10, rootAgentPid: 10, executable: "claude", foreground: false },
+      { pid: 13, parentPid: 1, parentAgentPid: null, rootAgentPid: 13, executable: "claude", foreground: false },
+      { pid: 12, parentPid: 10, parentAgentPid: 10, rootAgentPid: 10, executable: "node", foreground: false },
+    ], 0);
+    expect(state("a")).toMatchObject({ occupantPid: 10, generation: 1 });
+    expect(useAgentRuntimeStore.getState().subagents.a).toEqual([
+      expect.objectContaining({ id: "a:1:11", pid: 11, executable: "claude" }),
+    ]);
+    applyAgentProcessSnapshot("a", [], 1);
+    expect(useAgentRuntimeStore.getState().subagents.a).toBeUndefined();
+  });
+
+  it("discovers the exact agent kind inside an ordinary shell", () => {
+    ids.add("shell");
+    registerAgentRuntime({
+      terminalId: "shell",
+      workspacePath: "/repo/a",
+      scope: "workspace",
+      kind: "claude",
+      discovery: true,
+    });
+    applyAgentProcessSnapshot("shell", [
+      { pid: 21, parentPid: 1, parentAgentPid: null, rootAgentPid: 21, executable: "node", foreground: false },
+      { pid: 22, parentPid: 1, parentAgentPid: null, rootAgentPid: 22, executable: "codex", foreground: true },
+    ], 0);
+    expect(state("shell")).toMatchObject({
+      kind: "codex",
+      occupancy: "present",
+      occupantPid: 22,
+      generation: 1,
+    });
   });
 
   it("uses unknown rather than false absence on process-query failure", () => {

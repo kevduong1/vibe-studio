@@ -39,6 +39,7 @@ import TerminalPanel from "./TerminalPanel";
 import AgentDock from "./AgentDock";
 import { Resizer } from "./Resizer";
 import { ContextMenu } from "./ContextMenu";
+import { requestAgentLaunch } from "./AgentLaunchDialog";
 import {
   ActivityGlyph,
   IcChevronDown,
@@ -357,8 +358,7 @@ function PanelHeader({ group }: { group: PanelGroup }) {
           <button
             onClick={() => {
               setCreateMenu(null);
-              if (group === "agent") openGlobalTerminal(activeWs.path, "claude");
-              else openWorkspaceTerminal(activeWs, "claude");
+              requestAgentLaunch({ workspacePath: activeWs.path, scope: group === "agent" ? "global" : "workspace", kind: "claude" });
             }}
           >
             New Claude Agent
@@ -366,8 +366,7 @@ function PanelHeader({ group }: { group: PanelGroup }) {
           <button
             onClick={() => {
               setCreateMenu(null);
-              if (group === "agent") openGlobalTerminal(activeWs.path, "codex");
-              else openWorkspaceTerminal(activeWs, "codex");
+              requestAgentLaunch({ workspacePath: activeWs.path, scope: group === "agent" ? "global" : "workspace", kind: "codex" });
             }}
           >
             New Codex Agent

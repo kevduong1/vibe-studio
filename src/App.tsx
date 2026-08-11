@@ -19,17 +19,23 @@ import { runTask } from "./lib/taskRunner";
 import TaskPicker from "./components/TaskPicker";
 import QuickOpen from "./components/QuickOpen";
 import SettingsModal from "./components/SettingsModal";
+import AgentLaunchDialog, { type AgentLaunchRequest } from "./components/AgentLaunchDialog";
+import WorktreeDialog from "./components/WorktreeDialog";
+import type { AgentLaunchProfile } from "./stores/agentDefinitions";
 import Titlebar from "./components/Titlebar";
 import StatusBar from "./components/StatusBar";
 import FileExplorer from "./components/FileExplorer";
 import SearchPanel from "./components/SearchPanel";
 import SourceControl from "./components/SourceControl";
 import MemoriesPanel from "./components/MemoriesPanel";
+import IsolatedTasksPanel from "./components/IsolatedTasksPanel";
 import EditorArea from "./components/EditorArea";
 import Panel from "./components/Panel";
 import { Resizer } from "./components/Resizer";
-import { IcBrain, IcBranch, IcFile, IcSearch } from "./components/icons";
+import { IcBrain, IcBranch, IcFile, IcRows, IcSearch } from "./components/icons";
 import { listenAgentNotificationActivations } from "./lib/agentInbox";
+import { listenNativeAgentSessionCapture } from "./lib/nativeAgentSessions";
+import { listenAgentControlPlane } from "./lib/agentControlPlane";
 
 /** Slim far-left icon strip for switching sidebar panels. */
 function ActivityBar() {
@@ -47,6 +53,13 @@ function ActivityBar() {
         onClick={() => setSidebarTab("explorer")}
       >
         <IcFile />
+      </button>
+      <button
+        className={`activity-btn ${active("tasks") ? "active" : ""}`}
+        title="Isolated Agent Tasks"
+        onClick={() => setSidebarTab("tasks")}
+      >
+        <IcRows />
       </button>
       <button
         className={`activity-btn ${active("search") ? "active" : ""}`}
@@ -148,6 +161,8 @@ function WorkspaceSidebarContent({ visible }: { visible: boolean }) {
         <FileExplorer />
       ) : sidebarTab === "search" ? (
         <SearchPanel />
+      ) : sidebarTab === "tasks" ? (
+        <IsolatedTasksPanel />
       ) : sidebarTab === "memories" ? (
         <MemoriesPanel />
       ) : (
@@ -185,6 +200,8 @@ export default function App() {
   // Native file drops onto terminal panes paste the shell-quoted paths
   // (image attachments for agent CLIs, plain paths for shells).
   useEffect(() => listenTermFileDrops(), []);
+  useEffect(() => listenNativeAgentSessionCapture(), []);
+  useEffect(() => listenAgentControlPlane(), []);
 
   useEffect(() => {
     let disposed = false;
@@ -232,6 +249,30 @@ export default function App() {
   // ⌘, settings. NOT workspace-bound: settings are global and must work
   // with zero workspaces open.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [agentLaunch, setAgentLaunch] = useState<AgentLaunchRequest | null>(null);
+  const [profileWorktree, setProfileWorktree] = useState<{
+    parent: Workspace;
+    profile: AgentLaunchProfile;
+  } | null>(null);
+
+  useEffect(() => {
+    const onLaunch = (event: Event) => {
+      setAgentLaunch((event as CustomEvent<AgentLaunchRequest>).detail);
+    };
+    window.addEventListener("vibe:launch-agent", onLaunch);
+    const onWorktree = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspacePath: string; profile: AgentLaunchProfile }>).detail;
+      const parent = useWorkspacesStore
+        .getState()
+        .workspaces.find((workspace) => workspace.path === detail.workspacePath);
+      if (parent) setProfileWorktree({ parent, profile: detail.profile });
+    };
+    window.addEventListener("vibe:new-worktree-agent", onWorktree);
+    return () => {
+      window.removeEventListener("vibe:launch-agent", onLaunch);
+      window.removeEventListener("vibe:new-worktree-agent", onWorktree);
+    };
+  }, []);
 
   // global keyboard shortcuts
   useEffect(() => {
@@ -380,6 +421,17 @@ export default function App() {
         <QuickOpen ws={quickOpen} onClose={() => setQuickOpen(null)} />
       )}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {agentLaunch && (
+        <AgentLaunchDialog request={agentLaunch} onClose={() => setAgentLaunch(null)} />
+      )}
+      {profileWorktree && (
+        <WorktreeDialog
+          parent={profileWorktree.parent}
+          mode="create-agent"
+          launchProfile={profileWorktree.profile}
+          onClose={() => setProfileWorktree(null)}
+        />
+      )}
     </div>
   );
 }

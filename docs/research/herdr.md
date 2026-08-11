@@ -54,12 +54,14 @@ task.
 
 Current limits:
 
-- Only dedicated Claude/Codex tabs are recognized; agents started in plain
-  shell tabs are not discovered.
-- Occupancy detection is macOS-first.
-- Screen profiles may need updates when agent CLIs change their interfaces.
-- There is no isolated worktree lifecycle, launch-profile UI, native session
-  identity, ACP integration, persistent task history, or external API.
+- Occupancy detection is macOS-first. Dedicated tabs and exact Claude/Codex
+  executables launched inside plain shell tabs are discovered.
+- Screen profiles are versioned and diagnosable, but still require fixture
+  updates when agent CLIs change their interfaces.
+- Native conversation identity is implemented only for unambiguous local Codex
+  threads. ACP and native subagent identity remain proposals.
+- Semantic/check history remains session-only. Isolated task/Git metadata,
+  plans, terminal recipes, and opaque native-session references persist.
 - PTYs still belong to the app process and do not survive application exit.
 
 ## Next: attention and review inbox
@@ -77,8 +79,8 @@ This is the smallest feature that turns semantic state into a workflow.
 - [x] Route macOS notification clicks to the exact terminal using the existing
   terminal notification identifier.
 - [x] Add a bounded, explicit terminal-tail peek for quick context.
-- [ ] Allow a quick reply only after prompt ownership and stale-occupant checks
-  are defined.
+- [x] Allow batched line-feedback reply only when the same live occupant
+  generation owns an idle or question-classified prompt.
 - [x] Keep lifecycle state separate from review state: Done means unseen idle,
   not tests passed or changes approved.
 
@@ -87,27 +89,27 @@ This is the smallest feature that turns semantic state into a workflow.
 Each substantial agent task should be able to own an isolated checkout and
 finish in Vibe Studio's native review UI.
 
-- [ ] Add Git worktree list/create/open/remove backend commands.
-- [ ] Add **New Worktree...**, **Open Worktree...**, and **New Worktree +
+- [x] Add Git worktree list/create/open/remove backend commands.
+- [x] Add **New Worktree...**, **Open Worktree...**, and **New Worktree +
   Agent...** actions.
-- [ ] Create worktrees under a configurable root and open them as ordinary Vibe
+- [x] Create worktrees under a configurable root and open them as ordinary Vibe
   Studio workspaces.
-- [ ] Record task ID, parent workspace, worktree path, base commit, branch,
+- [x] Record task ID, parent workspace, worktree path, base commit, branch,
   agent terminal, and cleanup provenance.
 - [x] Reuse the shipped related-workspace titlebar grouping.
-- [ ] Support repository-defined bootstrap/setup, an explicit ignored-file
+- [x] Support repository-defined bootstrap/setup, an explicit ignored-file
   include list, and distinct preview ports.
-- [ ] Bind agent sessions, diffs, checks, commits, diagnostics, task terminals,
+- [x] Bind agent sessions, diffs, checks, commits, diagnostics, task terminals,
   and preview servers to the owning task.
-- [ ] Add **Apply/Merge**, **Keep Branch**, **Archive**, and **Discard Task**
+- [x] Add **Apply/Merge**, **Keep Branch**, **Archive**, and **Discard Task**
   outcomes.
-- [ ] Keep closing a workspace, archiving a task, and deleting a checkout as
+- [x] Keep closing a workspace, archiving a task, and deleting a checkout as
   distinct operations.
-- [ ] Let Git reject dirty removal first, then require explicit confirmation
+- [x] Let Git reject dirty removal first, then require explicit confirmation
   before forcing it.
-- [ ] Refuse worktree removal while a live global terminal is bound to that
+- [x] Refuse worktree removal while a live global terminal is bound to that
   checkout, or require the user to stop/rebind it first.
-- [ ] Never delete the associated branch implicitly.
+- [x] Never delete the associated branch implicitly.
 
 ## Next: agent-owned review and checks
 
@@ -116,36 +118,37 @@ and evidence.
 
 - [x] Add a session-only `AgentTask` model with independent clean, unreviewed,
   reviewed, feedback, stale approval, and accepted human-review state, with
-  conflicts and check results surfaced independently.
-  Discard remains deferred until isolated worktrees.
+  conflicts and check results surfaced independently. Discard is implemented
+  through the isolated-worktree outcome flow.
 - [x] Record a base commit so task evidence has a stable shared-tree scope.
 - [x] Report check exit codes through a nonce-bound private terminal marker.
 - [x] Add task/check pipelines with parallel/sequential `dependsOn`; do not enable
   repository-controlled folder-open autorun without a trust model.
-- [ ] Combine whole-task diff, latest checkpoint/turn diff, checks, LSP
+- [x] Combine whole-task diff, latest checkpoint/turn diff, checks, LSP
   diagnostics, conflicts, commits, and preview status in one review surface.
-- [ ] Add line comments that can be batched into an agent follow-up.
+- [x] Add line comments that can be batched into an agent follow-up.
 - [x] Make merge readiness explicit; never infer approval from agent idleness.
-- [ ] Add a read-only review-agent action after launch profiles exist.
+- [x] Add a read-only review-agent action after launch profiles exist.
 
 ## Next: launch profiles and agent definitions
 
-The current Claude and `codex --yolo` commands are intentional fixed defaults.
-Keep them until a visible configuration flow replaces the fixed map.
+The built-in Claude and `codex --yolo` commands remain intentional defaults;
+the visible launch/configuration flow extends them without silently changing
+the initial Codex product decision.
 
-- [ ] Define typed agent metadata: executable, default arguments, transport,
+- [x] Define typed agent metadata: executable, default arguments, transport,
   detection profile, resume support, and structured capabilities.
-- [ ] Define launch profiles: model, reasoning, permission mode, sandbox,
-  environment, extra arguments, folder/worktree choice, and restore policy.
-- [ ] Add a launch sheet to the existing Claude/Codex buttons; keep
+- [x] Define launch profiles: model, reasoning, permission mode, sandbox,
+  environment, extra arguments, and folder/worktree choice.
+- [x] Add a launch sheet to the existing Claude/Codex buttons; keep
   `codex --yolo` as the initial default.
-- [ ] Add executable discovery through the user's login-shell environment and
+- [x] Add executable discovery through the user's login-shell environment and
   clear unavailable-agent guidance.
-- [ ] Support custom commands and a small preset set without hard-coding every
+- [x] Support custom commands and a small preset set without hard-coding every
   possible agent into core UI.
-- [ ] Persist definition IDs without silently coercing missing definitions to a
+- [x] Persist definition IDs without silently coercing missing definitions to a
   different agent.
-- [ ] Add an Integrations settings page with version, capability, and health
+- [x] Add an Integrations settings page with version, capability, and health
   reporting.
 
 ## Then: conversation continuity and checkpoints
@@ -153,46 +156,56 @@ Keep them until a visible configuration flow replaces the fixed map.
 Prefer restoring the agent's native conversation over persisting arbitrary
 terminal processes.
 
+The shipped Codex hook satisfies continuity without changing the universal
+terminal transport. ACP remains an explicit future interoperability item; none
+of the built-in definitions currently declares an ACP transport, so the app
+must not pretend process rows are native sessions or subagents.
+
 - [ ] Integrate one ACP-capable agent while retaining terminal/screen detection
   as the universal fallback.
-- [ ] Capture native session references through ACP or narrowly scoped
+- [x] Capture native session references through ACP or narrowly scoped
   agent-specific hooks; never scrape session IDs from terminal output.
-- [ ] Offer restore automatically, ask before restoring, and restore as shell.
-- [ ] Fall back to a fresh shell when a session reference is invalid or absent.
-- [ ] Add a searchable archive grouped by project, worktree, and task.
-- [ ] Distinguish archive from delete and retain lightweight task/Git metadata
+- [x] Offer restore automatically, ask before restoring, and restore as shell.
+- [x] Fall back to a fresh shell when a session reference is invalid or absent.
+- [x] Add a searchable archive grouped by project, worktree, and task.
+- [x] Distinguish archive from delete and retain lightweight task/Git metadata
   after disposable worktrees are removed.
-- [ ] For task-owned worktrees, snapshot before each user turn.
-- [ ] Keep restore code, restore conversation, fork, and compare as separate
+- [x] For task-owned worktrees, snapshot through a private Git index before
+  each prompt-owned user turn reaches the PTY.
+- [x] Keep restore code, restore conversation, fork, and compare as separate
   actions.
-- [ ] Clearly state that filesystem checkpoints cannot undo network calls,
+- [x] Clearly state that filesystem checkpoints cannot undo network calls,
   database mutations, or other external effects.
 
 ## Then: local automation and orchestration
 
 Only expose external control after IDs, ownership, and transitions are stable.
 
-- [ ] Define stable workspace, task, pane, occupant-generation, and native
+- [x] Define stable workspace, task, pane, occupant-generation, and native
   session identifiers.
-- [ ] Move or synchronize authoritative semantic state into Rust.
-- [ ] Add a local authenticated CLI/socket API for list, start, prompt, focus,
+- [x] Move or synchronize authoritative semantic state into Rust.
+- [x] Add a local authenticated CLI/socket API for list, start, prompt, focus,
   and state waits.
-- [ ] Use snapshot-then-ordered-events, explicit timeouts/cancellation, and
+- [x] Use snapshot-then-ordered-events, explicit timeouts/cancellation, and
   resnapshot on reconnect.
-- [ ] Make prompt-and-wait atomic and pin waits to the occupant generation that
+- [x] Make prompt-and-wait atomic and pin waits to the occupant generation that
   existed when the wait began.
-- [ ] Add project-scoped, short-lived capabilities instead of injecting a
+- [x] Add project-scoped, short-lived capabilities instead of injecting a
   global terminal-control credential into repository processes.
-- [ ] Provide a bundled agent skill documenting the command surface.
-- [ ] Add editable plans, dependencies, queue versus steer, and read-only
-  native subagent rows.
-- [ ] Run independent approved steps in separate task worktrees.
-- [ ] Add Best-of-N only after task isolation, checks, comparison, and cleanup
+- [x] Provide a bundled agent skill documenting the command surface.
+- [x] Add privacy-bounded, read-only child-agent process rows owned by the
+  terminal occupant generation.
+- [ ] Upgrade child rows to native subagent identity after ACP support exists.
+- [x] Add editable plans, dependencies, and explicit queue versus steer.
+- [x] Run independent approved steps in separate task worktrees.
+- [x] Add Best-of-N after task isolation, checks, comparison, and cleanup
   are dependable.
 
 ## Later: durable terminal runtime
 
 Do this only if native conversation restoration does not cover real demand.
+These items remain deliberately gated research, not missing work in the
+isolated-task/control-plane implementation.
 
 - [ ] Measure whether users need arbitrary shells and servers to survive app
   exit.
@@ -209,13 +222,13 @@ Do this only if native conversation restoration does not cover real demand.
 These are useful seams that can ship independently when they support the main
 roadmap:
 
-- [ ] Open localhost terminal links directly in Preview.
-- [ ] Add explicit copy/open-last-N-lines actions.
-- [ ] Persist workspace terminal recipes with an explicit run-on-restore
+- [x] Open localhost terminal links directly in Preview.
+- [x] Add explicit copy/open-last-N-lines actions.
+- [x] Persist workspace terminal recipes with an explicit run-on-restore
   policy.
-- [ ] Send an editor selection, file, or diff to an agent.
-- [ ] Discover Claude/Codex launched inside tabs created as plain shells.
-- [ ] Add versioned screen-profile updates and an internal explain/debug view.
+- [x] Send an editor selection, file, or diff to an agent.
+- [x] Discover Claude/Codex launched inside tabs created as plain shells.
+- [x] Add versioned screen-profile updates and an internal explain/debug view.
 
 ## Not priorities
 
@@ -252,6 +265,14 @@ roadmap:
   checks, and review.
 - [`pty.rs`](../../src-tauri/src/pty.rs): PTY ownership, process snapshots,
   backpressure, and child-environment isolation.
+- [`control.rs`](../../src-tauri/src/control.rs) and
+  [`agentControlPlane.ts`](../../src/lib/agentControlPlane.ts): authenticated
+  local automation, Rust snapshots/events/waits, and generation-checked
+  frontend actions. The complete contract is in
+  [`agent-control.md`](../architecture/agent-control.md).
+- [`agent_sessions.rs`](../../src-tauri/src/agent_sessions.rs) and
+  [`nativeAgentSessions.ts`](../../src/lib/nativeAgentSessions.ts):
+  privacy-bounded Codex conversation reference capture and validation.
 
 ## References
 

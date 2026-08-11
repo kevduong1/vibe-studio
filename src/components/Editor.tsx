@@ -14,6 +14,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { languages } from "@codemirror/language-data";
 import { fsReadFile, fsWriteFile, gitDiffFile, onRepoChanged } from "../lib/ipc";
 import { changeRuler, computeRulerMarks, setRulerMarks } from "../lib/cmChangeRuler";
+import { registerEditorSelection } from "../lib/editorAgentContext";
 import { lspExtension } from "../lib/lsp/cmLsp";
 import { getLspForFile, subscribeLspStatus, type WorkspaceLsp } from "../lib/lsp/servers";
 import { subscribeLspSettings } from "../lib/lsp/settings";
@@ -323,6 +324,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
     let unsubLspSettings: (() => void) | null = null;
     let unsubLspStatus: (() => void) | null = null;
     let unsubClosing: (() => void) | null = null;
+    let unregisterSelection: (() => void) | null = null;
     let diskTimer: ReturnType<typeof setTimeout> | null = null;
     let rulerTimer: ReturnType<typeof setTimeout> | null = null;
     /** Git HEAD content for the overview ruler; null = no ruler. */
@@ -480,6 +482,18 @@ export default function Editor({ tab }: { tab: FileTab }) {
 
       view = new EditorView({ doc, extensions, parent: hostRef.current! });
       viewRef.current = view;
+      unregisterSelection = registerEditorSelection(ws.path, tab.id, () => {
+        const current = viewRef.current;
+        if (!current) return null;
+        const range = current.state.selection.main;
+        if (range.empty) return null;
+        return {
+          path: tab.path,
+          text: current.state.sliceDoc(range.from, range.to),
+          fromLine: current.state.doc.lineAt(range.from).number,
+          toLine: current.state.doc.lineAt(range.to).number,
+        };
+      });
       savedRef.current =
         typeof savedDoc === "string" ? view.state.toText(savedDoc) : savedDoc;
       setLoading(false);
@@ -558,6 +572,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
       unsubLspSettings?.();
       unsubLspStatus?.();
       unsubClosing?.();
+      unregisterSelection?.();
       viewRef.current = null;
       // destroy() runs the LSP plugin's destroy → didClose; never close the
       // document anywhere else (a second close would desync the server's

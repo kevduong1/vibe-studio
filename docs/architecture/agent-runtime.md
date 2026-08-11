@@ -1,16 +1,16 @@
 # Semantic agent runtime
 
 This document is the source of truth for Vibe Studio's semantic state for
-dedicated Claude and Codex terminal tabs. It covers agent tabs in both the
-project-terminal dock and global terminal groupings.
+Claude and Codex processes. It covers dedicated agent tabs and agents
+discovered in plain shell tabs in both terminal docks.
 
 ## Scope
 
 Vibe Studio distinguishes the requested tab kind from the process currently
 inside it. A tab created for Claude may contain Claude, may be starting Claude,
-or may have returned to an ordinary shell after Claude exits. Version 1 only
-tracks dedicated Claude/Codex tabs; discovering agents inside tabs created as
-plain shells is separate work.
+or may have returned to an ordinary shell after Claude exits. Plain shell tabs
+opt into process discovery and acquire a dynamic Claude/Codex identity only
+while an exact supported executable is their PTY descendant.
 
 Runtime state is ephemeral. Global tab metadata and layouts persist, but PTYs
 and semantic state do not. After an app restart, restored agent tabs open as
@@ -44,15 +44,16 @@ owned by that grouping.
 ## Occupancy authority
 
 On macOS, the frontend runs one shared one-second monitor while any dedicated
-agent tabs are registered. One `pty_agent_process_snapshot` IPC call covers all
-registered terminal IDs. The Rust backend:
+or discovery-enabled shell tabs are registered. One
+`pty_agent_process_snapshot` IPC call covers all registered terminal IDs. The
+Rust backend:
 
 1. Reads each PTY's shell PID and foreground process group.
 2. Runs one `ps` snapshot.
 3. Groups descendants under the correct shell.
 4. Matches exact executable basenames from the typed Claude/Codex profiles.
-5. Returns only PID, parent PID, executable basename, and foreground
-   membership—never arguments or environment.
+5. Returns only PID, parent/root matching-agent PIDs, executable basename, and
+   foreground membership—never arguments or environment.
 
 A successful query with no match means `absent`. A query failure means
 `unknown`; it must never manufacture a false absence. Unsupported platforms
@@ -61,19 +62,21 @@ previous agent occupant.
 
 Fresh launches call `markAgentLaunching()` before typing `claude` or
 `codex --yolo` into the shell. Dedicated Codex tabs deliberately default to
-`--yolo` in both docks so they start fully autonomous. A future launch-profile
-UI may expose permission choices, but must preserve this default unless the
-product decision changes explicitly.
+`--yolo` in both docks so they start fully autonomous. The launch sheet exposes
+explicit permission/sandbox choices but preserves this initial default unless
+the product decision changes explicitly.
 
 ## Lifecycle authorities
 
 After xterm parses output, `termSession.ts` reads at most the bottom 40 logical
-lines and 16 KiB from the active normal or alternate-screen buffer. Wrapped
+lines and 16,384 characters from the active normal or alternate-screen buffer. Wrapped
 physical rows are joined before classification.
 
 `src/lib/agentProfiles.ts` contains independently authored profiles for Claude
 Code 2.1.226 and Codex CLI 0.147.0, including their structured multi-question
-overlays. Rules run in priority order:
+overlays. Every profile declares a schema version and authored-for CLI version;
+Settings exposes rule counts and current privacy-bounded match diagnostics.
+Rules run in priority order:
 
 1. Blocked prompts, with reasons such as permission, question, authentication,
    quota, or error.
@@ -137,6 +140,12 @@ state beside (never into) lifecycle state. Task ownership, review evidence,
 checks, and context-peek privacy are specified in
 [`attention-review.md`](attention-review.md).
 
+The frontend synchronizes this same privacy-bounded semantic snapshot into
+Rust for authenticated local automation. Rust does not reclassify terminal
+text: it stores ordered changes to occupancy, lifecycle, generation, reason,
+authority, and stable terminal/workspace identity. See
+[`agent-control.md`](agent-control.md).
+
 ## Alerts
 
 Notifications are opt-in per terminal. Global-tab toggles persist with global
@@ -190,7 +199,16 @@ snapshots, process arguments, environments, or matched evidence text.
 
 ## Explicit non-goals
 
-The current feature does not include plain-shell discovery, isolated worktree
-ownership, apply/merge/discard actions, quick reply, full diff comments, ACP,
-hooks, native session resume, custom launch profiles, persistent task history,
-or persistent PTYs. Those remain separate roadmap items.
+Additional matching agent descendants are exposed as ephemeral, read-only child
+agent process rows. Their stable row identity is terminal + occupant generation
++ PID; executable basename, PID, parent PID, and foreground membership are the
+only displayed fields. Rust also returns nearest/root matching-agent PIDs so
+shell siblings are not mislabeled as children; arguments, environments, and
+process text never cross the privacy boundary. These rows are not native
+conversation/subagent identity.
+
+The runtime does not include ACP-native subagent identity, persistent
+semantic/check history, or persistent PTYs. Isolated Codex tasks can retain an
+opaque native conversation reference through a narrow read-only hook, but that
+reference is task metadata rather than semantic runtime state. See
+[`isolated-agent-tasks.md`](isolated-agent-tasks.md).
