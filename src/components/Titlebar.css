@@ -1,13 +1,12 @@
 .titlebar {
   height: var(--titlebar-height);
   flex-shrink: 0;
-  background: var(--bg-titlebar);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-app);
   display: flex;
   align-items: center;
   /* clearance for the native macOS traffic lights */
-  padding-left: 86px;
-  padding-right: 10px;
+  padding-left: 82px;
+  padding-right: 8px;
   position: relative;
 }
 
@@ -16,7 +15,7 @@
 .titlebar-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -36,9 +35,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 4px 0 10px;
-  border-radius: 6px;
+  height: 30px;
+  padding: 0 5px 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   font-size: 12.5px;
   color: var(--fg-dim);
   cursor: default;
@@ -51,8 +51,10 @@
   color: var(--fg);
 }
 .ws-tab.active {
-  background: var(--bg-active);
+  background: var(--bg-elevated);
+  border-color: var(--border);
   color: var(--fg);
+  box-shadow: var(--shadow-sm), var(--shadow-inset);
 }
 .ws-tab > svg {
   width: 13px;
@@ -74,13 +76,13 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
 }
 
 .ws-tab-family.expanded {
-  padding: 1px 2px;
-  background: color-mix(in srgb, var(--bg-active) 55%, transparent);
-  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  padding: 2px;
+  background: var(--bg-surface);
+  box-shadow: inset 0 0 0 1px var(--border-subtle), var(--shadow-inset);
 }
 
 .ws-tab-folder-stack {
@@ -90,9 +92,9 @@
   gap: 2px;
   height: 20px;
   padding: 0 5px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+  background: var(--bg-surface);
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
   flex-shrink: 0;
 }
@@ -122,7 +124,7 @@
   justify-content: center;
   width: 18px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--fg-dim);
   flex-shrink: 0;
   visibility: hidden;
@@ -132,7 +134,7 @@
   visibility: visible;
 }
 .ws-tab-close:hover {
-  background: var(--bg-active);
+  background: var(--bg-hover);
   color: var(--fg);
 }
 .ws-tab-close svg {
@@ -152,7 +154,7 @@
   padding: 0 5px;
   background: var(--bg-input);
   border: 1px solid var(--focus-ring);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   font-size: 12px;
   outline: none;
@@ -192,10 +194,12 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  height: 20px;
-  padding: 0 9px;
-  border-radius: 10px;
-  background: var(--bg-active);
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-inset);
   font-size: 11.5px;
   color: var(--fg-dim);
   min-width: 0;
@@ -228,7 +232,7 @@
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-shrink: 0;
 }
 

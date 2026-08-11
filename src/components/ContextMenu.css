@@ -10,11 +10,13 @@
   max-width: 300px;
   max-height: calc(100vh - 8px);
   overflow-y: auto;
-  background: var(--bg-overlay);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  padding: 4px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  padding: 5px;
 }
 /* direct children only — wrapped custom rows style their own buttons */
 .ctx-menu > button {
@@ -22,8 +24,9 @@
   align-items: center;
   width: 100%;
   text-align: left;
+  min-height: 28px;
   padding: 5px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size);
   color: var(--fg);
   white-space: nowrap;

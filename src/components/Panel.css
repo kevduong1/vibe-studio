@@ -2,12 +2,13 @@
    (.app-panel itself — sizing, border — lives in styles/app.css.) */
 
 .panel-header {
-  height: 30px;
+  height: 38px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 6px 0 10px;
+  gap: 5px;
+  padding: 0 7px;
+  background: var(--bg-surface);
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -20,8 +21,10 @@
   text-transform: uppercase;
   letter-spacing: 0.6px;
   color: var(--fg-faint);
-  padding: 3px 6px;
-  border-radius: 4px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
 }
 .panel-group-tab:hover {
   color: var(--fg-dim);
@@ -29,6 +32,9 @@
 }
 .panel-group-tab.active {
   color: var(--fg);
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm), var(--shadow-inset);
 }
 /* Global-grouping tabs are divs (they host an inline rename input), unlike
    the fixed Project Terminals button — give them the button feel back. */
@@ -44,7 +50,7 @@
   position: absolute;
   left: 5px;
   right: 5px;
-  bottom: -4px;
+  bottom: 1px;
   height: 2px;
   border-radius: 1px;
   background: var(--group-color);
@@ -85,7 +91,7 @@
   padding: 0 4px;
   background: var(--bg-input);
   border: 1px solid var(--focus-ring);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--fg);
   font-size: var(--font-size-sm);
   text-transform: none;
@@ -124,7 +130,7 @@
 
 /* Tucked right after the grouping tabs, quieter than the action buttons. */
 .panel-group-add {
-  margin-left: -4px;
+  margin-left: 1px;
   color: var(--fg-faint);
 }
 

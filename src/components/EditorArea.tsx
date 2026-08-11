@@ -27,7 +27,15 @@ import { isMarkdownPath } from "../lib/path";
 import { ContextMenu } from "./ContextMenu";
 import PreviewPane from "./PreviewPane";
 import PreviewPicker from "./PreviewPicker";
-import { IcBranch, IcBrain, IcBrowser, IcClose, IcDiff, IcFile, IcPlus } from "./icons";
+import {
+  IcBrain,
+  IcBrowser,
+  IcClose,
+  IcDiff,
+  IcFile,
+  IcPlus,
+  IcSparkle,
+} from "./icons";
 import "./EditorArea.css";
 
 const Editor = lazy(() => import("./Editor"));
@@ -228,23 +236,27 @@ function TabMenu({
 function EmptyState({ onOpenPreview }: { onOpenPreview: () => void }) {
   return (
     <div className="editor-empty">
-      <IcBranch className="empty-icon" />
-      <div className="empty-title">Open a file or select a change</div>
+      <div className="empty-icon-wrap" aria-hidden="true">
+        <IcSparkle className="empty-icon" />
+      </div>
+      <div className="empty-kicker">Workspace ready</div>
+      <div className="empty-title">What are we building?</div>
+      <div className="empty-copy">Open a file, review a change, or bring your app into focus.</div>
       <button className="primary-btn empty-preview-action" onClick={onOpenPreview}>
         <IcBrowser /> Open Preview…
       </button>
       <div className="empty-hints">
         <div className="hint-row">
-          <span className="kbd">⌘ `</span>
           <span>Toggle terminal</span>
+          <span className="kbd">⌘ `</span>
         </div>
         <div className="hint-row">
-          <span className="kbd">⌘ B</span>
           <span>Toggle sidebar</span>
+          <span className="kbd">⌘ B</span>
         </div>
         <div className="hint-row">
-          <span className="kbd">⌘ W</span>
-          <span>Close tab</span>
+          <span>Quick open</span>
+          <span className="kbd">⌘ P</span>
         </div>
       </div>
     </div>

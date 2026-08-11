@@ -3,12 +3,15 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  background: var(--bg-app);
 }
 
 .app-main {
   display: flex;
   flex: 1;
   min-height: 0;
+  gap: 6px;
+  padding: 0 6px;
 }
 
 .app-center {
@@ -16,6 +19,11 @@
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  background: var(--bg-editor);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
 }
 
 .app-editor-area {
@@ -54,7 +62,9 @@
   display: flex;
   min-width: 0;
   background: var(--bg-sidebar);
-  border-right: 1px solid var(--border);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
   position: relative;
 }
 
@@ -63,19 +73,23 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  border-radius: inherit;
 }
 
 /* activity bar (slim icon strip on the far left) */
 .activity-bar {
-  width: 44px;
+  width: 48px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 6px;
-  gap: 2px;
-  background: var(--bg-titlebar);
-  border-right: 1px solid var(--border-subtle);
+  padding-top: 7px;
+  gap: 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
 }
 
 .activity-btn {
@@ -84,7 +98,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   color: var(--fg-faint);
   position: relative;
 }
@@ -93,8 +107,18 @@
   background: var(--bg-hover);
 }
 .activity-btn.active {
-  color: var(--fg);
-  background: var(--bg-active);
+  color: var(--accent);
+  background: var(--bg-selected);
+  box-shadow: inset 0 0 0 1px var(--accent-muted);
+}
+.activity-btn.active::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  width: 3px;
+  height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
 }
 .activity-btn svg {
   width: 19px;
@@ -137,56 +161,128 @@
 }
 .resizer:hover,
 .resizer.dragging {
-  background: var(--accent-muted);
+  background: var(--accent);
 }
 
 /* welcome screen (no repo open) */
 .welcome {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  padding: 36px;
   color: var(--fg-dim);
+  background:
+    radial-gradient(circle at 50% 38%, var(--accent-muted), transparent 34%),
+    var(--bg-editor);
+}
+.welcome-card {
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--bg-elevated) 84%, transparent);
+  box-shadow: var(--shadow-lg), var(--shadow-inset);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+}
+.welcome-mark {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 16px;
+  border: 1px solid var(--accent-muted);
+  border-radius: 15px;
+  color: var(--accent);
+  background: var(--bg-selected);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg-inverse) 12%, transparent);
+}
+.welcome-mark svg {
+  width: 23px;
+  height: 23px;
+}
+.welcome-kicker {
+  margin-bottom: 7px;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
 }
 .welcome h1 {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.7px;
   color: var(--fg);
   margin: 0;
 }
+.welcome p {
+  max-width: 300px;
+  margin: 8px 0 0;
+  color: var(--fg-dim);
+  line-height: 1.55;
+  text-align: center;
+}
 .welcome .open-btn {
-  margin-top: 8px;
-  padding: 8px 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 22px;
+  padding: 9px 18px;
   background: var(--button-bg);
   color: var(--button-fg);
-  border-radius: 6px;
-  font-weight: 500;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border));
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 color-mix(in srgb, var(--fg-inverse) 14%, transparent);
+  font-weight: 600;
 }
 .welcome .open-btn:hover {
   background: var(--button-hover);
+  transform: translateY(-1px);
+}
+.welcome .open-btn svg {
+  width: 14px;
+  height: 14px;
 }
 .welcome .recent {
-  margin-top: 18px;
+  width: 100%;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  align-items: center;
+  gap: 3px;
 }
 .welcome .recent button {
-  color: var(--accent);
+  width: 100%;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-dim);
   font-size: var(--font-size);
-  padding: 3px 10px;
-  border-radius: 5px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  text-align: left;
 }
 .welcome .recent button:hover {
   background: var(--bg-hover);
+  color: var(--fg);
+}
+.welcome .recent button svg {
+  width: 13px;
+  height: 13px;
+  color: var(--accent);
+  flex-shrink: 0;
 }
 .welcome .recent .label {
   font-size: var(--font-size-sm);
   color: var(--fg-faint);
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-bottom: 2px;
+  letter-spacing: 0.8px;
+  margin: 0 8px 5px;
 }

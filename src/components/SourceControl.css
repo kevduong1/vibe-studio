@@ -12,12 +12,12 @@
 /* panel header                                                        */
 /* ------------------------------------------------------------------ */
 .sc-header {
-  height: 34px;
+  height: 40px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 1px;
-  padding: 0 6px 0 12px;
+  padding: 0 8px 0 12px;
 }
 .sc-header-title {
   flex: 1;
@@ -49,11 +49,11 @@
   display: block;
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   font-size: var(--font-size);
   line-height: 18px;
-  padding: 5px 30px 5px 8px; /* room for the generate button */
+  padding: 6px 32px 6px 9px; /* room for the generate button */
   resize: none;
   outline: none;
   overflow-y: auto;
@@ -70,6 +70,7 @@
 }
 .commit-input:focus {
   border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--accent-muted);
 }
 .commit-input::placeholder {
   color: var(--fg-faint);
@@ -83,7 +84,7 @@
 .sc-commit-btn {
   flex: 1;
   min-width: 0;
-  border-radius: 5px 0 0 5px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 }
 .sc-commit-btn svg {
   width: 14px;
@@ -91,14 +92,14 @@
 }
 .sc-commit-caret {
   width: 24px;
-  height: 28px;
+  height: 30px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--button-bg);
   color: var(--button-fg);
-  border-radius: 0 5px 5px 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   border-left: 1px solid var(--border);
 }
 .sc-commit-caret:hover {
@@ -127,8 +128,8 @@
   z-index: 60;
   background: var(--bg-overlay);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
   padding: 4px;
 }
 .sc-menu button {
@@ -162,7 +163,7 @@
 }
 
 .sc-section-header {
-  height: 24px;
+  height: 27px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -240,7 +241,9 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 8px 0 18px;
+  margin: 0 5px;
+  padding: 0 6px 0 13px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .sc-row:hover {

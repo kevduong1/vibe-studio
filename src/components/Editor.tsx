@@ -42,16 +42,33 @@ const RULER_RECOMPUTE_MS = 250;
 // Shared theme
 // ---------------------------------------------------------------------------
 
-/** oneDark blended into the app's editor background + UI mono font. */
+/** oneDark syntax colors blended into Vibe's editor chrome and surfaces. */
 export const editorTheme: CmExtension = [
-  oneDark,
+  // CodeMirror mounts equal-precedence style modules in reverse extension
+  // order. Keep Vibe's theme before oneDark so these surface/chrome rules are
+  // emitted later and win, while oneDark continues to supply syntax colors.
   EditorView.theme(
     {
-      "&": { backgroundColor: "var(--bg-editor)", fontSize: "12.5px" },
-      ".cm-scroller": {
-        fontFamily: "var(--font-mono)",
+      "&": {
+        backgroundColor: "var(--bg-editor)",
+        color: "var(--fg)",
+        fontSize: "13px",
       },
-      ".cm-gutters": { backgroundColor: "var(--bg-editor)" },
+      ".cm-scroller": {
+        backgroundColor: "var(--bg-editor)",
+        fontFamily: "var(--font-mono)",
+        lineHeight: "1.58",
+      },
+      ".cm-gutters": {
+        backgroundColor: "var(--bg-editor)",
+        color: "var(--fg-faint)",
+        borderRight: "1px solid var(--border-subtle)",
+      },
+      ".cm-activeLine": { backgroundColor: "var(--bg-hover)" },
+      ".cm-activeLineGutter": {
+        backgroundColor: "var(--bg-hover)",
+        color: "var(--fg-dim)",
+      },
       // Glass chrome for every editor popover (LSP/lint hovers, autocomplete,
       // completion docs) — overrides oneDark's flat gray boxes. Translucent
       // surface + blur needs the -webkit- prefix (build target is safari16;
@@ -61,8 +78,8 @@ export const editorTheme: CmExtension = [
         backdropFilter: "blur(16px) saturate(140%)",
         "-webkit-backdrop-filter": "blur(16px) saturate(140%)",
         border: "1px solid var(--border-glass)",
-        borderRadius: "8px",
-        boxShadow: "0 8px 28px rgba(0, 0, 0, 0.45)",
+        borderRadius: "var(--radius-md)",
+        boxShadow: "var(--shadow-md)",
         color: "var(--fg)",
       },
       // Clip only hover tooltips to the rounded corners: the autocomplete
@@ -86,6 +103,7 @@ export const editorTheme: CmExtension = [
     },
     { dark: true },
   ),
+  oneDark,
 ];
 
 // ---------------------------------------------------------------------------

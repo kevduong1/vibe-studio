@@ -94,10 +94,12 @@ the newest evidence wins. Priority resolves only a same-line tie:
 Only near-tail evidence is eligible. Newer working or idle UI therefore
 invalidates stale blocked text above it. Strong permission/question matches
 are anchored to complete CLI-owned action labels, navigation hints, or form
-controls and apply immediately; ordinary changes are debounced, and idle
-requires stable evidence. Each distinct classification gets a fresh stability
-window; repeated equivalent evidence shares a trailing debounce with an 800 ms
-maximum so a continuous output stream cannot postpone classification forever.
+controls and apply immediately. Blocked rules match complete, CLI-owned UI
+phrases rather than isolated domain words. Ordinary changes are debounced, and
+idle requires stable evidence. Each distinct classification gets a fresh
+stability window; repeated equivalent evidence shares a trailing debounce with
+an 800 ms maximum so a continuous output stream cannot postpone classification
+forever.
 Arbitrary response prose in the bounded tail must not acquire screen authority
 merely because it asks a conversational question or discusses concepts such as
 quotas or rate limits.

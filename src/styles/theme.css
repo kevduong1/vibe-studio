@@ -1,100 +1,119 @@
 /* ---------------------------------------------------------------------------
  * Vibe Studio — dark theme tokens. All components style themselves with these
  * variables; never hardcode colors in component CSS.
+ *
+ * The palette deliberately separates the window canvas, inset workspace
+ * surfaces, and floating chrome. That small elevation ladder is what keeps a
+ * dense IDE readable without outlining every control.
  * ------------------------------------------------------------------------- */
 :root {
   color-scheme: dark;
 
   /* surfaces */
-  --bg-app: #181a1f;
-  --bg-titlebar: #1d2026;
-  --bg-sidebar: #1f2228;
-  --bg-editor: #15171c;
-  --bg-panel: #15171c;
-  --bg-statusbar: #1d2026;
-  --bg-input: #121419;
-  --bg-hover: rgba(255, 255, 255, 0.055);
-  --bg-active: rgba(255, 255, 255, 0.09);
-  --bg-overlay: #232730;
-  --bg-backdrop: rgba(0, 0, 0, 0.35); /* modal-dimming scrim */
-  --bg-glass: rgba(29, 32, 38, 0.72); /* translucent popover surface — pair with backdrop blur */
+  --bg-app: #0b0d12;
+  --bg-titlebar: #0f1117;
+  --bg-sidebar: #11141b;
+  --bg-editor: #151820;
+  --bg-panel: #0f1218;
+  --bg-statusbar: #0b0d12;
+  --bg-input: #171a23;
+  --bg-surface: #12151c;
+  --bg-elevated: #171a22;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.095);
+  --bg-overlay: #191c25;
+  --bg-backdrop: rgba(3, 4, 7, 0.62); /* modal-dimming scrim */
+  --bg-glass: rgba(20, 23, 31, 0.82); /* translucent popover surface — pair with backdrop blur */
 
   /* borders */
-  --border: #2a2e37;
-  --border-subtle: #23262e;
-  --border-glass: rgba(255, 255, 255, 0.09); /* hairline edge on glass surfaces */
+  --border: #292e39;
+  --border-subtle: #1e232d;
+  --border-strong: #353c49;
+  --border-glass: rgba(255, 255, 255, 0.1); /* hairline edge on glass surfaces */
 
   /* text */
-  --fg: #d4d8e0;
-  --fg-dim: #9aa1ad;
-  --fg-faint: #6b7280;
+  --fg: #e3e6ed;
+  --fg-dim: #9ba3b1;
+  --fg-faint: #626b7a;
   --fg-inverse: #ffffff;
 
   /* accent — App.tsx overrides --accent on the .app root with the active
      project's palette color (lib/projectColors.ts); --accent-default is the
      fixed base for scopes that opt out of project coloring (commit graph) */
-  --accent-default: #2f81f7;
+  --accent-default: #7c6ff2;
   --accent: var(--accent-default);
   --button-fg: #ffffff;
-  --danger: #e5534b;
-  --warning: #e3b341;
-  --success: #3fb950;
+  --danger: #f06a6a;
+  --warning: #e7b75b;
+  --success: #52c97d;
 
   /* git status letter colors (VSCode-style) */
-  --git-modified: #e2b340;
-  --git-added: #3fb950;
-  --git-deleted: #e5534b;
-  --git-renamed: #569cd6;
-  --git-untracked: #3fb950;
-  --git-conflict: #e5534b;
-  --git-ignored: #6b7280;
+  --git-modified: #e7b75b;
+  --git-added: #52c97d;
+  --git-deleted: #f06a6a;
+  --git-renamed: #71a7f6;
+  --git-untracked: #52c97d;
+  --git-conflict: #f06a6a;
+  --git-ignored: #626b7a;
 
   /* diff colors */
-  --diff-add-bg: rgba(63, 185, 80, 0.14);
-  --diff-add-gutter: rgba(63, 185, 80, 0.4);
-  --diff-del-bg: rgba(229, 83, 75, 0.14);
-  --diff-del-gutter: rgba(229, 83, 75, 0.4);
-  --diff-change-bg: rgba(47, 129, 247, 0.12);
+  --diff-add-bg: rgba(82, 201, 125, 0.13);
+  --diff-add-gutter: rgba(82, 201, 125, 0.4);
+  --diff-del-bg: rgba(240, 106, 106, 0.13);
+  --diff-del-gutter: rgba(240, 106, 106, 0.4);
+  --diff-change-bg: rgba(124, 111, 242, 0.12);
 
   /* overview-ruler blips (scrollbar change markers; lib/cmChangeRuler.ts) —
      modified is fixed blue: NOT --git-modified (yellow) and not var(--accent)
      (project-tinted) */
-  --ruler-add: #3fb950;
-  --ruler-del: #e5534b;
-  --ruler-mod: #2f81f7;
+  --ruler-add: #52c97d;
+  --ruler-del: #f06a6a;
+  --ruler-mod: #71a7f6;
 
   /* per-project accent palette (assignment cycled by lib/projectColors.ts;
      index 0 = the default blue, so the first project looks like today) */
-  --project-0: #2f81f7;
-  --project-1: #a371f7;
-  --project-2: #3fb950;
-  --project-3: #f0883e;
-  --project-4: #db61a2;
-  --project-5: #39c5cf;
-  --project-6: #e3b341;
-  --project-7: #ff7b72;
+  --project-0: #7c6ff2;
+  --project-1: #b476f4;
+  --project-2: #52c97d;
+  --project-3: #f39862;
+  --project-4: #df6dac;
+  --project-5: #51c5cf;
+  --project-6: #e7b75b;
+  --project-7: #f27676;
 
   /* commit graph lane palette (cycled by lane index) */
-  --graph-0: #2f81f7;
-  --graph-1: #a371f7;
-  --graph-2: #3fb950;
-  --graph-3: #db61a2;
-  --graph-4: #f0883e;
-  --graph-5: #39c5cf;
-  --graph-6: #e3b341;
-  --graph-7: #ff7b72;
+  --graph-0: #7c6ff2;
+  --graph-1: #b476f4;
+  --graph-2: #52c97d;
+  --graph-3: #df6dac;
+  --graph-4: #f39862;
+  --graph-5: #51c5cf;
+  --graph-6: #e7b75b;
+  --graph-7: #f27676;
 
   /* typography */
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, Monaco, "Courier New", monospace;
   --font-size: 13px;
   --font-size-sm: 11.5px;
-  --font-size-mono: 12px;
+  --font-size-mono: 12.5px;
+
+  /* shape + elevation */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.38);
+  --shadow-lg: 0 24px 72px rgba(0, 0, 0, 0.52);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 
   /* layout metrics */
-  --titlebar-height: 38px;
-  --statusbar-height: 24px;
-  --row-height: 24px;
+  --titlebar-height: 46px;
+  --statusbar-height: 28px;
+  --row-height: 26px;
+  --pane-ring-inset: 1px;
 }
 
 /* Accent-derived family. A custom property substitutes var() where it is
@@ -132,6 +151,7 @@ body {
   color: var(--fg);
   background: var(--bg-app);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   user-select: none;
   cursor: default;
 }
@@ -169,7 +189,21 @@ button {
   background: none;
   color: var(--fg);
   cursor: pointer;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 /* generic icon button used across panels */
@@ -179,7 +213,7 @@ button {
   justify-content: center;
   width: 24px;
   height: 24px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   flex-shrink: 0;
 }
@@ -206,11 +240,12 @@ button {
   justify-content: center;
   gap: 6px;
   width: 100%;
-  height: 28px;
+  height: 30px;
   background: var(--button-bg);
   color: var(--button-fg);
   font-weight: 500;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 .primary-btn:hover {
   background: var(--button-hover);
@@ -225,14 +260,15 @@ button {
   width: 100%;
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   font-size: var(--font-size);
-  padding: 5px 8px;
+  padding: 6px 9px;
   outline: none;
 }
 .text-input:focus {
   border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--accent-muted);
 }
 .text-input::placeholder {
   color: var(--fg-faint);
@@ -266,6 +302,17 @@ button {
 }
 .activity-done {
   color: var(--success);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* LSP server-status dot (settings modal rows + status-bar LSP item);

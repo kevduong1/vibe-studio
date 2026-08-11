@@ -29,7 +29,15 @@ import MemoriesPanel from "./components/MemoriesPanel";
 import EditorArea from "./components/EditorArea";
 import Panel from "./components/Panel";
 import { Resizer } from "./components/Resizer";
-import { IcBrain, IcBranch, IcFile, IcSearch, IcTree } from "./components/icons";
+import {
+  IcBrain,
+  IcBranch,
+  IcFile,
+  IcFolderOpen,
+  IcSearch,
+  IcSparkle,
+  IcTree,
+} from "./components/icons";
 import { listenAgentNotificationActivations } from "./lib/agentInbox";
 import { listenNativeAgentSessionCapture } from "./lib/nativeAgentSessions";
 import { listenAgentControlPlane } from "./lib/agentControlPlane";
@@ -123,24 +131,33 @@ function Welcome() {
 
   return (
     <div className="welcome">
-      <h1>Vibe Studio</h1>
-      <div>Open a git repository to get started</div>
-      <button className="open-btn" onClick={pickFolder}>
-        Open Folder…
-      </button>
-      {recent.length > 0 && (
-        <div className="recent">
-          <div className="label">Recent</div>
-          {recent.map((p) => (
-            <button
-              key={p}
-              onClick={() => void openWorkspace(p).catch(showOpenError)}
-            >
-              {p}
-            </button>
-          ))}
+      <div className="welcome-card">
+        <div className="welcome-mark" aria-hidden="true">
+          <IcSparkle />
         </div>
-      )}
+        <div className="welcome-kicker">Vibe Studio</div>
+        <h1>Build with focus.</h1>
+        <p>Open a Git repository and pick up exactly where you left off.</p>
+        <button className="open-btn" onClick={pickFolder}>
+          <IcFolderOpen />
+          Open Repository…
+        </button>
+        {recent.length > 0 && (
+          <div className="recent">
+            <div className="label">Recent workspaces</div>
+            {recent.map((p) => (
+              <button
+                key={p}
+                title={p}
+                onClick={() => void openWorkspace(p).catch(showOpenError)}
+              >
+                <IcBranch />
+                <span className="truncate">{p}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -19,6 +19,10 @@ terminals, a proper diff viewer, and multi-repo workspaces built around
 agent-driven development. Built with [Tauri 2](https://tauri.app) — native
 WKWebView, no bundled Chromium — so it stays light on CPU and RAM.
 
+The interface uses a modern, layered dark workspace: rounded inset surfaces,
+quiet near-black editor chrome, project-tinted accents, and elevated command
+overlays keep dense repository, editor, and terminal workflows easy to scan.
+
 ## Features
 
 ### 🗂 Multi-repo workspaces

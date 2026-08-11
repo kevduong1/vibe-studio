@@ -61,6 +61,7 @@ behavior still requires manual verification. All agents should also follow
 | `src/stores/terminalRecipes.ts` | Persisted, user-owned per-workspace terminal commands; restore execution is disabled per recipe unless explicitly enabled |
 | `src/stores/ui.ts` | Global (workspace-independent) sidebar/panel visibility, sizes, panel group (`terminal`/`agent`, `useEffectivePanelGroup`), panel maximize (`panelMaximized` — cleared by hiding the panel or opening an editor tab), markdown-preview toggle (`markdownPreview` — app-wide reading mode, not per-tab) |
 | `src/App.tsx` | Shell layout, per-workspace `WorkspaceView`s (all mounted; inactive hidden), global shortcuts (⌘\` ⌘B ⌘⇧B ⌘P ⌘⇧F ⌘W ⌘1–9 ⌘±/⌘0 zoom), welcome screen |
+| `src/styles/theme.css` / `app.css` | Shared visual system and workspace shell: near-black elevation ladder, project-derived accents, typography, radii/shadows, focus treatment, inset activity/sidebar/editor surfaces, and the welcome experience. CodeMirror and xterm mirror the editor/panel surfaces through their sanctioned JS theme sites. |
 | `src/components/Titlebar.tsx` | Workspace tab strip (switch/close/add; double-click → inline rename; right-click → rename / copy path / project color) + active repo's branch pill and fetch |
 | `src/components/icons.tsx` | ALL shared SVG icons (16×16 stroke glyphs) — add new icons here, not inline |
 | `src/components/SourceControl.tsx` | SCM panel: stage/unstage/discard, commit (+amend, &push), stashes, commit-graph branch filter dropdown |
@@ -136,8 +137,8 @@ cd src-tauri && cargo test      # backend unit tests
   change must update `CLAUDE.md`, the relevant `docs/architecture/*.md`, and
   user-facing `README.md` or roadmap status where applicable in the SAME
   change. Never leave removed types, flags, or test claims documented.
-- All colors/fonts/metrics come from CSS variables in `src/styles/theme.css`;
-  never hardcode colors in component CSS. Sanctioned exceptions: the JS themes
+- All colors/fonts/metrics/shape/elevation come from CSS variables in
+  `src/styles/theme.css`; never hardcode them in component CSS. Sanctioned exceptions: the JS themes
   in `lib/termSession.ts` (XTERM_THEME) and `Editor.tsx` (editorTheme).
 - The accent family (`--accent-hover/-muted`, `--button-bg/-hover`,
   `--bg-selected`, `--focus-ring`) is DERIVED from `--accent` via color-mix —
