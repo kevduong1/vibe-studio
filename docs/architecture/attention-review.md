@@ -101,7 +101,10 @@ the diff is visible.
 
 The popover participates in the native-overlay counter so preview webviews hide.
 It has dialog/listbox semantics, roving selection, visible focus, text labels in
-addition to color, Escape/outside dismissal, and ⌘⇧I activation.
+addition to color, Escape/outside dismissal, and ⌘⇧I activation. Each row's
+accent-derived selection, focus, and state styling uses that terminal's
+path-keyed project color rather than the currently active workspace's color;
+the selected row's detail actions inherit the same project scope.
 
 ## Check pipeline execution and trust
 

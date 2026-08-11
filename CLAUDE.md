@@ -76,7 +76,7 @@ behavior still requires manual verification. All agents should also follow
 | `src/components/TaskPicker.tsx` | ⌘⇧B quick-pick overlay (filter + arrow/enter keyboard nav); a lone default build task skips it (App.tsx) |
 | `src/components/QuickOpen.tsx` | ⌘P fuzzy file picker overlay (TaskPicker pattern); fetches the gitignore-aware file list per open, renders top 100 with match highlighting |
 | `src/components/SettingsModal.tsx` | ⌘, settings modal (gear in status bar): LSP controls, agent integration/profile diagnostics, workspace terminal recipes, local-control paths, and agent notification/usage settings; sections are plain blocks — append future settings here |
-| `src/components/AttentionInbox.tsx` | Titlebar inbox over both docks: strict attention ordering, exact navigation, independent review actions, bounded live context peek, pipeline controls, and keyboard operation |
+| `src/components/AttentionInbox.tsx` | Titlebar inbox over both docks: strict attention ordering, per-source-project accent scopes, exact navigation, independent review actions, bounded live context peek, pipeline controls, and keyboard operation |
 | `src/components/IsolatedTasksPanel.tsx` | Repository-wide Worktrees sidebar (activity-bar tree icon): refreshes the active checkout's live `git worktree list`, keeps stable main-then-branch/path ordering while Current changes, renders compact ordinary rows with detached/locked/prunable/open/current state, path-keyed project color, and confirmed non-main checkout removal, and overlays expandable isolated-task evidence/actions by exact worktree path; New Task requests an app-owned create+agent dialog, removed checkout records live behind the conditional Removed tasks toggle, task records are independently deletable, and ordinary external worktrees are never silently adopted or automatically cleanup-owned |
 | `src/components/WorktreeDialog.tsx` / `AgentLaunchDialog.tsx` | Worktree create/open UI and the profile-driven launch sheet shared by both terminal docks |
 | `src/components/MemoriesPanel.tsx` | Memories sidebar view (ActivityBar brain icon): the active project's agent memories (Claude files + Codex sqlite + AGENTS.md, via memories.rs) in per-agent sections, fetched fresh per mount + refresh button (stale-response seq guard); cards expand inline through `renderMarkdownDoc`, and the hover action / double-click promotes one to an editor tab (`openMemory`) |
@@ -212,9 +212,11 @@ cd src-tauri && cargo test      # backend unit tests
   kind is launch metadata, never proof of occupancy. macOS
   `pty_agent_process_snapshot` establishes whether the exact agent executable
   is a descendant of that PTY shell. Only then may the bounded xterm tail
-  classifier own lifecycle. Screen > OSC > activity; delayed evidence must
-  match the occupant generation. Read
-  `docs/architecture/agent-runtime.md` before changing this pipeline.
+  classifier own lifecycle. Detection rules must match complete app-owned UI
+  phrases, never bare domain words that can appear in ordinary agent prose.
+  Screen > OSC > activity; delayed evidence must match the occupant
+  generation. Read `docs/architecture/agent-runtime.md` before changing this
+  pipeline.
 - Agent PTYs set `TERM_PROGRAM=ghostty` so supported CLIs emit OSC 9/777
   notifications and OSC 0 titles. Known cost: TERM_PROGRAM-sniffing image CLIs
   may emit Kitty graphics xterm.js drops. PTY spawn also removes host-private

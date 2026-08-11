@@ -40,14 +40,14 @@ export const CLAUDE_PROFILE: AgentDetectionProfile = {
 // Authored independently against Codex CLI 0.147.0.
 export const CODEX_PROFILE: AgentDetectionProfile = {
   kind: "codex",
-  version: 1,
+  version: 2,
   authoredFor: "Codex CLI 0.147.0",
   executableNames: ["codex"],
   rules: [
     { id: "codex.permission", lifecycle: "blocked", reason: "permission", strong: true, tailLines: 9, pattern: /(?:Would you like to run|Do you want to run|Approve (?:this|command)|approval required|Press enter to confirm)/i },
     { id: "codex.question", lifecycle: "blocked", reason: "question", strong: true, tailLines: 9, pattern: /(?:Choose an option|Which (?:option|approach)|Please answer|waiting for your response|Question \d+\/\d+(?:\s+\(\d+\s+unanswered\))?|to submit (?:answer|all)|Type your answer(?: \(optional\))?|Submit with unanswered questions\?)/i },
     { id: "codex.auth", lifecycle: "blocked", reason: "auth", tailLines: 8, pattern: /(?:not signed in|login required|authentication required|sign in to continue)/i },
-    { id: "codex.quota", lifecycle: "blocked", reason: "quota", tailLines: 8, pattern: /(?:usage limit|rate limit|quota|limit reached)/i },
+    { id: "codex.quota", lifecycle: "blocked", reason: "quota", tailLines: 8, pattern: /\b(?:you['’]ve hit your usage limit|usage limit (?:has been )?(?:reached|exceeded)|rate limit (?:has been )?(?:reached|exceeded))\b/i },
     { id: "codex.error", lifecycle: "blocked", reason: "error", tailLines: 6, pattern: /(?:Error:|request failed|connection failed|stream disconnected)/i },
     { id: "codex.working", lifecycle: "working", tailLines: 8, pattern: /(?:esc to interrupt|ctrl-c to cancel|•\s*(?:Working|Thinking|Running)|(?:Working|Thinking|Running) \(\d+s\))/i },
     { id: "codex.idle", lifecycle: "idle", tailLines: 4, pattern: /(?:^|\n)\s*[›❯]\s*(?:$|Ask\b|Implement\b)/im },

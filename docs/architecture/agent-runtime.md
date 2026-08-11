@@ -86,6 +86,9 @@ Rules run in priority order:
 Only near-tail evidence is eligible. A newer idle prompt invalidates stale
 blocked text above it. Strong permission/question matches apply immediately;
 ordinary changes are debounced, and idle requires stable evidence.
+Blocked rules match complete, CLI-owned UI phrases rather than isolated domain
+words. Arbitrary response prose in the bounded tail must not acquire screen
+authority merely because it discusses concepts such as quotas or rate limits.
 
 Screen evidence has priority. When it disappears, the runtime falls back to
 the existing activity tracker:

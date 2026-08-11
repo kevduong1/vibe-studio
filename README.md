@@ -59,7 +59,9 @@ A global dock for persistent shells and AI coding agents:
   terminal tab keeps its Claude/Codex icon beside its state indicator
 - Claude or Codex launched manually inside a plain shell is discovered too;
   Settings shows versioned detection-profile and current-match diagnostics
-  without retaining terminal text, arguments, prompts, or environment
+  without retaining terminal text, arguments, prompts, or environment.
+  **Needs Input** requires a complete CLI-owned prompt or error phrase, so
+  ordinary agent prose does not claim attention merely for sharing a keyword
 - Live badges combine semantic state with each agent's current topic; tooltips
   explain the state authority and structured reason
 - Optional per-terminal sound and macOS banners alert once for background
@@ -84,7 +86,9 @@ and project terminals:
   Older waiting items come first.
 - Every row includes the agent, terminal, project, current topic, structured
   reason, elapsed time, lifecycle state, and separate review state. Related
-  workspace families and shared-working-tree review scope are called out.
+  workspace families and shared-working-tree review scope are called out. Row
+  highlights and accent-colored states match the source project's color, even
+  when another workspace is active.
 - Opening an item activates the exact project, panel side, dock grouping, tab,
   and terminal. Closed global-terminal projects are reopened when possible.
   **⌘⌥↓** and **⌘⌥↑** cycle through actionable agents.

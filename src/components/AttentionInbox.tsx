@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useAgentRuntimeStore } from "../stores/agentRuntime";
 import {
@@ -21,6 +21,7 @@ import {
 } from "../stores/agentTasks";
 import { useAgentTerminalsStore } from "../stores/agentTerminals";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { useProjectColorVar } from "../lib/projectColors";
 import { projectDisplayName } from "../lib/projectNames";
 import { displayAgentState, displayLabel, reasonLabel } from "../lib/agentState";
 import { focusAgentTerminal, reviewAgentChanges } from "../lib/agentInbox";
@@ -96,6 +97,47 @@ function useInboxItems(subscribeTerminals: boolean): AgentInboxItem[] {
   })), [runtimes, tasks, globals, globalTopics, workspaces, terminalVersion]);
 }
 
+function InboxRow({
+  item,
+  selected,
+  now,
+  onSelect,
+  onActivate,
+}: {
+  item: AgentInboxItem;
+  selected: boolean;
+  now: number;
+  onSelect: () => void;
+  onActivate: () => void;
+}) {
+  const projectColor = useProjectColorVar(item.runtime.workspacePath);
+  const display = displayAgentState(item.runtime);
+  const checkState = item.task ? checkStateFor(item.task) : "not_run";
+
+  return (
+    <button
+      role="option"
+      aria-selected={selected}
+      className={`inbox-row accent-scope ${selected ? "selected" : ""}`}
+      style={{ "--accent": projectColor } as CSSProperties}
+      tabIndex={selected ? 0 : -1}
+      onFocus={onSelect}
+      onClick={onSelect}
+      onDoubleClick={onActivate}
+    >
+      <span className="inbox-row-top"><strong>{item.runtime.kind === "claude" ? "Claude" : "Codex"}</strong><span>{elapsed(inboxWaitingAt(item), now)}</span></span>
+      <span className="inbox-row-title">{item.title} · {item.project}</span>
+      {item.topic && <span className="inbox-topic truncate">{item.topic}</span>}
+      <span className="inbox-labels">
+        <span className={`state-label ${display}`}>{displayLabel(display)}</span>
+        {item.task && <span className={`review-label ${item.task.reviewState}`}>{REVIEW_LABEL[item.task.reviewState]}</span>}
+        {!!item.task?.latestSnapshot?.conflictedFiles.length && <span className="evidence-label conflicted">Conflicts</span>}
+        {checkState !== "not_run" && <span className={`evidence-label ${checkState}`}>{CHECK_LABEL[checkState]}</span>}
+      </span>
+    </button>
+  );
+}
+
 function InboxOverlay({
   items,
   initialView,
@@ -118,6 +160,7 @@ function InboxOverlay({
   const [pipelineError, setPipelineError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const selected = visible.find((item) => item.runtime.terminalId === selectedId) ?? visible[0];
+  const selectedProjectColor = useProjectColorVar(selected?.runtime.workspacePath ?? null);
 
   useEffect(() => {
     dialogRef.current?.focus();
@@ -209,34 +252,19 @@ function InboxOverlay({
         <div className="inbox-content">
           <div className="inbox-list" role="listbox" aria-label={`${view} agents`}>
             {visible.length === 0 && <div className="inbox-empty">No agents need attention.</div>}
-            {visible.map((item) => {
-              const display = displayAgentState(item.runtime);
-              const checkState = item.task ? checkStateFor(item.task) : "not_run";
-              return (
-                <button
-                  key={item.runtime.terminalId}
-                  role="option"
-                  aria-selected={item.runtime.terminalId === selected?.runtime.terminalId}
-                  className={`inbox-row ${item.runtime.terminalId === selected?.runtime.terminalId ? "selected" : ""}`}
-                  tabIndex={item.runtime.terminalId === selected?.runtime.terminalId ? 0 : -1}
-                  onFocus={() => setSelectedId(item.runtime.terminalId)}
-                  onClick={() => setSelectedId(item.runtime.terminalId)}
-                  onDoubleClick={() => void activate(item.runtime.terminalId)}
-                >
-                  <span className="inbox-row-top"><strong>{item.runtime.kind === "claude" ? "Claude" : "Codex"}</strong><span>{elapsed(inboxWaitingAt(item), now)}</span></span>
-                  <span className="inbox-row-title">{item.title} · {item.project}</span>
-                  {item.topic && <span className="inbox-topic truncate">{item.topic}</span>}
-                  <span className="inbox-labels">
-                    <span className={`state-label ${display}`}>{displayLabel(display)}</span>
-                    {item.task && <span className={`review-label ${item.task.reviewState}`}>{REVIEW_LABEL[item.task.reviewState]}</span>}
-                    {!!item.task?.latestSnapshot?.conflictedFiles.length && <span className="evidence-label conflicted">Conflicts</span>}
-                    {checkState !== "not_run" && <span className={`evidence-label ${checkState}`}>{CHECK_LABEL[checkState]}</span>}
-                  </span>
-                </button>
-              );
-            })}
+            {visible.map((item) => <InboxRow
+              key={item.runtime.terminalId}
+              item={item}
+              selected={item.runtime.terminalId === selected?.runtime.terminalId}
+              now={now}
+              onSelect={() => setSelectedId(item.runtime.terminalId)}
+              onActivate={() => void activate(item.runtime.terminalId)}
+            />)}
           </div>
-          <div className="inbox-detail">
+          <div
+            className="inbox-detail accent-scope"
+            style={selectedProjectColor ? ({ "--accent": selectedProjectColor } as CSSProperties) : undefined}
+          >
             {!selected ? <div className="inbox-empty">No agent terminals.</div> : <>
               <div className="inbox-detail-title"><strong>{selected.title}</strong><span>{selected.project}</span></div>
               <div className="inbox-detail-meta">

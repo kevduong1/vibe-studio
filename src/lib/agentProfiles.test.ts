@@ -20,7 +20,7 @@ const fixtures = {
     permission: ["Would you like to run the following command?", "Press enter to confirm"],
     question: ["Choose an option", "waiting for your response"],
     auth: ["Not signed in. Sign in to continue."],
-    quota: ["Usage limit reached"],
+    quota: ["You've hit your usage limit."],
     error: ["Error: stream disconnected"],
   },
 } as const;
@@ -91,6 +91,19 @@ describe("agent screen profiles", () => {
         "› ",
       ]),
     ).toMatchObject({ lifecycle: "idle", matchedRule: "codex.idle" });
+  });
+
+  it("does not treat ordinary Codex quota and limit prose as blocked", () => {
+    for (const line of [
+      "The portfolio quota remains unchanged.",
+      "Document the API rate limit and retry policy.",
+      "The concentration limit reached 10% yesterday.",
+    ]) {
+      expect(classifyAgentScreen("codex", [line])).toEqual({
+        lifecycle: "unknown",
+        strong: false,
+      });
+    }
   });
 
   it("classifies ordinary shells, exits, and unsupported output as unknown", () => {
