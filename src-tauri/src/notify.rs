@@ -27,7 +27,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Duration;
 
 use block2::{DynBlock, RcBlock};
@@ -50,6 +50,7 @@ const GRANTED: &str = "granted";
 const DENIED: &str = "denied";
 const PROMPT: &str = "prompt";
 const UNSUPPORTED: &str = "unsupported";
+const NOTIFICATION_ACCEPT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Run UN-framework / process work on the blocking pool so it never stalls
 /// the async runtime (which also serves terminal IPC) — git.rs convention.
@@ -238,9 +239,10 @@ pub async fn notification_request() -> Result<String, String> {
 /// handle `notification_dismiss` removes by. `present_foreground` is the
 /// settings-modal "Show banners" policy: whether the delegate presents
 /// while the app is frontmost. Unauthorized posts are rejected by the
-/// framework; dev (no bundle) is a silent no-op. The command resolves only
-/// after Notification Center accepts or rejects the request, allowing the
-/// frontend to serialize a later dismissal after asynchronous acceptance.
+/// framework; dev (no bundle) is a silent no-op. The command resolves after
+/// Notification Center accepts/rejects the request or after a bounded timeout
+/// withdraws it, allowing the frontend to serialize a later dismissal without
+/// parking that identifier's operation queue indefinitely.
 #[tauri::command]
 pub async fn notification_send(
     app: tauri::AppHandle,
@@ -266,14 +268,35 @@ pub async fn notification_send(
             None,
         );
         let (tx, rx) = mpsc::channel();
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let completion_timed_out = timed_out.clone();
+        let completion_id = id.clone();
         let completion = RcBlock::new(move |error: *mut NSError| {
+            // If the framework accepts after our bounded wait, remove again at
+            // completion. Together with the immediate timeout removal below,
+            // this closes both sides of the timeout/acceptance race.
+            if completion_timed_out.load(Ordering::Acquire) {
+                let ids = NSArray::from_retained_slice(&[NSString::from_str(&completion_id)]);
+                let center = UNUserNotificationCenter::currentNotificationCenter();
+                center.removePendingNotificationRequestsWithIdentifiers(&ids);
+                center.removeDeliveredNotificationsWithIdentifiers(&ids);
+            }
             let _ = tx.send(error.is_null());
         });
         center.addNotificationRequest_withCompletionHandler(&request, Some(&completion));
-        match rx.recv() {
+        match rx.recv_timeout(NOTIFICATION_ACCEPT_TIMEOUT) {
             Ok(true) => Ok(()),
             Ok(false) => Err("notification request was rejected".to_string()),
-            Err(_) => Err("notification request completion channel closed".to_string()),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                timed_out.store(true, Ordering::Release);
+                let ids = NSArray::from_retained_slice(&[NSString::from_str(&id)]);
+                center.removePendingNotificationRequestsWithIdentifiers(&ids);
+                center.removeDeliveredNotificationsWithIdentifiers(&ids);
+                Err("notification request acceptance timed out and was withdrawn".to_string())
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err("notification request completion channel closed".to_string())
+            }
         }
     })
     .await

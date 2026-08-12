@@ -24,6 +24,7 @@ vi.mock("../stores/agentTasks", () => ({
   prepareAgentTurnCheckpoint: (...args: unknown[]) => mocks.prepareCheckpoint(...args),
   commitAgentTurnCheckpoint: (...args: unknown[]) => mocks.commitCheckpoint(...args),
   agentPromptTurnPending: (terminalId: string) => mocks.pendingTurns.has(terminalId),
+  subscribeAgentPromptTurnAvailability: vi.fn(),
 }));
 
 vi.mock("../stores/agentRuntime", () => ({

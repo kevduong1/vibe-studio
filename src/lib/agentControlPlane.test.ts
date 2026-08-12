@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./ipc", () => ({
   agentControlRespond: (...args: unknown[]) => mocks.respond(...args),
-  agentControlPromptBoundary: (...args: unknown[]) => mocks.boundary(...args),
+  agentControlCommit: (...args: unknown[]) => mocks.boundary(...args),
   agentControlSync: (...args: unknown[]) => mocks.sync(...args),
   onAgentControlCancel: vi.fn(async (callback) => {
     mocks.cancelListener = callback;
@@ -99,7 +99,7 @@ describe("agent control frontend start", () => {
     mocks.openWorkspace.mockReset();
     mocks.openGlobalTerminal.mockReset().mockReturnValue("terminal-1");
     mocks.createIsolatedTask.mockReset();
-    mocks.boundary.mockReset();
+    mocks.boundary.mockReset().mockResolvedValue({ seq: 1, working: false });
     mocks.queuePrompt.mockReset();
     for (const key of Object.keys(mocks.runtimeStates)) delete mocks.runtimeStates[key];
     mocks.respond.mockClear();
@@ -140,6 +140,22 @@ describe("agent control frontend start", () => {
 
     await expect(handling).rejects.toThrow("request cancelled");
     expect(mocks.openGlobalTerminal).not.toHaveBeenCalled();
+  });
+
+  it("treats cancellation as too late after the backend commits a shared launch", async () => {
+    mocks.gitOpen.mockResolvedValueOnce({ root: "/repo" });
+    mocks.openWorkspace.mockResolvedValueOnce(undefined);
+    let cancelled = false;
+    mocks.boundary.mockImplementationOnce(async () => {
+      cancelled = true;
+      return { seq: 1, working: false };
+    });
+
+    await expect(handleAgentControlRequest(request(false), () => cancelled)).resolves.toEqual({
+      terminalId: "terminal-1",
+      workspacePath: "/repo",
+    });
+    expect(mocks.openGlobalTerminal).toHaveBeenCalledOnce();
   });
 
   it("passes the live cancellation guard into isolated task creation", async () => {

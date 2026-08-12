@@ -240,7 +240,9 @@ Repository checks come from `.vscode/tasks.json`:
 - The bundled `vibe-agent` CLI lists privacy-bounded semantic snapshots,
   follows ordered events, starts isolated agents, focuses terminals, queues or
   explicitly steers prompts, and waits with timeouts/cancellation pinned to the
-  exact occupant generation.
+  exact occupant generation. Cancellation is authoritative before the final
+  action commit; afterward the CLI reports that the action already committed
+  instead of claiming an agent launch or prompt delivery was stopped.
 - A fresh mode-0600 token and Unix socket live in the per-user app-data
   directory. Short-lived capabilities initially restrict repository automation
   to one exact project and explicitly gain only the isolated checkout paths they

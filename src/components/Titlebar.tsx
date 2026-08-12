@@ -107,7 +107,7 @@ function ProjectTabMenu({
             </button>
           )}
           {task.outcome === "active" && (
-            <button onClick={() => { keepIsolatedTaskBranch(task); onClose(); }}>
+            <button onClick={() => void runTaskAction("Keep Task Branch", () => keepIsolatedTaskBranch(task))}>
               Keep Branch
             </button>
           )}

@@ -703,18 +703,18 @@ export const agentControlRespond = (
   error: error ?? null,
 });
 
-export interface AgentControlPromptBoundary {
+export interface AgentControlCommit {
   seq: number;
   working: boolean;
 }
 
-/** Atomically capture the Rust event sequence and pinned occupant state
- * immediately before a prompt reaches its PTY. */
-export const agentControlPromptBoundary = (
+/** Atomically make a frontend-routed action non-cancellable. Prompt commits
+ * also capture the Rust event sequence and pinned occupant state. */
+export const agentControlCommit = (
   requestId: string,
   deliveryId: string,
-): Promise<AgentControlPromptBoundary> =>
-  invoke("agent_control_prompt_boundary", { requestId, deliveryId });
+): Promise<AgentControlCommit> =>
+  invoke("agent_control_commit", { requestId, deliveryId });
 
 export const agentControlInfo = (): Promise<AgentControlInfo> =>
   invoke("agent_control_info");

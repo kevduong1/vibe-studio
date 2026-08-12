@@ -143,6 +143,8 @@ async function createIsolatedTaskUnlocked(input: {
    * arrives during it retains the new checkout and task record but never
    * opens the workspace or launches an agent. */
   cancelled?: () => boolean;
+  /** Authoritative control-plane commit immediately before agent launch. */
+  beforeLaunch?: () => Promise<void>;
 }): Promise<IsolatedTask> {
   if (input.cancelled?.()) throw new Error("Isolated task creation was cancelled.");
   const config = await loadWorktreeProjectConfig(input.parentPath);
@@ -196,6 +198,7 @@ async function createIsolatedTaskUnlocked(input: {
       );
     }
     if (input.agentKind) {
+      await input.beforeLaunch?.();
       const terminalId = openGlobalTerminal(
         task.worktreePath,
         input.agentKind,
@@ -295,19 +298,50 @@ export function mergeIsolatedTask(task: IsolatedTask): Promise<void> {
           "The task or its agent changed state while Git was merging. Git may already have merged the previously reviewed commits, but the task was not marked Applied; review its current changes before merging again.",
         );
       }
-      useIsolatedTasksStore.getState().patchTask(task.id, { outcome: "applied" });
+      if (!useIsolatedTasksStore.getState().transitionOutcome(task.id, "active", "applied")) {
+        throw new Error("The task outcome changed before its merge could be recorded.");
+      }
     },
   );
 }
 
-export function keepIsolatedTaskBranch(task: IsolatedTask): void {
-  useIsolatedTasksStore.getState().patchTask(task.id, { outcome: "kept" });
+export function keepIsolatedTaskBranch(task: IsolatedTask): Promise<void> {
+  return withWorktreePathsLocked(
+    [task.parentWorkspacePath, task.worktreePath],
+    async () => {
+      if (!useIsolatedTasksStore.getState().transitionOutcome(task.id, "active", "kept")) {
+        throw new Error("The task outcome changed before its branch could be kept.");
+      }
+    },
+  );
 }
 
-export async function archiveIsolatedTask(task: IsolatedTask): Promise<void> {
-  await useWorkspacesStore.getState().closeWorkspace(task.worktreePath);
-  if (useWorkspacesStore.getState().workspaces.some((ws) => ws.path === task.worktreePath)) return;
-  useIsolatedTasksStore.getState().patchTask(task.id, { outcome: "archived" });
+export function archiveIsolatedTask(task: IsolatedTask): Promise<void> {
+  return withWorktreePathsLocked(
+    [task.parentWorkspacePath, task.worktreePath],
+    async () => {
+      const before = useIsolatedTasksStore.getState().tasks[task.id];
+      if (
+        !before ||
+        before.outcome !== task.outcome ||
+        before.outcome === "archived" ||
+        before.outcome === "discarded"
+      ) {
+        throw new Error("The task outcome changed before it could be archived.");
+      }
+      await useWorkspacesStore.getState().closeWorkspace(task.worktreePath);
+      if (useWorkspacesStore.getState().workspaces.some((ws) => ws.path === task.worktreePath)) {
+        return;
+      }
+      if (!useIsolatedTasksStore.getState().transitionOutcome(
+        task.id,
+        before.outcome,
+        "archived",
+      )) {
+        throw new Error("The task outcome changed before it could be archived.");
+      }
+    },
+  );
 }
 
 const boundGlobalTerminalIds = (path: string): string[] =>
@@ -424,16 +458,32 @@ export function removeIsolatedTaskWorktree(task: IsolatedTask): Promise<boolean>
   return withWorktreePathsLocked(
     [task.parentWorkspacePath, task.worktreePath],
     async () => {
+      const before = useIsolatedTasksStore.getState().tasks[task.id];
+      if (
+        !before ||
+        before.outcome !== task.outcome ||
+        before.outcome === "discarded" ||
+        before.parentWorkspacePath !== task.parentWorkspacePath ||
+        before.worktreePath !== task.worktreePath
+      ) {
+        throw new Error("The task outcome changed before its checkout could be removed.");
+      }
       const removed = await removeWorktreeCheckoutUnlocked(
         task.parentWorkspacePath,
         task.worktreePath,
         task.branch,
       );
       if (!removed) return false;
-      useIsolatedTasksStore.getState().patchTask(task.id, {
-        outcome: "discarded",
-        checkoutRemovedAt: Date.now(),
-      });
+      if (!useIsolatedTasksStore.getState().transitionOutcome(
+        task.id,
+        before.outcome,
+        "discarded",
+        { checkoutRemovedAt: Date.now() },
+      )) {
+        throw new Error(
+          "The task outcome changed after Git removed its checkout. The checkout is gone, but the task record was left unchanged for review.",
+        );
+      }
       return true;
     },
   );
@@ -573,9 +623,20 @@ export function launchReadOnlyReviewAgent(task: IsolatedTask): string {
   );
 }
 
-export async function restoreTaskCode(task: IsolatedTask): Promise<void> {
-  await useWorkspacesStore.getState().openWorkspace(task.worktreePath);
-  useIsolatedTasksStore.getState().patchTask(task.id, { outcome: "active" });
+export function restoreTaskCode(task: IsolatedTask): Promise<void> {
+  return withWorktreePathsLocked(
+    [task.parentWorkspacePath, task.worktreePath],
+    async () => {
+      const before = useIsolatedTasksStore.getState().tasks[task.id];
+      if (!before || before.outcome !== "archived") {
+        throw new Error("The task outcome changed before its code could be restored.");
+      }
+      await useWorkspacesStore.getState().openWorkspace(task.worktreePath);
+      if (!useIsolatedTasksStore.getState().transitionOutcome(task.id, "archived", "active")) {
+        throw new Error("The task outcome changed before its code could be restored.");
+      }
+    },
+  );
 }
 
 export async function restoreTaskConversation(task: IsolatedTask): Promise<void> {

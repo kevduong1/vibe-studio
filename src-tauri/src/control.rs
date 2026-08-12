@@ -165,8 +165,11 @@ pub struct FrontendControlRequest {
 
 struct FrontendResponseSlot {
     delivery_id: String,
+    action: String,
     terminal_id: Option<String>,
     generation: Option<u64>,
+    deadline_at_ms: u64,
+    committed: bool,
     response: Option<Result<Value, String>>,
 }
 
@@ -179,7 +182,7 @@ struct FrontendControlCancel {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentControlPromptBoundary {
+pub struct AgentControlCommit {
     seq: u64,
     working: bool,
 }
@@ -504,11 +507,19 @@ fn handle_request(inner: &Arc<Inner>, request: ApiRequest) -> Result<Value, Stri
             .get(&id)
             .ok_or_else(|| "active request not found".to_string())?;
         authorize_project(scope.as_ref(), Some(project))?;
-        data.cancelled.insert(id.clone());
-        let frontend_delivery = data
+        let frontend = data
             .frontend_responses
             .get(&id)
-            .map(|slot| slot.delivery_id.clone());
+            .map(|slot| (slot.delivery_id.clone(), slot.committed));
+        if frontend.as_ref().is_some_and(|(_, committed)| *committed) {
+            return Ok(json!({
+                "requestId": id,
+                "cancelled": false,
+                "committed": true,
+            }));
+        }
+        data.cancelled.insert(id.clone());
+        let frontend_delivery = frontend.map(|(delivery_id, _)| delivery_id);
         drop(data);
         inner.changed.notify_all();
         if let Some(delivery_id) = frontend_delivery {
@@ -771,8 +782,11 @@ fn dispatch_frontend_inner(inner: &Arc<Inner>, request: ApiRequest) -> Result<Va
         request_id.clone(),
         FrontendResponseSlot {
             delivery_id: delivery_id.clone(),
+            action: request.command.clone(),
             terminal_id: request.terminal_id.clone(),
             generation,
+            deadline_at_ms: payload.deadline_at_ms,
+            committed: false,
             response: None,
         },
     );
@@ -792,10 +806,13 @@ fn dispatch_frontend_inner(inner: &Arc<Inner>, request: ApiRequest) -> Result<Va
             .frontend_responses
             .get_mut(&request_id)
             .filter(|slot| slot.delivery_id == delivery_id)
-            .and_then(|slot| slot.response.take());
-        if let Some(response) = response {
+            .and_then(|slot| slot.response.take().map(|response| (response, slot.committed)));
+        if let Some((response, committed)) = response {
             data.frontend_responses.remove(&request_id);
             let value = response?;
+            if !committed {
+                return Err("frontend returned success before committing the action".to_string());
+            }
             let prompt_boundary = if request.command == "prompt" {
                 Some((
                     value
@@ -834,10 +851,20 @@ fn dispatch_frontend_inner(inner: &Arc<Inner>, request: ApiRequest) -> Result<Va
         }
         let remaining = timeout.saturating_sub(started.elapsed());
         if remaining.is_zero() {
+            let committed = data
+                .frontend_responses
+                .get(&request_id)
+                .is_some_and(|slot| slot.delivery_id == delivery_id && slot.committed);
             data.frontend_responses.remove(&request_id);
             drop(data);
+            if committed {
+                return Err(
+                    "frontend response timed out after the action committed; its outcome may already have occurred"
+                        .to_string(),
+                );
+            }
             emit_frontend_cancel(inner, &request_id, &delivery_id);
-            return Err("frontend request timed out".to_string());
+            return Err("frontend request timed out before the action committed".to_string());
         }
         inner.changed.wait_for(&mut data, remaining);
     }
@@ -1002,13 +1029,13 @@ pub fn agent_control_respond(
 }
 
 #[tauri::command]
-pub fn agent_control_prompt_boundary(
+pub fn agent_control_commit(
     state: tauri::State<'_, ControlState>,
     request_id: String,
     delivery_id: String,
-) -> Result<AgentControlPromptBoundary, String> {
-    let data = state.inner.data.lock();
-    prompt_boundary_for_delivery(&data, &request_id, &delivery_id)
+) -> Result<AgentControlCommit, String> {
+    let mut data = state.inner.data.lock();
+    commit_frontend_delivery(&mut data, &request_id, &delivery_id)
 }
 
 fn accept_frontend_response(
@@ -1027,11 +1054,11 @@ fn accept_frontend_response(
     true
 }
 
-fn prompt_boundary_for_delivery(
-    data: &Data,
+fn commit_frontend_delivery(
+    data: &mut Data,
     request_id: &str,
     delivery_id: &str,
-) -> Result<AgentControlPromptBoundary, String> {
+) -> Result<AgentControlCommit, String> {
     if data.cancelled.contains(request_id) {
         return Err("request cancelled".to_string());
     }
@@ -1040,23 +1067,38 @@ fn prompt_boundary_for_delivery(
         .get(request_id)
         .filter(|slot| slot.delivery_id == delivery_id)
         .ok_or_else(|| "control request is no longer active".to_string())?;
-    let terminal_id = slot
-        .terminal_id
-        .as_deref()
-        .ok_or_else(|| "prompt target is missing".to_string())?;
-    let generation = slot
-        .generation
-        .ok_or_else(|| "prompt generation is missing".to_string())?;
-    let agent = data
-        .agents
-        .get(terminal_id)
-        .ok_or_else(|| "terminal not found".to_string())?;
-    if agent.generation != generation || agent.occupancy != "present" {
-        return Err("terminal occupant generation changed".to_string());
+    if slot.committed {
+        return Err("control request already committed".to_string());
     }
-    Ok(AgentControlPromptBoundary {
-        seq: data.seq,
-        working: agent.lifecycle == "working",
+    if now_ms() >= slot.deadline_at_ms {
+        return Err("control request deadline elapsed before commit".to_string());
+    }
+    let working = if let (Some(terminal_id), Some(generation)) =
+        (slot.terminal_id.as_deref(), slot.generation)
+    {
+        let agent = data
+            .agents
+            .get(terminal_id)
+            .ok_or_else(|| "terminal not found".to_string())?;
+        if agent.generation != generation
+            || (slot.action == "prompt" && agent.occupancy != "present")
+        {
+            return Err("terminal occupant generation changed".to_string());
+        }
+        agent.lifecycle == "working"
+    } else {
+        false
+    };
+    let seq = data.seq;
+    let slot = data
+        .frontend_responses
+        .get_mut(request_id)
+        .filter(|slot| slot.delivery_id == delivery_id)
+        .ok_or_else(|| "control request is no longer active".to_string())?;
+    slot.committed = true;
+    Ok(AgentControlCommit {
+        seq,
+        working,
     })
 }
 
@@ -1206,8 +1248,11 @@ mod tests {
             "same-request".to_string(),
             FrontendResponseSlot {
                 delivery_id: "new-delivery".to_string(),
+                action: "prompt".to_string(),
                 terminal_id: Some("a".to_string()),
                 generation: Some(2),
+                deadline_at_ms: now_ms() + 60_000,
+                committed: false,
                 response: None,
             },
         );
@@ -1219,15 +1264,16 @@ mod tests {
             Ok(json!({ "source": "old" })),
         ));
         assert!(data.frontend_responses["same-request"].response.is_none());
-        assert!(prompt_boundary_for_delivery(&data, "same-request", "old-delivery").is_err());
+        assert!(commit_frontend_delivery(&mut data, "same-request", "old-delivery").is_err());
 
         assert_eq!(
-            prompt_boundary_for_delivery(&data, "same-request", "new-delivery").unwrap(),
-            AgentControlPromptBoundary {
+            commit_frontend_delivery(&mut data, "same-request", "new-delivery").unwrap(),
+            AgentControlCommit {
                 seq: 17,
                 working: true,
             }
         );
+        assert!(data.frontend_responses["same-request"].committed);
         assert!(accept_frontend_response(
             &mut data,
             "same-request",
@@ -1246,22 +1292,55 @@ mod tests {
     }
 
     #[test]
-    fn prompt_boundary_rejects_a_replaced_terminal_generation() {
+    fn control_commit_rejects_a_replaced_terminal_generation() {
         let mut data = Data::default();
         data.agents.insert("a".to_string(), agent("a", "idle"));
         data.frontend_responses.insert(
             "request".to_string(),
             FrontendResponseSlot {
                 delivery_id: "delivery".to_string(),
+                action: "prompt".to_string(),
                 terminal_id: Some("a".to_string()),
                 generation: Some(1),
+                deadline_at_ms: now_ms() + 60_000,
+                committed: false,
                 response: None,
             },
         );
 
-        assert!(prompt_boundary_for_delivery(&data, "request", "delivery")
+        assert!(commit_frontend_delivery(&mut data, "request", "delivery")
             .unwrap_err()
             .contains("generation changed"));
+    }
+
+    #[test]
+    fn committed_frontend_action_is_no_longer_cancellable() {
+        let state = ControlState::default();
+        *state.inner.global_token.lock() = "global".to_string();
+        let mut data = state.inner.data.lock();
+        data.active_request_projects
+            .insert("request".to_string(), "/repo".to_string());
+        data.frontend_responses.insert(
+            "request".to_string(),
+            FrontendResponseSlot {
+                delivery_id: "delivery".to_string(),
+                action: "start".to_string(),
+                terminal_id: None,
+                generation: None,
+                deadline_at_ms: now_ms() + 60_000,
+                committed: false,
+                response: None,
+            },
+        );
+        commit_frontend_delivery(&mut data, "request", "delivery").unwrap();
+        drop(data);
+
+        let mut cancel = request("global", "cancel");
+        cancel.request_id = Some("request".to_string());
+        let result = handle_request(&state.inner, cancel).unwrap();
+        assert_eq!(result["cancelled"], false);
+        assert_eq!(result["committed"], true);
+        assert!(!state.inner.data.lock().cancelled.contains("request"));
     }
 
     #[test]

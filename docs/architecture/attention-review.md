@@ -83,9 +83,13 @@ facility.
 Programmatic prompt paths first reserve their place in the terminal's shared
 input queue. Inside that slot, Git prepares the snapshot without changing task
 state; the frontend then publishes it synchronously at the final PTY delivery
-commit point. A prior user Enter keeps later automation gated until semantic
-evidence leaves the prompt state that accepted that turn, even when the PTY
-write completes before the first Working frame is rendered. Cancellation or
+commit point and resets the bounded screen-evidence boundary to the current
+prompt line so older scrollback cannot satisfy the new turn. A prior user Enter keeps later automation
+gated until generation-owned output beyond that boundary reaches a stable
+non-unknown screen state. This explicitly releases fast idle-to-idle turns even
+when no debounced Working frame was visible; the queue is awakened independently
+of runtime-store transitions when the stable prompt is semantically unchanged.
+Cancellation or
 failed ownership checks while snapshotting/awaiting a dispatch guard leave the
 prior turn boundary unchanged. After delivery begins a queued request is
 non-cancellable, so its promise reflects PTY delivery instead of reporting

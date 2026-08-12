@@ -2,6 +2,7 @@ import {
   agentPromptTurnPending,
   commitAgentTurnCheckpoint,
   prepareAgentTurnCheckpoint,
+  subscribeAgentPromptTurnAvailability,
   type PreparedAgentTurnCheckpoint,
 } from "../stores/agentTasks";
 import { subscribeAgentTransitions, useAgentRuntimeStore } from "../stores/agentRuntime";
@@ -17,7 +18,7 @@ interface QueuedPrompt {
   text: string;
   beforeDispatch?: (
     checkpoint: PreparedAgentTurnCheckpoint,
-  ) => void | Promise<void>;
+  ) => void | "committed" | Promise<void | "committed">;
   /** Once true, checkpoint publication and PTY delivery have committed. */
   dispatching: boolean;
   resolve: (id: string) => void;
@@ -134,7 +135,7 @@ async function flush(terminalId: string): Promise<void> {
       if (!safePrompt(terminalId, next.generation)) {
         throw new PromptDispatchDeferred();
       }
-      await next.beforeDispatch?.(checkpoint);
+      const controlCommitted = await next.beforeDispatch?.(checkpoint) === "committed";
       // Return a synchronous commit for TermSession to invoke immediately
       // before ptyWrite in this reserved input slot.
       return () => {
@@ -148,6 +149,11 @@ async function flush(terminalId: string): Promise<void> {
           throw new Error("The queued terminal occupant changed before dispatch.");
         }
         if (!safePrompt(terminalId, next.generation)) {
+          if (controlCommitted) {
+            throw new Error(
+              "The terminal left its safe prompt state after the control action committed; no prompt was sent.",
+            );
+          }
           throw new PromptDispatchDeferred();
         }
         commitAgentTurnCheckpoint(checkpoint);
@@ -177,6 +183,8 @@ subscribeAgentTransitions(({ previous, current }) => {
   if (terminalId) requestFlush(terminalId);
 });
 
+subscribeAgentPromptTurnAvailability(requestFlush);
+
 /** Session-only, occupant-generation-owned queue. Prompt text is bounded and
  * never persisted; a replaced/exited occupant rejects it. */
 export function queueAgentPrompt(
@@ -185,7 +193,7 @@ export function queueAgentPrompt(
   promptId: string = crypto.randomUUID(),
   beforeDispatch?: (
     checkpoint: PreparedAgentTurnCheckpoint,
-  ) => void | Promise<void>,
+  ) => void | "committed" | Promise<void | "committed">,
 ): Promise<string> {
   validatePrompt(text);
   const runtime = useAgentRuntimeStore.getState().states[terminalId];
@@ -233,7 +241,7 @@ export async function steerAgentPrompt(
   cancelled: () => boolean = () => false,
   beforeDispatch?: (
     checkpoint: PreparedAgentTurnCheckpoint,
-  ) => void | Promise<void>,
+  ) => void | "committed" | Promise<void | "committed">,
 ): Promise<void> {
   validatePrompt(text);
   if (cancelled()) throw new Error("The prompt request was cancelled.");

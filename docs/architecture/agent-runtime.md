@@ -180,7 +180,10 @@ viewing Done, resumed work, agent exit, tab close, or notification disable.
 Dismissal removes both pending requests and delivered banners, preventing an
 asynchronously accepted request from appearing after its semantic state was
 cleared. Per-terminal frontend ordering waits for Notification Center to accept
-an add before a later dismissal is issued. A notification opt-in remains
+an add before a later dismissal is issued. Acceptance waits are bounded to five
+seconds: timeout withdraws the request immediately, and the retained completion
+handler removes it again if Notification Center accepts late, so neither the
+blocking worker nor later per-terminal operations can hang indefinitely. A notification opt-in remains
 visible and disableable if a plain-shell-discovered agent exits back to its
 shell.
 Alert edge selection is pure and tested in `src/lib/agentState.test.ts`.

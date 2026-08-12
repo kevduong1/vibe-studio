@@ -18,6 +18,7 @@ import {
   useAgentRuntimeStore,
 } from "./agentRuntime";
 import { isolatedTaskForPath } from "./isolatedTasks";
+import type { ScreenClassification } from "../lib/agentProfiles";
 
 export type ReviewState =
   | "clean"
@@ -116,7 +117,8 @@ export function removeAgentTask(terminalId: string): void {
   refreshSequences.delete(terminalId);
   checkpointSequences.delete(terminalId);
   pendingTurnCheckpoints.delete(terminalId);
-  pendingPromptTurns.delete(terminalId);
+  clearPendingPromptTurn(terminalId);
+  promptOutputSequences.delete(terminalId);
   useAgentTasksStore.setState((state) => {
     if (!state.tasks[terminalId]) return state;
     const tasks = { ...state.tasks };
@@ -162,13 +164,69 @@ const refreshSequences = new Map<string, number>();
 const checkpointSequences = new Map<string, number>();
 /** App-owned prompts consume their captured boundary on the next Working edge. */
 const pendingTurnCheckpoints = new Map<string, number>();
+const promptOutputSequences = new Map<string, number>();
+const promptTurnListeners = new Set<(terminalId: string) => void>();
 /** Input was committed while this lifecycle owned the prompt, but the agent
  * has not rendered evidence that it consumed the turn yet. This closes the
  * gap where a PTY write resolves before the first Working frame is parsed. */
 const pendingPromptTurns = new Map<
   string,
-  { generation: number; lifecycle: AgentRuntimeState["lifecycle"] }
+  {
+    generation: number;
+    lifecycle: AgentRuntimeState["lifecycle"];
+    outputSequence: number;
+  }
 >();
+
+const clearPendingPromptTurn = (terminalId: string): void => {
+  if (!pendingPromptTurns.delete(terminalId)) return;
+  for (const listener of promptTurnListeners) listener(terminalId);
+};
+
+/** Prompt queues need a wake-up even when a newly rendered idle screen is
+ * semantically identical to the prior idle state and produces no runtime-store
+ * transition. */
+export const subscribeAgentPromptTurnAvailability = (
+  listener: (terminalId: string) => void,
+): (() => void) => {
+  promptTurnListeners.add(listener);
+  return () => promptTurnListeners.delete(listener);
+};
+
+/** Record parsed output, never plaintext. The sequence is generation-local
+ * evidence that something rendered after a prompt's commit boundary. */
+export function noteAgentPromptOutput(terminalId: string, generation: number): void {
+  const pending = pendingPromptTurns.get(terminalId);
+  if (!pending || pending.generation !== generation) return;
+  promptOutputSequences.set(terminalId, (promptOutputSequences.get(terminalId) ?? 0) + 1);
+}
+
+export function promptTurnSettledByScreen(
+  pending: { generation: number; outputSequence: number },
+  generation: number,
+  outputSequence: number,
+  classification: ScreenClassification,
+): boolean {
+  return pending.generation === generation &&
+    outputSequence > pending.outputSequence &&
+    classification.lifecycle !== "unknown";
+}
+
+/** Release the input gate after a stable, generation-owned screen result based
+ * on output rendered beyond the prompt boundary. This also handles a fast
+ * idle-to-idle turn that never exposes a debounced Working frame. */
+export function settleAgentPromptTurn(
+  terminalId: string,
+  generation: number,
+  classification: ScreenClassification,
+): void {
+  const pending = pendingPromptTurns.get(terminalId);
+  if (!pending) return;
+  const outputSequence = promptOutputSequences.get(terminalId) ?? 0;
+  if (promptTurnSettledByScreen(pending, generation, outputSequence, classification)) {
+    clearPendingPromptTurn(terminalId);
+  }
+}
 
 export const agentPromptTurnPending = (
   terminalId: string,
@@ -466,12 +524,13 @@ export function commitAgentTurnCheckpoint(
   });
   if (latestRuntime.lifecycle === "working") {
     pendingTurnCheckpoints.delete(terminalId);
-    pendingPromptTurns.delete(terminalId);
+    clearPendingPromptTurn(terminalId);
   } else {
     pendingTurnCheckpoints.set(terminalId, generation);
     pendingPromptTurns.set(terminalId, {
       generation,
       lifecycle: latestRuntime.lifecycle,
+      outputSequence: promptOutputSequences.get(terminalId) ?? 0,
     });
   }
 }
@@ -633,7 +692,8 @@ subscribeAgentTransitions(({ previous, current }) => {
       pendingTurnCheckpoints.delete(current.terminalId);
     }
     if (pendingPromptTurns.get(current.terminalId)?.generation !== current.generation) {
-      pendingPromptTurns.delete(current.terminalId);
+      clearPendingPromptTurn(current.terminalId);
+      promptOutputSequences.delete(current.terminalId);
     }
     const task = useAgentTasksStore.getState().tasks[current.terminalId];
     if (!task || task.generation !== current.generation) {
@@ -657,7 +717,7 @@ subscribeAgentTransitions(({ previous, current }) => {
     pendingPrompt?.generation === current.generation &&
     pendingPrompt.lifecycle !== current.lifecycle
   ) {
-    pendingPromptTurns.delete(current.terminalId);
+    clearPendingPromptTurn(current.terminalId);
   }
   if (previous?.lifecycle !== "working" && current.lifecycle === "working") {
     const task = useAgentTasksStore.getState().tasks[current.terminalId];

@@ -244,7 +244,9 @@ cd src-tauri && cargo test      # backend unit tests
   removal prunes non-live persisted terminal records and rebinds global-group
   navigation memory for that path. Merge requires the owning agent to be
   proven idle or stopped and must prove both paths belong to the same Git
-  worktree set. Workspace close, task archive, task-record deletion, and
+  worktree set. Create/merge/remove/keep/archive/restore operations sharing a
+  parent or checkout path are serialized, and task outcomes change only through
+  expected-state compare-and-set transitions. Workspace close, task archive, task-record deletion, and
   checkout removal are distinct transitions; records with live bound terminals
   retain their preview-port reservation and cannot be deleted.
 - Review fingerprints are backend-only content hashes. Plain-text context
@@ -262,9 +264,11 @@ cd src-tauri && cargo test      # backend unit tests
   effects.
 - Queued/steered automation prompts are session-only, capped at 8,192 characters, pinned
   to the detected occupant generation, and checkpoint inside their reserved
-  terminal-input slot before sending. A committed user/automation turn gates
-  later queued input until semantic evidence leaves its accepting prompt state;
-  do not infer turn completion from `pty_write` returning. Timeout or
+  terminal-input slot before sending. Dispatch resets the screen-evidence
+  boundary; a committed user/automation turn gates later queued input until
+  generation-owned post-boundary output reaches a stable non-unknown semantic
+  state, including fast idle-to-idle turns. Do not infer turn completion from
+  `pty_write` returning. Timeout or
   cancellation removes pending text before it can reach the PTY. Never
   persist a prompt queue, truncate instructions silently, or retarget it after
   process replacement. Multiline
@@ -275,6 +279,10 @@ cd src-tauri && cargo test      # backend unit tests
   global token out of repository processes, enforce exact project scope for
   short-lived capabilities, explicitly delegate isolated-child scope created by
   those capabilities, and preserve snapshot → ordered events → resync semantics.
+  Every frontend action crosses Rust's request/delivery commit boundary
+  immediately before its irreversible step; cancellation may win before that
+  boundary and must report already committed after it, never a false successful
+  cancellation.
   See `docs/architecture/agent-control.md`.
 - Check completion comes only from a random-nonce private OSC marker. Never
   parse terminal prose for exit status. Closed/exited sessions cancel evidence;

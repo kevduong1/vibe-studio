@@ -624,7 +624,7 @@ function TaskCard({
             )}
             {task.outcome === "active" && (
               <button disabled={busy} onClick={() => void run("Keep Task Branch", async () => {
-                keepIsolatedTaskBranch(task);
+                await keepIsolatedTaskBranch(task);
               })}>Keep Branch</button>
             )}
             {task.outcome !== "discarded" && task.outcome !== "archived" && (

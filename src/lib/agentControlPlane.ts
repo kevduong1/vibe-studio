@@ -1,6 +1,6 @@
 import {
   agentControlRespond,
-  agentControlPromptBoundary,
+  agentControlCommit,
   agentControlSync,
   onAgentControlCancel,
   onAgentControlRequest,
@@ -49,11 +49,19 @@ export async function handleAgentControlRequest(
   request: AgentControlRequest,
   cancelled: () => boolean,
 ): Promise<unknown> {
-  throwIfCancelled(cancelled);
+  let committed = false;
+  const cancellable = () => !committed && cancelled();
+  const commitAction = async () => {
+    throwIfCancelled(cancellable);
+    const boundary = await agentControlCommit(request.requestId, request.deliveryId);
+    committed = true;
+    return boundary;
+  };
+  throwIfCancelled(cancellable);
   if (request.action === "focus") {
     if (!request.terminalId) throw new Error("terminalId is required");
+    await commitAction();
     const result = await focusAgentTerminal(request.terminalId);
-    throwIfCancelled(cancelled);
     if (!result.ok) throw new Error(result.message);
     return { terminalId: request.terminalId };
   }
@@ -68,20 +76,16 @@ export async function handleAgentControlRequest(
     let promptBaselineSeq: number | null = null;
     let promptBaselineWorking: boolean | null = null;
     const capturePromptBoundary = async () => {
-      throwIfCancelled(cancelled);
-      const boundary = await agentControlPromptBoundary(
-        request.requestId,
-        request.deliveryId,
-      );
+      const boundary = await commitAction();
       promptBaselineSeq = boundary.seq;
       promptBaselineWorking = boundary.working;
-      throwIfCancelled(cancelled);
+      return "committed" as const;
     };
     if (request.mode === "steer") {
       await steerAgentPrompt(
         request.terminalId,
         request.text,
-        cancelled,
+        cancellable,
         capturePromptBoundary,
       );
     } else {
@@ -114,7 +118,10 @@ export async function handleAgentControlRequest(
       agentKind: kind,
       agentCommand: built.command,
       agentPrelude: built.prelude,
-      cancelled,
+      cancelled: cancellable,
+      beforeLaunch: async () => {
+        await commitAction();
+      },
     });
     // createIsolatedTask checks immediately before its synchronous terminal
     // launch. That launch is the commit point; do not report cancellation for
@@ -122,9 +129,10 @@ export async function handleAgentControlRequest(
     return { taskId: task.id, terminalId: task.agentTerminalId, workspacePath: task.worktreePath };
   }
   const workspace = await gitOpen(request.workspacePath);
-  throwIfCancelled(cancelled);
+  throwIfCancelled(cancellable);
   await useWorkspacesStore.getState().openWorkspace(workspace.root, false);
-  throwIfCancelled(cancelled);
+  throwIfCancelled(cancellable);
+  await commitAction();
   const terminalId = openGlobalTerminal(
     workspace.root,
     kind,

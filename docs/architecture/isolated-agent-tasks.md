@@ -78,12 +78,14 @@ listing the checkout alone still grants no automatic cleanup ownership.
 Removal is also refused when the checkout is the persisted parent of another
 retained task checkout, preventing child merge, fork, and cleanup operations
 from being orphaned behind a deleted parent path.
-Frontend create, merge, and removal flows are serialized as path-keyed
+Frontend create, merge, removal, Keep, Archive, and Restore flows are serialized as path-keyed
 transactions across both the parent repository and linked checkout. A queued
 operation counts as in flight immediately, so parent removal cannot slip
 between child Git creation and task-record persistence. Permanent record
 deletion is likewise refused while its path participates in one of these
-transactions.
+transactions. Persisted outcome changes use a compare-and-set transition API;
+a stale action can never overwrite the result of an earlier transition, and
+ordinary task metadata patches cannot mutate `outcome`.
 
 Apply/Merge first proves both paths are distinct members of the same Git
 worktree set, then requires clean parent and task checkouts and a task branch.

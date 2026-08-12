@@ -38,3 +38,8 @@ Event consumers must begin with `list`, then request `events` after the
 snapshot sequence. When an events response says `resync: true`, discard local
 state and use its replacement snapshot. Always set a finite timeout. Prompt
 text is bounded in memory and not persisted by the control plane.
+
+Cancellation is authoritative only before the frontend action commit. A cancel
+response with `cancelled: false, committed: true` means the launch, focus, or
+prompt already crossed that boundary; wait for the original request's result
+instead of retrying it.

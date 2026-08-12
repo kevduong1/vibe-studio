@@ -57,7 +57,15 @@ interface PersistedState {
 interface IsolatedTasksState {
   tasks: Record<string, IsolatedTask>;
   addTask: (task: IsolatedTask) => void;
-  patchTask: (id: string, patch: Partial<IsolatedTask>) => void;
+  patchTask: (id: string, patch: Omit<Partial<IsolatedTask>, "outcome">) => void;
+  /** Compare-and-set one lifecycle transition. Outcome changes never flow
+   * through the unrestricted metadata patch path. */
+  transitionOutcome: (
+    id: string,
+    expected: IsolatedTaskOutcome,
+    outcome: IsolatedTaskOutcome,
+    patch?: Omit<Partial<IsolatedTask>, "outcome">,
+  ) => boolean;
   /** Permanently remove one task record and references to it from parent plans. */
   deleteTask: (id: string) => void;
 }
@@ -190,6 +198,21 @@ export const useIsolatedTasksStore = create<IsolatedTasksState>((set) => ({
         },
       };
     }),
+  transitionOutcome: (id, expected, outcome, patch = {}) => {
+    let transitioned = false;
+    set((state) => {
+      const task = state.tasks[id];
+      if (!task || task.outcome !== expected) return state;
+      transitioned = true;
+      return {
+        tasks: {
+          ...state.tasks,
+          [id]: { ...task, ...patch, id, outcome, updatedAt: Date.now() },
+        },
+      };
+    });
+    return transitioned;
+  },
   deleteTask: (id) =>
     set((state) => {
       if (!state.tasks[id]) return state;

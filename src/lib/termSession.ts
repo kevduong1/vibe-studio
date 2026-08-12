@@ -36,6 +36,10 @@ import {
 import { trackActivity, type ActivityTracker } from "./terminalActivity";
 import { trackedCommandProgram } from "./trackedCommand";
 import { terminalPromptInput } from "./terminalPrompt";
+import {
+  noteAgentPromptOutput,
+  settleAgentPromptTurn,
+} from "../stores/agentTasks";
 import "@xterm/xterm/css/xterm.css";
 
 /** Terminal colors, mirroring theme.css (sanctioned hardcoded-color site:
@@ -376,6 +380,10 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
             return;
           }
         }
+        if (semanticEnabled && (data.includes("\r") || data.includes("\n"))) {
+          clearSemanticTimer();
+          resetSemanticBoundary();
+        }
         await ptyWrite(id, data);
       })
       .catch(() => {});
@@ -497,6 +505,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     if (classification.strong) {
       clearSemanticTimer();
       applyAgentScreen(id, generation, classification, watched());
+      settleAgentPromptTurn(id, generation, classification);
       return;
     }
     const now = Date.now();
@@ -520,6 +529,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       semanticPendingSince = null;
       semanticPendingKey = null;
       applyAgentScreen(id, generation, classification, watched());
+      settleAgentPromptTurn(id, generation, classification);
       return;
     }
     semanticTimer = window.setTimeout(() => {
@@ -527,9 +537,14 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       semanticPendingSince = null;
       semanticPendingKey = null;
       applyAgentScreen(id, generation, classification, watched());
+      settleAgentPromptTurn(id, generation, classification);
     }, Math.min(delay, remaining));
   };
-  const semanticSub = semanticEnabled ? term.onWriteParsed(inspectSemanticScreen) : null;
+  const semanticSub = semanticEnabled ? term.onWriteParsed(() => {
+    const state = useAgentRuntimeStore.getState().states[id];
+    if (state) noteAgentPromptOutput(id, state.generation);
+    inspectSemanticScreen();
+  }) : null;
   const onWindowFocus = () => {
     if (el.offsetParent !== null) acknowledgeAgentRuntime(id);
   };
@@ -702,6 +717,10 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
         // and the PTY invocation share one JavaScript continuation, so no
         // later keyboard input can slip between them.
         commit?.();
+        if (semanticEnabled) {
+          clearSemanticTimer();
+          resetSemanticBoundary();
+        }
         const data = terminalPromptInput(text, term.modes.bracketedPasteMode);
         if (shellReady) await ptyWrite(id, data);
         else pendingInput += data;

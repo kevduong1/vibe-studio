@@ -12,6 +12,7 @@ import {
   markAgentTaskReviewed,
   markAgentTaskReviewOpened,
   nextActionableId,
+  promptTurnSettledByScreen,
   reviewStateFor,
   sortInboxItems,
   updateCheckRun,
@@ -83,6 +84,16 @@ const snapshot = (patch: Partial<GitReviewSnapshot> = {}): GitReviewSnapshot => 
 });
 
 describe("agent review state", () => {
+  it("settles a fast idle-to-idle prompt only from post-boundary output", () => {
+    const pending = { generation: 3, outputSequence: 8 };
+    const idle = { lifecycle: "idle", strong: false } as const;
+    expect(promptTurnSettledByScreen(pending, 3, 8, idle)).toBe(false);
+    expect(promptTurnSettledByScreen(pending, 2, 9, idle)).toBe(false);
+    expect(promptTurnSettledByScreen(pending, 3, 9, { lifecycle: "unknown", strong: false }))
+      .toBe(false);
+    expect(promptTurnSettledByScreen(pending, 3, 9, idle)).toBe(true);
+  });
+
   it("pins check evidence to the terminal occupant generation", () => {
     useAgentTasksStore.setState({ tasks: { t: task("unreviewed") } });
     const run: CheckRun = {

@@ -84,7 +84,7 @@ fn main() {
             agent_sessions::codex_native_session_exists,
             control::agent_control_sync,
             control::agent_control_respond,
-            control::agent_control_prompt_boundary,
+            control::agent_control_commit,
             control::agent_control_info,
             // fs
             fsops::fs_read_dir,

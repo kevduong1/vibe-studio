@@ -54,17 +54,24 @@ checkpointing, so earlier keyboard input completes first and later input cannot
 overtake the delivery. An input-owned turn remains gated until semantic output
 leaves its accepting prompt state; a fast PTY write cannot make the next queued
 request mistake the prior turn for its own. Immediately before dispatch, the
-frontend asks Rust to capture the current event sequence and working state
-atomically as the turn boundary; Rust also revalidates the delivery's pinned
-terminal generation under that same lock. Prompt-and-wait uses one overall
+frontend asks Rust to commit the exact request/delivery pair. Under the same
+lock, Rust rejects cancellation or an elapsed deadline, revalidates the pinned
+terminal generation, makes the action non-cancellable, and—for prompts—captures
+the current event sequence and working state as the turn boundary. Focus and
+start use the same commit immediately before their first irreversible UI/launch
+action. Prompt-and-wait uses one overall
 deadline and the ordered event ring after that boundary to observe a working
 edge followed by idle/blocked. Thus it
 neither mistakes the preceding turn of a queued prompt for completion nor loses
 a fast completed turn behind the frontend response. It fails if the occupant
 generation changes.
 Independent waits use the same generation pin. Request IDs allow cancellation;
-if a queued prompt is still checkpointing or waiting for safe input, Rust tells
-the frontend to remove it before returning. Active-request project ownership
+if a request is still preparing, Rust tells the frontend to remove or stop it
+before returning. Once the backend commit wins, a later cancel reports
+`cancelled: false, committed: true` and the original request returns its actual
+result; it never claims that an already-launched agent or delivered prompt was
+cancelled. A post-commit frontend response timeout is reported explicitly as an
+uncertain completed outcome and does not emit cancellation. Active-request project ownership
 and the terminal's actual synchronized workspace—not a caller-supplied alias—
 enforce capability scope.
 
@@ -77,8 +84,9 @@ delivery cannot answer, cancel, or remove its replacement.
 
 Every frontend-routed request carries the backend's absolute deadline. The
 frontend checks cancellation and that deadline again after asynchronous
-side-effect boundaries. A cancelled shared start may resolve the repository or
-open its workspace but never launches a terminal afterward. If an isolated
+side-effect boundaries, while the final backend commit is authoritative. A
+cancelled shared start may resolve the repository or open its workspace but
+never launches a terminal afterward. If an isolated
 start is cancelled after Git created its checkout, the checkout and task record
 remain recoverable/listable, but workspace opening and agent launch stop at the
 next safe boundary.
