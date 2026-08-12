@@ -56,6 +56,16 @@ describe("agent screen profiles", () => {
     ).toMatchObject({ lifecycle: "idle", matchedRule: "claude.idle" });
   });
 
+  it("lets newer working evidence supersede a stale blocked overlay", () => {
+    expect(
+      classifyAgentScreen("codex", [
+        "Press enter to confirm",
+        "command accepted",
+        "• Working (1s)",
+      ]),
+    ).toMatchObject({ lifecycle: "working", matchedRule: "codex.working" });
+  });
+
   it("recognizes current structured question overlays", () => {
     expect(
       classifyAgentScreen("claude", [
@@ -93,16 +103,32 @@ describe("agent screen profiles", () => {
     ).toMatchObject({ lifecycle: "idle", matchedRule: "codex.idle" });
   });
 
-  it("does not treat ordinary Codex quota and limit prose as blocked", () => {
-    for (const line of [
-      "The portfolio quota remains unchanged.",
-      "Document the API rate limit and retry policy.",
-      "The concentration limit reached 10% yesterday.",
-    ]) {
-      expect(classifyAgentScreen("codex", [line])).toEqual({
+  it("does not treat conversational question prose as a strong UI overlay", () => {
+    for (const [kind, line] of [
+      ["claude", "Would you like me to implement the next improvement?"],
+      ["claude", "Which approach should I use in the documentation?"],
+      ["codex", "Would you like to run the tests next?"],
+      ["codex", "Please answer with any changes you want."],
+    ] as const) {
+      expect(classifyAgentScreen(kind, [line])).toEqual({
         lifecycle: "unknown",
         strong: false,
       });
+    }
+  });
+
+  it("does not treat ordinary quota and limit prose as blocked", () => {
+    for (const kind of ["claude", "codex"] as const) {
+      for (const line of [
+        "The portfolio quota remains unchanged.",
+        "Document the API rate limit and retry policy.",
+        "The concentration limit reached 10% yesterday.",
+      ]) {
+        expect(classifyAgentScreen(kind, [line])).toEqual({
+          lifecycle: "unknown",
+          strong: false,
+        });
+      }
     }
   });
 

@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
   useRef,
   useState,
@@ -39,7 +41,7 @@ import {
 import { useIsolatedTasksStore } from "../stores/isolatedTasks";
 import { ContextMenu } from "./ContextMenu";
 import AttentionInbox from "./AttentionInbox";
-import WorktreeDialog, { type WorktreeDialogMode } from "./WorktreeDialog";
+import type { WorktreeDialogMode } from "./WorktreeDialog";
 import {
   ActivityGlyph,
   IcBranch,
@@ -49,6 +51,8 @@ import {
   IcSync,
 } from "./icons";
 import "./Titlebar.css";
+
+const WorktreeDialog = lazy(() => import("./WorktreeDialog"));
 
 /** Parent directory name, for disambiguating same-named repos. */
 const parentDir = (path: string): string => {
@@ -603,11 +607,13 @@ export default function Titlebar() {
         </ContextMenu>
       )}
       {worktreeDialog && (
-        <WorktreeDialog
-          parent={worktreeDialog.parent}
-          mode={worktreeDialog.mode}
-          onClose={() => setWorktreeDialog(null)}
-        />
+        <Suspense fallback={null}>
+          <WorktreeDialog
+            parent={worktreeDialog.parent}
+            mode={worktreeDialog.mode}
+            onClose={() => setWorktreeDialog(null)}
+          />
+        </Suspense>
       )}
     </div>
   );

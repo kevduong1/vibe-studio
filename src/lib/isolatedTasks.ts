@@ -30,9 +30,25 @@ import {
   BUILTIN_LAUNCH_PROFILES,
   launchCommand,
 } from "../stores/agentDefinitions";
-import { queueAgentPrompt, steerAgentPrompt } from "./agentPromptQueue";
+import {
+  queueAgentPrompt,
+  steerAgentPrompt,
+} from "./agentPromptQueue";
+import {
+  buildReviewFeedbackBatch,
+  mergeOwnerProofMatches,
+  type MergeOwnerProof,
+} from "./isolatedTaskSafety";
+export {
+  MAX_REVIEW_FEEDBACK_COMMENTS,
+  MAX_REVIEW_FEEDBACK_COMMENT_CHARS,
+} from "./isolatedTaskSafety";
 import { quoteShellArgument } from "./agentLaunchProgram";
 import { basename, dirname } from "./path";
+import {
+  withWorktreePathsLocked,
+  worktreePathOperationPending,
+} from "./worktreeOperations";
 
 export interface WorktreeProjectConfig {
   bootstrapCommand: string | null;
@@ -113,7 +129,7 @@ const nextPreviewPort = (start: number): number => {
   return value;
 };
 
-export async function createIsolatedTask(input: {
+async function createIsolatedTaskUnlocked(input: {
   name: string;
   parentPath: string;
   path: string;
@@ -122,8 +138,15 @@ export async function createIsolatedTask(input: {
   agentKind: AgentKind | null;
   agentCommand?: string;
   agentPrelude?: string | null;
+  /** Cooperative cancellation for callers such as the local control plane.
+   * Git worktree creation itself is not interruptible, so a cancellation that
+   * arrives during it retains the new checkout and task record but never
+   * opens the workspace or launches an agent. */
+  cancelled?: () => boolean;
 }): Promise<IsolatedTask> {
+  if (input.cancelled?.()) throw new Error("Isolated task creation was cancelled.");
   const config = await loadWorktreeProjectConfig(input.parentPath);
+  if (input.cancelled?.()) throw new Error("Isolated task creation was cancelled.");
   const previewPort = nextPreviewPort(config.portStart);
   reservedPreviewPorts.add(previewPort);
   let result: GitWorktreeCreateResult;
@@ -148,7 +171,6 @@ export async function createIsolatedTask(input: {
     branch: result.worktree.branch ?? input.branch,
     agentKind: input.agentKind,
     agentTerminalId: null,
-    reviewAgentTerminalIds: [],
     nativeSessionRef: null,
     plan: [],
     previewPort,
@@ -161,8 +183,18 @@ export async function createIsolatedTask(input: {
     cleanupProvenance: "created-by-vibe",
   };
   useIsolatedTasksStore.getState().addTask(task);
+  if (input.cancelled?.()) {
+    throw new Error(
+      `Isolated task creation was cancelled after Git created ${task.worktreePath}. The recoverable checkout and task record were retained; no agent was launched.`,
+    );
+  }
   try {
     await useWorkspacesStore.getState().openWorkspace(task.worktreePath);
+    if (input.cancelled?.()) {
+      throw new Error(
+        "Isolated task creation was cancelled after the checkout opened. The task was retained and no agent was launched.",
+      );
+    }
     if (input.agentKind) {
       const terminalId = openGlobalTerminal(
         task.worktreePath,
@@ -182,15 +214,90 @@ export async function createIsolatedTask(input: {
   }
 }
 
-export async function mergeIsolatedTask(task: IsolatedTask): Promise<void> {
-  const runtime = task.agentTerminalId
-    ? useAgentRuntimeStore.getState().states[task.agentTerminalId]
-    : undefined;
-  if (runtime?.occupancy === "present" && runtime.lifecycle !== "idle") {
-    throw new Error("Wait for the task agent to become idle before merging its branch.");
+export function createIsolatedTask(
+  input: Parameters<typeof createIsolatedTaskUnlocked>[0],
+): Promise<IsolatedTask> {
+  return withWorktreePathsLocked(
+    [input.parentPath, input.path],
+    () => createIsolatedTaskUnlocked(input),
+  );
+}
+
+const proveMergeOwner = (terminalId: string): MergeOwnerProof => {
+  const runtime = useAgentRuntimeStore.getState().states[terminalId];
+  const session = getSession(terminalId);
+  const sessionIsLive = Boolean(session && !session.exited);
+  if (
+    runtime?.occupancy === "present" &&
+    runtime.lifecycle === "idle" &&
+    sessionIsLive
+  ) {
+    return {
+      terminalId,
+      generation: runtime.generation,
+      occupancy: runtime.occupancy,
+      lifecycle: runtime.lifecycle,
+      runtimeChangedAt: runtime.changedAt,
+      sessionIsLive,
+    };
   }
-  await gitWorktreeMerge(task.parentWorkspacePath, task.worktreePath);
-  useIsolatedTasksStore.getState().patchTask(task.id, { outcome: "applied" });
+  if (
+    runtime?.occupancy === "absent" ||
+    runtime?.occupancy === "exited" ||
+    (!runtime && !sessionIsLive)
+  ) {
+    return {
+      terminalId,
+      generation: runtime?.generation ?? null,
+      occupancy: runtime?.occupancy ?? null,
+      lifecycle: runtime?.lifecycle ?? null,
+      runtimeChangedAt: runtime?.changedAt ?? null,
+      sessionIsLive,
+    };
+  }
+  throw new Error(
+    "The task agent must be proven idle or stopped before its branch can be merged. Wait for process detection to settle or close the agent terminal.",
+  );
+};
+
+const mergeOwnerStillSafe = (proof: MergeOwnerProof): boolean => {
+  const runtime = useAgentRuntimeStore.getState().states[proof.terminalId];
+  const session = getSession(proof.terminalId);
+  return mergeOwnerProofMatches(proof, runtime, Boolean(session && !session.exited));
+};
+
+export function mergeIsolatedTask(task: IsolatedTask): Promise<void> {
+  return withWorktreePathsLocked(
+    [task.parentWorkspacePath, task.worktreePath],
+    async () => {
+      const before = useIsolatedTasksStore.getState().tasks[task.id];
+      if (
+        !before ||
+        before.outcome !== "active" ||
+        before.parentWorkspacePath !== task.parentWorkspacePath ||
+        before.worktreePath !== task.worktreePath
+      ) {
+        throw new Error("The task changed before its branch could be merged.");
+      }
+      const proof = before.agentTerminalId
+        ? proveMergeOwner(before.agentTerminalId)
+        : null;
+      await gitWorktreeMerge(task.parentWorkspacePath, task.worktreePath);
+      const latestTask = useIsolatedTasksStore.getState().tasks[task.id];
+      const taskChanged =
+        !latestTask ||
+        latestTask.outcome !== before.outcome ||
+        latestTask.parentWorkspacePath !== before.parentWorkspacePath ||
+        latestTask.worktreePath !== before.worktreePath ||
+        latestTask.agentTerminalId !== before.agentTerminalId;
+      if (taskChanged || (proof && !mergeOwnerStillSafe(proof))) {
+        throw new Error(
+          "The task or its agent changed state while Git was merging. Git may already have merged the previously reviewed commits, but the task was not marked Applied; review its current changes before merging again.",
+        );
+      }
+      useIsolatedTasksStore.getState().patchTask(task.id, { outcome: "applied" });
+    },
+  );
 }
 
 export function keepIsolatedTaskBranch(task: IsolatedTask): void {
@@ -210,11 +317,24 @@ const boundGlobalTerminalIds = (path: string): string[] =>
 
 const liveGlobalTerminalIds = (path: string): string[] =>
   boundGlobalTerminalIds(path).filter((id) => {
+    const session = getSession(id);
+    // A restored tab has no live PTY until attached and is safe to rebind;
+    // an attached/running shell blocks checkout deletion.
+    return Boolean(session && !session.exited);
+  });
+
+const liveWorkspaceTerminalIds = (path: string): string[] =>
+  useWorkspacesStore.getState().workspaces
+    .filter((workspace) => workspace.path === path)
+    .flatMap((workspace) => Object.keys(workspace.terminal.getState().terminals))
+    .filter((id) => {
       const session = getSession(id);
-      // A restored tab has no live PTY until attached and is safe to rebind;
-      // an attached/running shell blocks checkout deletion.
       return Boolean(session && !session.exited);
     });
+
+const liveCheckoutTerminalIds = (path: string): string[] => [
+  ...new Set([...liveGlobalTerminalIds(path), ...liveWorkspaceTerminalIds(path)]),
+];
 
 const checkoutHasLiveGlobalTerminals = async (path: string): Promise<boolean> => {
   const live = liveGlobalTerminalIds(path);
@@ -226,28 +346,52 @@ const checkoutHasLiveGlobalTerminals = async (path: string): Promise<boolean> =>
   return true;
 };
 
+const liveDependentTasks = (path: string): IsolatedTask[] =>
+  Object.values(useIsolatedTasksStore.getState().tasks).filter(
+    (task) =>
+      task.parentWorkspacePath === path &&
+      task.worktreePath !== path &&
+      task.outcome !== "discarded" &&
+      task.checkoutRemovedAt === null,
+  );
+
+const checkoutHasDependentTasks = async (path: string): Promise<boolean> => {
+  const dependents = liveDependentTasks(path);
+  if (dependents.length === 0) return false;
+  const names = dependents.slice(0, 3).map((task) => `“${task.name}”`).join(", ");
+  const remainder = dependents.length > 3 ? ` and ${dependents.length - 3} more` : "";
+  await message(
+    `This checkout is the parent repository for ${dependents.length} retained isolated task${dependents.length === 1 ? "" : "s"}: ${names}${remainder}. Remove or re-create those task checkouts before removing their parent.`,
+    { title: "Checkout Has Dependent Tasks", kind: "warning" },
+  );
+  return true;
+};
+
 /**
  * Explicitly remove a linked checkout while retaining its branch. Workspace
  * editor prompts and live global terminals get a chance to stop the removal
  * before Git is invoked. Returns false when any safety gate stops the removal.
  */
-export async function removeWorktreeCheckout(
+async function removeWorktreeCheckoutUnlocked(
   repoPath: string,
   worktreePath: string,
   branch: string | null,
 ): Promise<boolean> {
+  if (await checkoutHasDependentTasks(worktreePath)) return false;
   if (await checkoutHasLiveGlobalTerminals(worktreePath)) return false;
   await useWorkspacesStore.getState().closeWorkspace(worktreePath);
   if (useWorkspacesStore.getState().workspaces.some((ws) => ws.path === worktreePath)) return false;
+  if (await checkoutHasDependentTasks(worktreePath)) return false;
   if (await checkoutHasLiveGlobalTerminals(worktreePath)) return false;
   try {
     await gitWorktreeRemove(repoPath, worktreePath, false);
   } catch (error) {
     const force = await confirm(
-      `Git refused to remove the checkout:\n\n${String(error)}\n\nForce removal? ${branch ? `The branch “${branch}” will be kept, but ` : ""}uncommitted checkout changes will be lost.`,
+      `Git refused to remove the checkout:\n\n${String(error)}\n\nForce removal? ${branch ? `The branch “${branch}” will be kept, but ` : ""}the worktree lock will be overridden and uncommitted checkout changes will be lost.`,
       { title: "Force Remove Worktree?", kind: "warning" },
     );
     if (!force) return false;
+    if (await checkoutHasDependentTasks(worktreePath)) return false;
     if (await checkoutHasLiveGlobalTerminals(worktreePath)) return false;
     await gitWorktreeRemove(repoPath, worktreePath, true);
   }
@@ -264,19 +408,35 @@ export async function removeWorktreeCheckout(
   return true;
 }
 
-/** Remove a task's checkout but retain its task record under Removed tasks. */
-export async function removeIsolatedTaskWorktree(task: IsolatedTask): Promise<boolean> {
-  const removed = await removeWorktreeCheckout(
-    task.parentWorkspacePath,
-    task.worktreePath,
-    task.branch,
+export function removeWorktreeCheckout(
+  repoPath: string,
+  worktreePath: string,
+  branch: string | null,
+): Promise<boolean> {
+  return withWorktreePathsLocked(
+    [repoPath, worktreePath],
+    () => removeWorktreeCheckoutUnlocked(repoPath, worktreePath, branch),
   );
-  if (!removed) return false;
-  useIsolatedTasksStore.getState().patchTask(task.id, {
-    outcome: "discarded",
-    checkoutRemovedAt: Date.now(),
-  });
-  return true;
+}
+
+/** Remove a task's checkout but retain its task record under Removed tasks. */
+export function removeIsolatedTaskWorktree(task: IsolatedTask): Promise<boolean> {
+  return withWorktreePathsLocked(
+    [task.parentWorkspacePath, task.worktreePath],
+    async () => {
+      const removed = await removeWorktreeCheckoutUnlocked(
+        task.parentWorkspacePath,
+        task.worktreePath,
+        task.branch,
+      );
+      if (!removed) return false;
+      useIsolatedTasksStore.getState().patchTask(task.id, {
+        outcome: "discarded",
+        checkoutRemovedAt: Date.now(),
+      });
+      return true;
+    },
+  );
 }
 
 export async function discardIsolatedTask(task: IsolatedTask): Promise<boolean> {
@@ -288,6 +448,17 @@ export async function discardIsolatedTask(task: IsolatedTask): Promise<boolean> 
 
 /** Permanently delete Vibe's metadata only; the checkout and branch remain. */
 export function deleteIsolatedTaskRecord(task: IsolatedTask): void {
+  if (worktreePathOperationPending(task.worktreePath)) {
+    throw new Error(
+      "Wait for this task's worktree creation, merge, or removal operation to finish before deleting its record.",
+    );
+  }
+  const live = liveCheckoutTerminalIds(task.worktreePath);
+  if (live.length > 0) {
+    throw new Error(
+      `Close the ${live.length} live terminal${live.length === 1 ? "" : "s"} bound to this task before deleting its record. This keeps its reserved PORT from being assigned to another live task.`,
+    );
+  }
   useReviewCommentsStore.getState().clearTask(task.id);
   useIsolatedTasksStore.getState().deleteTask(task.id);
 }
@@ -299,7 +470,11 @@ export const activeTaskForPath = (path: string): IsolatedTask | undefined =>
  * allowed only while the same detected occupant generation owns an agent
  * prompt: idle, or a screen-classified question (never permission/auth). */
 export async function sendIsolatedTaskFeedback(task: IsolatedTask): Promise<void> {
-  const terminalId = task.agentTerminalId;
+  const latestIsolatedTask = useIsolatedTasksStore.getState().tasks[task.id];
+  if (!latestIsolatedTask || latestIsolatedTask.agentTerminalId !== task.agentTerminalId) {
+    throw new Error("The task's owning agent changed before feedback could be sent");
+  }
+  const terminalId = latestIsolatedTask.agentTerminalId;
   if (!terminalId) throw new Error("This task has no agent terminal");
   const owner = useAgentTasksStore.getState().tasks[terminalId];
   const runtime = useAgentRuntimeStore.getState().states[terminalId];
@@ -320,19 +495,63 @@ export async function sendIsolatedTaskFeedback(task: IsolatedTask): Promise<void
   }
   const session = getSession(terminalId);
   if (!session || session.exited) throw new Error("The agent terminal is no longer live");
+  if (!owner.latestFingerprint) {
+    throw new Error("Current review evidence is not available yet");
+  }
+  const expectedGeneration = owner.generation;
+  const expectedFingerprint = owner.latestFingerprint;
   const comments = useReviewCommentsStore
     .getState()
     .comments.filter((comment) => comment.taskId === task.id);
   if (comments.length === 0) throw new Error("Add at least one line comment first");
-  const followup = comments
-    .slice(0, 50)
-    .map((comment) =>
-      `${comment.path}:${comment.line} — ${comment.body.replace(/[\r\n]+/g, " ").trim()}`,
-    )
-    .join("; ");
-  await queueAgentPrompt(terminalId, `Review feedback: ${followup}`);
-  markAgentTaskFeedback(terminalId);
-  useReviewCommentsStore.getState().clearTask(task.id);
+  if (comments.some((comment) =>
+    comment.terminalId !== terminalId ||
+    comment.generation !== expectedGeneration ||
+    comment.fingerprint !== expectedFingerprint
+  )) {
+    throw new Error(
+      "Review evidence changed after one or more comments were drafted. Remove the outdated comments and review the current changes before sending feedback.",
+    );
+  }
+  const batch = buildReviewFeedbackBatch(comments);
+  await queueAgentPrompt(terminalId, batch.prompt, undefined, (checkpoint) => {
+    const latest = useAgentTasksStore.getState().tasks[terminalId];
+    const latestTaskOwner = useIsolatedTasksStore.getState().tasks[task.id];
+    const currentComments = useReviewCommentsStore.getState().comments;
+    if (
+      !latest ||
+      latestTaskOwner?.agentTerminalId !== terminalId ||
+      latest.isolatedTaskId !== task.id ||
+      latest.generation !== expectedGeneration ||
+      latest.latestFingerprint !== expectedFingerprint ||
+      checkpoint.checkpoint.snapshot.fingerprint !== expectedFingerprint ||
+      batch.comments.some((comment) =>
+        !currentComments.some((current) =>
+          current.id === comment.id &&
+          current.terminalId === terminalId &&
+          current.generation === expectedGeneration &&
+          current.fingerprint === expectedFingerprint
+        )
+      )
+    ) {
+      throw new Error(
+        "Review evidence or its drafted comments changed before feedback reached the terminal. Review the current changes and try again.",
+      );
+    }
+  });
+  const marked = markAgentTaskFeedback(
+    terminalId,
+    expectedGeneration,
+    expectedFingerprint,
+  );
+  for (const comment of batch.comments) {
+    useReviewCommentsStore.getState().remove(comment.id);
+  }
+  if (!marked) {
+    throw new Error(
+      "Feedback was delivered for the reviewed evidence, but newer changes arrived before it could be marked Needs changes. The sent comments were removed; review the current evidence before sending more.",
+    );
+  }
 }
 
 export function launchReadOnlyReviewAgent(task: IsolatedTask): string {
@@ -346,16 +565,12 @@ export function launchReadOnlyReviewAgent(task: IsolatedTask): string {
       `Review the changes in this isolated task against base ${task.baseCommit}. Do not modify files. Report correctness, safety, and missing-test findings.`,
     ],
   });
-  const terminalId = openGlobalTerminal(
+  return openGlobalTerminal(
     task.worktreePath,
     "codex",
     built.environmentPrelude ?? undefined,
     built.command,
   );
-  useIsolatedTasksStore.getState().patchTask(task.id, {
-    reviewAgentTerminalIds: [...(task.reviewAgentTerminalIds ?? []), terminalId],
-  });
-  return terminalId;
 }
 
 export async function restoreTaskCode(task: IsolatedTask): Promise<void> {

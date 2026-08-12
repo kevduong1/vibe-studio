@@ -6,6 +6,19 @@ export interface PipelineValidation {
   errors: string[];
 }
 
+export const automaticPipelineAuthorized = (
+  task: { generation: number; autoRun: boolean; selectedPipeline: string | null } | undefined,
+  rootLabel: string,
+  generation: number,
+  trusted: boolean,
+): boolean => Boolean(
+  trusted &&
+  task &&
+  task.generation === generation &&
+  task.autoRun &&
+  task.selectedPipeline === rootLabel,
+);
+
 export function fingerprintDecision(
   attempt: 1 | 2,
   status: string,

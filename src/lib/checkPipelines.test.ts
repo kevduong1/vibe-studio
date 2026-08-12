@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { fingerprintDecision, validatePipeline } from "./pipelineModel";
+import {
+  automaticPipelineAuthorized,
+  fingerprintDecision,
+  validatePipeline,
+} from "./pipelineModel";
 import type { TaskDef, TaskDocument } from "./tasks";
 
 const task = (label: string, patch: Partial<TaskDef> = {}): TaskDef => ({
@@ -88,5 +92,18 @@ describe("check fingerprint stability", () => {
     expect(fingerprintDecision(2, "passed", "before", "after")).toBe("invalidated");
     expect(fingerprintDecision(1, "passed", "same", "same")).toBe("stable");
     expect(fingerprintDecision(1, "failed", "before", "after")).toBe("stable");
+  });
+});
+
+describe("automatic pipeline authorization", () => {
+  const selected = { generation: 3, autoRun: true, selectedPipeline: "verify" };
+
+  it("requires the same generation, selected root, trust, and enabled flag", () => {
+    expect(automaticPipelineAuthorized(selected, "verify", 3, true)).toBe(true);
+    expect(automaticPipelineAuthorized(selected, "other", 3, true)).toBe(false);
+    expect(automaticPipelineAuthorized(selected, "verify", 4, true)).toBe(false);
+    expect(automaticPipelineAuthorized(selected, "verify", 3, false)).toBe(false);
+    expect(automaticPipelineAuthorized({ ...selected, autoRun: false }, "verify", 3, true)).toBe(false);
+    expect(automaticPipelineAuthorized(undefined, "verify", 3, true)).toBe(false);
   });
 });

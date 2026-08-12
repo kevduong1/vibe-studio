@@ -21,10 +21,27 @@ def control_dir() -> Path:
             if info.is_file():
                 try:
                     with info.open("rb") as handle:
-                        identifier = plistlib.load(handle).get("CFBundleIdentifier", identifier)
+                        configured = plistlib.load(handle).get("CFBundleIdentifier")
+                        if isinstance(configured, str) and configured:
+                            identifier = configured
                 except (OSError, plistlib.InvalidFileException):
                     pass
-                break
+                return Path.home() / f"Library/Application Support/{identifier}"
+        # `tauri dev` runs the copy under target/debug/resources, outside an
+        # app bundle. Resolve the development identifier from the nearest
+        # Tauri config so it does not accidentally connect to release data.
+        for parent in Path(__file__).resolve().parents:
+            for name in ("tauri.dev.conf.json", "tauri.conf.json"):
+                config = parent / name
+                if not config.is_file():
+                    continue
+                try:
+                    configured = json.loads(config.read_text(encoding="utf-8")).get("identifier")
+                    if isinstance(configured, str) and configured:
+                        identifier = configured
+                        return Path.home() / f"Library/Application Support/{identifier}"
+                except (OSError, json.JSONDecodeError):
+                    pass
         return Path.home() / f"Library/Application Support/{identifier}"
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "dev.kevinduong.vibe-studio"
 

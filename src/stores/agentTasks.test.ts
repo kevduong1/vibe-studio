@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { GitReviewSnapshot } from "../lib/ipc";
 import type { AgentRuntimeState } from "../lib/agentState";
 import {
+  acceptAgentTask,
   beginCheckRun,
   checkStateFor,
   changedReviewPaths,
   inboxTier,
   isInboxActionable,
+  markAgentTaskFeedback,
+  markAgentTaskReviewed,
+  markAgentTaskReviewOpened,
   nextActionableId,
   reviewStateFor,
   sortInboxItems,
@@ -53,6 +57,7 @@ const task = (state: AgentTask["reviewState"], updatedAt = 10): AgentTask => ({
   turnBaseFileFingerprints: null,
   turnBaseTree: null,
   latestTurnChangedFiles: [],
+  reviewOpenedFingerprint: null,
   reviewedFingerprint: null,
   feedbackFingerprint: null,
   acceptedFingerprint: null,
@@ -114,6 +119,54 @@ describe("agent review state", () => {
     expect(reviewStateFor({ ...base, acceptedFingerprint: "fp" }, snapshot())).toBe("accepted");
     expect(reviewStateFor({ ...base, acceptedFingerprint: "old" }, snapshot())).toBe("stale");
     expect(reviewStateFor({ ...base, acceptedFingerprint: "old", reviewedFingerprint: "fp" }, snapshot())).toBe("reviewed");
+  });
+
+  it("marks reviewed evidence only when generation and fingerprint still match", () => {
+    useAgentTasksStore.setState({
+      tasks: {
+        t: { ...task("unreviewed"), latestFingerprint: "current" },
+      },
+    });
+    expect(markAgentTaskReviewed("t", 2, "current")).toBe(false);
+    expect(markAgentTaskReviewed("t", 1, "old")).toBe(false);
+    expect(markAgentTaskReviewed("t", 1, "current")).toBe(false);
+    expect(useAgentTasksStore.getState().tasks.t.reviewedFingerprint).toBeNull();
+    expect(markAgentTaskReviewOpened("t", 1, "current")).toBe(true);
+    expect(markAgentTaskReviewed("t", 1, "current")).toBe(true);
+    expect(useAgentTasksStore.getState().tasks.t.reviewedFingerprint).toBe("current");
+    useAgentTasksStore.setState({ tasks: {} });
+  });
+
+  it("marks feedback only for the selected generation and fingerprint", () => {
+    useAgentTasksStore.setState({
+      tasks: {
+        t: { ...task("unreviewed"), latestFingerprint: "current" },
+      },
+    });
+    expect(markAgentTaskFeedback("t", 2, "current")).toBe(false);
+    expect(markAgentTaskFeedback("t", 1, "old")).toBe(false);
+    expect(useAgentTasksStore.getState().tasks.t.feedbackFingerprint).toBeNull();
+    expect(markAgentTaskFeedback("t", 1, "current")).toBe(true);
+    expect(useAgentTasksStore.getState().tasks.t.feedbackFingerprint).toBe("current");
+    useAgentTasksStore.setState({ tasks: {} });
+  });
+
+  it("accepts only the reviewed generation and fingerprint rendered by the action", () => {
+    useAgentTasksStore.setState({
+      tasks: {
+        t: {
+          ...task("reviewed"),
+          latestFingerprint: "current",
+          reviewedFingerprint: "current",
+        },
+      },
+    });
+    expect(acceptAgentTask("t", 2, "current")).toBe(false);
+    expect(acceptAgentTask("t", 1, "old")).toBe(false);
+    expect(useAgentTasksStore.getState().tasks.t.acceptedFingerprint).toBeNull();
+    expect(acceptAgentTask("t", 1, "current")).toBe(true);
+    expect(useAgentTasksStore.getState().tasks.t.acceptedFingerprint).toBe("current");
+    useAgentTasksStore.setState({ tasks: {} });
   });
 
   it("keeps check results independent and marks old evidence stale", () => {

@@ -36,7 +36,7 @@ import { useProjectColorVar } from "../lib/projectColors";
 import { Dock, type DockPaneProps } from "./Dock";
 import { ContextMenu } from "./ContextMenu";
 import { AgentSubagents } from "./AgentSubagents";
-import { requestAgentLaunch } from "./AgentLaunchDialog";
+import { requestAgentLaunch } from "../lib/agentLaunchRequest";
 import {
   ActivityGlyph,
   IcBell,
@@ -315,7 +315,13 @@ export default function AgentDock({ groupingId }: { groupingId: string }) {
         onTabContextMenu={(t, e) => {
           e.preventDefault();
           const runtime = useAgentRuntimeStore.getState().states[t.id];
-          if (t.kind !== "shell" || runtime?.occupancy === "present")
+          const notificationsEnabled =
+            useAgentTerminalsStore.getState().terminals[t.id]?.notificationsEnabled === true;
+          if (
+            t.kind !== "shell" ||
+            runtime?.occupancy === "present" ||
+            notificationsEnabled
+          )
             setTabMenu({ id: t.id, x: e.clientX, y: e.clientY });
         }}
         closeTerminal={closeAgentTerminal}

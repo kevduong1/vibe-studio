@@ -60,8 +60,12 @@ const stripJsonc = (s: string): string =>
     )
     .replace(/"(?:[^"\\]|\\.)*"|,(?=\s*[}\]])/g, (m) => (m === "," ? "" : m));
 
-const str = (v: unknown): string | null =>
-  typeof v === "string" && v ? v : null;
+const isNonBlankString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+
+/** Validate presence without normalizing the user's authored value. */
+const str = (value: unknown): string | null =>
+  isNonBlankString(value) ? value : null;
 
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" ? (v as Record<string, unknown>) : {};
@@ -85,13 +89,21 @@ const normalizeTask = (
     return { diagnostics: [{ index, label: null, message: "Task is missing a label" }] };
   }
   const diagnostics: TaskParseDiagnostic[] = [];
+  const diagnose = (message: string) => diagnostics.push({ index, label, message });
+  if (Object.prototype.hasOwnProperty.call(t, "type") && !str(t.type)) {
+    diagnose("type must be a non-empty string");
+  }
+  if (Object.prototype.hasOwnProperty.call(t, "command") && !str(t.command)) {
+    diagnose("command must be a non-empty string");
+  }
   let dependsOn: string[] = [];
   if (Object.prototype.hasOwnProperty.call(t, "dependsOn")) {
-    if (typeof t.dependsOn === "string" && t.dependsOn.length > 0) {
+    if (isNonBlankString(t.dependsOn)) {
       dependsOn = [t.dependsOn];
     } else if (
       Array.isArray(t.dependsOn) &&
-      t.dependsOn.every((value) => typeof value === "string" && value.length > 0)
+      t.dependsOn.length > 0 &&
+      t.dependsOn.every(isNonBlankString)
     ) {
       dependsOn = t.dependsOn;
     } else {
@@ -104,20 +116,59 @@ const normalizeTask = (
   }
   const supported = type === "shell" || type === "process";
   if (!command && dependsOn.length === 0) {
-    diagnostics.push({ index, label, message: "Task needs a command or dependency" });
+    diagnose("Task needs a command or dependency");
+  }
+
+  let args: string[] = [];
+  if (Object.prototype.hasOwnProperty.call(t, "args")) {
+    if (Array.isArray(t.args) && t.args.every((value) => typeof value === "string")) {
+      args = t.args;
+    } else {
+      diagnose("args must be an array of strings");
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(t, "dependsOrder") &&
+    t.dependsOrder !== "parallel" &&
+    t.dependsOrder !== "sequence"
+  ) diagnose("dependsOrder must be parallel or sequence");
+  if (Object.prototype.hasOwnProperty.call(t, "isBackground") && typeof t.isBackground !== "boolean") {
+    diagnose("isBackground must be a boolean");
   }
 
   const options = { ...obj(base.options), ...obj(osx.options) };
+  if (Object.prototype.hasOwnProperty.call(t, "options") && (!t.options || typeof t.options !== "object" || Array.isArray(t.options))) {
+    diagnose("options must be an object");
+  }
+  const cwd = str(options.cwd);
+  if (Object.prototype.hasOwnProperty.call(options, "cwd") && !cwd) {
+    diagnose("options.cwd must be a non-empty string");
+  }
   // env merges per-KEY across the osx override (VS Code semantics), unlike
   // the per-property options spread above. Keys must be plain identifiers:
   // they're spliced unquoted into `export K=…`, where a key like "MY-VAR"
   // would be a parse error that aborts the whole &&-chained line.
   const env: Record<string, string> = {};
+  const rawBaseEnv = obj(base.options).env;
+  const rawOsxEnv = obj(osx.options).env;
+  if (
+    (Object.prototype.hasOwnProperty.call(obj(base.options), "env") &&
+      (!rawBaseEnv || typeof rawBaseEnv !== "object" || Array.isArray(rawBaseEnv))) ||
+    (Object.prototype.hasOwnProperty.call(obj(osx.options), "env") &&
+      (!rawOsxEnv || typeof rawOsxEnv !== "object" || Array.isArray(rawOsxEnv)))
+  ) diagnose("options.env must be an object of string values");
   for (const [k, v] of Object.entries({
     ...obj(obj(base.options).env),
     ...obj(obj(osx.options).env),
   })) {
-    if (typeof v === "string" && /^[A-Za-z_]\w*$/.test(k)) env[k] = v;
+    if (typeof v !== "string") {
+      diagnose(`options.env.${k} must be a string`);
+    } else if (!/^[A-Za-z_]\w*$/.test(k)) {
+      diagnose(`options.env key ${k} is not a valid shell identifier`);
+    } else {
+      env[k] = v;
+    }
   }
 
   const g = t.group;
@@ -146,10 +197,8 @@ const normalizeTask = (
     dependsOrder: t.dependsOrder === "sequence" ? "sequence" : "parallel",
     isBackground: t.isBackground === true,
     diagnostics: diagnostics.map((diagnostic) => diagnostic.message),
-    args: Array.isArray(t.args)
-      ? t.args.filter((a): a is string => typeof a === "string")
-      : [],
-    cwd: str(options.cwd),
+    args,
+    cwd,
     env,
     group,
     isDefaultBuild,
@@ -200,7 +249,7 @@ export async function loadTasks(workspaceRoot: string): Promise<TaskDef[]> {
   // The legacy ⌘⇧B runner executes one command directly; compound roots and
   // unsupported types belong to the review-pipeline DAG engine.
   return (await loadTaskDocument(workspaceRoot)).tasks.filter(
-    (task) => task.supported && !!task.command,
+    (task) => task.supported && !!task.command && task.diagnostics.length === 0,
   );
 }
 
@@ -309,7 +358,9 @@ const cwdWord = (raw: string, ws: Workspace): string => {
 export function shellCommandLine(task: TaskDef, ws: Workspace): string {
   if (!task.command) throw new Error(`Task "${task.label}" has no command`);
   const command = [
-    substitute(task.command, ws),
+    task.taskType === "process"
+      ? substituteWord(task.command, ws)
+      : substitute(task.command, ws),
     ...task.args.map((a) => substituteWord(a, ws)),
   ].join(" ");
   const setup = [

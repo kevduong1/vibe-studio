@@ -6,6 +6,7 @@ import {
   dispatchTaskPlanStep,
   keepIsolatedTaskBranch,
   launchReadOnlyReviewAgent,
+  MAX_REVIEW_FEEDBACK_COMMENT_CHARS,
   mergeIsolatedTask,
   forkIsolatedTask,
   removeIsolatedTaskWorktree,
@@ -26,7 +27,11 @@ import {
 import { getWorkspaceLsp, useLspStatusVersionValue } from "../lib/lsp/servers";
 import { basename } from "../lib/path";
 import { useProjectColorVar } from "../lib/projectColors";
-import { checkStateFor, useAgentTasksStore } from "../stores/agentTasks";
+import {
+  checkStateFor,
+  markAgentTaskReviewOpened,
+  useAgentTasksStore,
+} from "../stores/agentTasks";
 import {
   useIsolatedTasksStore,
   type IsolatedTask,
@@ -194,10 +199,8 @@ function TaskCard({
   const [commentLine, setCommentLine] = useState(1);
   const [commentBody, setCommentBody] = useState("");
   const [planTitle, setPlanTitle] = useState("");
-  const agentTasks = useAgentTasksStore((state) => state.tasks);
-  const agentTask = useMemo(
-    () => Object.values(agentTasks).find((candidate) => candidate.isolatedTaskId === task.id),
-    [agentTasks, task.id],
+  const agentTask = useAgentTasksStore(
+    (state) => task.agentTerminalId ? state.tasks[task.agentTerminalId] : undefined,
   );
   const runtime = useAgentRuntimeStore((state) =>
     task.agentTerminalId ? state.states[task.agentTerminalId] : undefined,
@@ -209,6 +212,11 @@ function TaskCard({
     () => allComments.filter((comment) => comment.taskId === task.id),
     [allComments, task.id],
   );
+  const outdatedCommentCount = comments.filter((comment) =>
+    comment.terminalId !== task.agentTerminalId ||
+    comment.generation !== agentTask?.generation ||
+    comment.fingerprint !== agentTask?.latestFingerprint
+  ).length;
   // Re-render when published diagnostics change; diagnostics() itself is a
   // framework-free snapshot API used by editors and future automation.
   const lspVersion = useLspStatusVersionValue();
@@ -221,9 +229,17 @@ function TaskCard({
   const open = useWorkspacesStore((state) =>
     state.workspaces.some((workspace) => workspace.path === task.worktreePath),
   );
+  const checkoutAvailable = Boolean(worktree && !worktree.prunable);
+  const checkoutUnavailableTitle = worktree?.prunable
+    ? "This worktree is prunable because its checkout path is unavailable"
+    : undefined;
 
   useEffect(() => {
-    if (!expanded || task.outcome === "discarded") return;
+    if (!expanded || task.outcome === "discarded" || !worktree || worktree.prunable) {
+      setCommitCount(null);
+      setPreviewCount(null);
+      return;
+    }
     let cancelled = false;
     void Promise.all([
       gitLog(task.worktreePath, 200, 0).then((result) => {
@@ -247,7 +263,7 @@ function TaskCard({
     return () => {
       cancelled = true;
     };
-  }, [expanded, task.baseCommit, task.outcome, task.worktreePath]);
+  }, [expanded, task.baseCommit, task.outcome, task.worktreePath, worktree]);
 
   const run = async (title: string, action: () => Promise<void>) => {
     if (busyRef.current) return;
@@ -265,16 +281,26 @@ function TaskCard({
   };
 
   const review = async () => {
+    if (!checkoutAvailable) throw new Error("The task checkout is not available.");
     if (task.agentTerminalId && agentTask) {
       const result = await reviewAgentChanges(task.agentTerminalId);
       if (!result.ok) throw new Error(result.message);
+      if (!markAgentTaskReviewOpened(
+        task.agentTerminalId,
+        result.review.generation,
+        result.review.fingerprint,
+      )) {
+        throw new Error(
+          "Changes changed while the review was opening. Open the current evidence again.",
+        );
+      }
       return;
     }
     await useWorkspacesStore.getState().openWorkspace(task.worktreePath);
   };
 
   const reviewTurnFile = async (path: string) => {
-    if (!agentTask?.turnBaseTree) return;
+    if (!agentTask?.turnBaseTree || !checkoutAvailable) return;
     await useWorkspacesStore.getState().openWorkspace(task.worktreePath);
     const workspace = useWorkspacesStore
       .getState()
@@ -375,7 +401,12 @@ function TaskCard({
             <div className="isolated-task-turn-files">
               <span>Latest turn</span>
               {agentTask.latestTurnChangedFiles.map((file) => (
-                <button key={file} onClick={() => void run("Open Turn Diff", () => reviewTurnFile(file))}>{file}</button>
+                <button
+                  key={file}
+                  disabled={!checkoutAvailable}
+                  title={checkoutUnavailableTitle}
+                  onClick={() => void run("Open Turn Diff", () => reviewTurnFile(file))}
+                >{file}</button>
               ))}
             </div>
           )}
@@ -500,14 +531,40 @@ function TaskCard({
                 />
                 <input
                   value={commentBody}
+                  maxLength={MAX_REVIEW_FEEDBACK_COMMENT_CHARS}
                   placeholder="Line comment"
                   onChange={(event) => setCommentBody(event.target.value)}
                 />
                 <button
-                  disabled={!commentPath || !commentBody.trim()}
+                  disabled={
+                    !commentPath ||
+                    !commentBody.trim() ||
+                    !task.agentTerminalId ||
+                    !agentTask.latestFingerprint
+                  }
                   onClick={() => {
+                    const terminalId = task.agentTerminalId;
+                    const fingerprint = agentTask.latestFingerprint;
+                    if (!terminalId || !fingerprint) return;
+                    const latest = useAgentTasksStore.getState().tasks[terminalId];
+                    const latestTaskOwner = useIsolatedTasksStore.getState().tasks[task.id];
+                    if (
+                      !latest ||
+                      latestTaskOwner?.agentTerminalId !== terminalId ||
+                      latest.generation !== agentTask.generation ||
+                      latest.latestFingerprint !== fingerprint
+                    ) {
+                      void message(
+                        "Review evidence changed before this comment was added. Review the current changes and try again.",
+                        { title: "Add Review Comment", kind: "warning" },
+                      );
+                      return;
+                    }
                     useReviewCommentsStore.getState().add({
                       taskId: task.id,
+                      terminalId,
+                      generation: agentTask.generation,
+                      fingerprint,
                       path: commentPath,
                       line: commentLine,
                       body: commentBody.trim(),
@@ -519,39 +576,49 @@ function TaskCard({
               {comments.map((comment) => (
                 <div key={comment.id} className="isolated-task-comment">
                   <span>{comment.path}:{comment.line}</span>
-                  <span>{comment.body}</span>
+                  <span>
+                    {comment.body}
+                    {(comment.terminalId !== task.agentTerminalId ||
+                      comment.generation !== agentTask.generation ||
+                      comment.fingerprint !== agentTask.latestFingerprint) && " · Outdated evidence"}
+                  </span>
                   <button onClick={() => useReviewCommentsStore.getState().remove(comment.id)}>×</button>
                 </div>
               ))}
               {comments.length > 0 && (
                 <button
                   className="isolated-task-send-feedback"
-                  disabled={busy}
+                  disabled={busy || outdatedCommentCount > 0}
+                  title={outdatedCommentCount > 0
+                    ? "Remove outdated comments before sending feedback"
+                    : undefined}
                   onClick={() => void run("Send Review Feedback", () => sendIsolatedTaskFeedback(task))}
-                >Send {comments.length} comment{comments.length === 1 ? "" : "s"} to agent</button>
+                >
+                  Send review feedback ({comments.length} pending{outdatedCommentCount > 0 ? `, ${outdatedCommentCount} outdated` : ""})
+                </button>
               )}
             </div>
           )}
           <div className="isolated-task-actions">
             {task.outcome !== "discarded" && worktree && (
-              <button disabled={busy} onClick={() => void run("Review Task", review)}>
+              <button disabled={busy || !checkoutAvailable} title={checkoutUnavailableTitle} onClick={() => void run("Review Task", review)}>
                 {open ? "Compare Changes" : "Open & Compare"}
               </button>
             )}
             {task.outcome === "archived" && worktree && (
-              <button disabled={busy} onClick={() => void run("Restore Code", () => restoreTaskCode(task))}>Restore Code</button>
+              <button disabled={busy || !checkoutAvailable} title={checkoutUnavailableTitle} onClick={() => void run("Restore Code", () => restoreTaskCode(task))}>Restore Code</button>
             )}
             {task.outcome === "archived" && worktree && (
-              <button disabled={busy} onClick={() => void run("Restore Conversation", () => restoreTaskConversation(task))}>Restore Conversation</button>
+              <button disabled={busy || !checkoutAvailable} title={checkoutUnavailableTitle} onClick={() => void run("Restore Conversation", () => restoreTaskConversation(task))}>Restore Conversation</button>
             )}
             {task.outcome !== "discarded" && (
               <button disabled={busy} onClick={() => void run("Fork Task", async () => { await forkIsolatedTask(task); })}>Fork</button>
             )}
             {task.outcome === "active" && worktree && (
-              <button disabled={busy} onClick={() => void run("Apply Task", () => mergeIsolatedTask(task))}>Apply / Merge</button>
+              <button disabled={busy || !checkoutAvailable} title={checkoutUnavailableTitle} onClick={() => void run("Apply Task", () => mergeIsolatedTask(task))}>Apply / Merge</button>
             )}
             {task.outcome !== "discarded" && worktree && (
-              <button disabled={busy} onClick={() => void run("Launch Review Agent", async () => {
+              <button disabled={busy || !checkoutAvailable} title={checkoutUnavailableTitle} onClick={() => void run("Launch Review Agent", async () => {
                 launchReadOnlyReviewAgent(task);
               })}>Read-only Review Agent</button>
             )}
@@ -641,16 +708,37 @@ export default function IsolatedTasksPanel() {
     () => new Set((worktrees ?? []).map((worktree) => worktree.path)),
     [worktrees],
   );
+  const repositoryTasks = useMemo(() => {
+    // Follow persisted parent links transitively so historical grandchildren
+    // remain visible even when an intermediate parent checkout was removed
+    // outside Vibe Studio. Live worktree paths seed the repository family.
+    const relatedPaths = new Set(worktreePaths);
+    const relatedTaskIds = new Set<string>();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const task of tasks) {
+        if (
+          relatedTaskIds.has(task.id) ||
+          (!relatedPaths.has(task.parentWorkspacePath) && !relatedPaths.has(task.worktreePath))
+        ) continue;
+        relatedTaskIds.add(task.id);
+        relatedPaths.add(task.worktreePath);
+        changed = true;
+      }
+    }
+    return tasks.filter((task) => relatedTaskIds.has(task.id));
+  }, [tasks, worktreePaths]);
   const repoPath = worktrees?.find((worktree) => worktree.main)?.path ?? ws.path;
   const taskForPath = useMemo(() => {
     const matches = new Map<string, IsolatedTask>();
-    for (const task of tasks) {
+    for (const task of repositoryTasks) {
       if (task.outcome === "discarded") continue;
       const existing = matches.get(task.worktreePath);
       if (!existing || existing.updatedAt < task.updatedAt) matches.set(task.worktreePath, task);
     }
     return matches;
-  }, [tasks]);
+  }, [repositoryTasks]);
   const matchesQuery = (worktree: GitWorktree, task?: IsolatedTask): boolean =>
     !normalized || [
       worktree.path,
@@ -670,9 +758,8 @@ export default function IsolatedTasksPanel() {
       worktreeBranch(left).localeCompare(worktreeBranch(right)) ||
       left.path.localeCompare(right.path),
     );
-  const removedTasks = tasks
+  const removedTasks = repositoryTasks
     .filter((task) => !worktreePaths.has(task.worktreePath))
-    .filter((task) => worktreePaths.has(task.parentWorkspacePath))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const visibleRemovedTasks = removedTasks
     .filter((task) =>

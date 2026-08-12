@@ -155,6 +155,13 @@ export interface GitReviewSnapshot {
   fingerprint: string;
 }
 
+export interface GitCheckpointSnapshot {
+  /** Unreachable tree containing the exact checkpointed worktree state. */
+  tree: string;
+  /** Review hashes captured under the same repository-generation guard. */
+  snapshot: GitReviewSnapshot;
+}
+
 export interface RefLabel {
   /** Short name, e.g. "main", "origin/main", "v1.0.0". */
   name: string;
@@ -330,9 +337,13 @@ export const gitReviewSnapshot = (
 export const gitReviewHead = (repoPath: string): Promise<string | null> =>
   invoke("git_review_head", { repoPath });
 
-/** Unreachable Git tree snapshot made through a private temporary index. */
-export const gitCheckpointCreate = (repoPath: string): Promise<string> =>
-  invoke("git_checkpoint_create", { repoPath });
+/** One stable capture of the unreachable checkpoint tree and review hashes. */
+export const gitCheckpointSnapshot = (
+  repoPath: string,
+  baseHead?: string | null,
+  baseUnborn = false,
+): Promise<GitCheckpointSnapshot> =>
+  invoke("git_checkpoint_snapshot", { repoPath, baseHead: baseHead ?? null, baseUnborn });
 
 export const gitStatus = (repoPath: string): Promise<StatusResult> =>
   invoke("git_status", { repoPath });
@@ -651,6 +662,9 @@ export const codexNativeSessionExists = (
 
 export interface AgentControlRequest {
   requestId: string;
+  /** Backend-generated identity for this exact delivery. Unlike the
+   * caller-facing requestId, this value is never reused. */
+  deliveryId: string;
   action: "focus" | "prompt" | "start";
   terminalId: string | null;
   generation: number | null;
@@ -660,6 +674,9 @@ export interface AgentControlRequest {
   kind: "claude" | "codex" | null;
   taskName: string | null;
   isolated: boolean;
+  /** Backend-owned absolute deadline; frontend actions recheck it at every
+   * asynchronous side-effect boundary so a delayed cancel event is safe. */
+  deadlineAtMs: number;
 }
 
 export interface AgentControlInfo {
@@ -674,15 +691,30 @@ export const agentControlSync = (agents: AgentRuntimeState[]): Promise<void> =>
 
 export const agentControlRespond = (
   requestId: string,
+  deliveryId: string,
   ok: boolean,
   result?: unknown,
   error?: string,
 ): Promise<void> => invoke("agent_control_respond", {
   requestId,
+  deliveryId,
   ok,
   result: result ?? null,
   error: error ?? null,
 });
+
+export interface AgentControlPromptBoundary {
+  seq: number;
+  working: boolean;
+}
+
+/** Atomically capture the Rust event sequence and pinned occupant state
+ * immediately before a prompt reaches its PTY. */
+export const agentControlPromptBoundary = (
+  requestId: string,
+  deliveryId: string,
+): Promise<AgentControlPromptBoundary> =>
+  invoke("agent_control_prompt_boundary", { requestId, deliveryId });
 
 export const agentControlInfo = (): Promise<AgentControlInfo> =>
   invoke("agent_control_info");
@@ -694,9 +726,14 @@ export const onAgentControlRequest = (
   (event) => callback(event.payload),
 );
 
+export interface AgentControlCancel {
+  requestId: string;
+  deliveryId: string;
+}
+
 export const onAgentControlCancel = (
-  callback: (requestId: string) => void,
-): Promise<UnlistenFn> => listen<string>(
+  callback: (request: AgentControlCancel) => void,
+): Promise<UnlistenFn> => listen<AgentControlCancel>(
   "agent-control-cancel",
   (event) => callback(event.payload),
 );

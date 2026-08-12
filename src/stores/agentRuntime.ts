@@ -209,6 +209,29 @@ export function markAgentLaunching(terminalId: string): void {
   );
 }
 
+/** The owning PTY shell exited, which is stronger evidence than a process poll
+ * returning no matching child. Keep the final generation number for stale
+ * action rejection while making the terminal immediately safe to classify as
+ * stopped. */
+export function markAgentTerminalExited(terminalId: string): void {
+  const current = useAgentRuntimeStore.getState().states[terminalId];
+  if (!current) return;
+  fallbacks.set(terminalId, { activity: { busy: false, attention: false } });
+  replaceSubagents(terminalId, undefined, []);
+  replaceState(
+    terminalId,
+    changed(current, {
+      occupancy: "exited",
+      occupantPid: undefined,
+      lifecycle: "unknown",
+      seen: true,
+      authority: undefined,
+      reason: undefined,
+      matchedRule: undefined,
+    }),
+  );
+}
+
 const lifecyclePatch = (
   current: AgentRuntimeState,
   lifecycle: AgentLifecycle,
@@ -303,7 +326,11 @@ export function applyAgentProcessResult(
   queryGeneration: number,
 ): void {
   const current = useAgentRuntimeStore.getState().states[terminalId];
-  if (!current || current.generation !== queryGeneration) return;
+  if (
+    !current ||
+    current.generation !== queryGeneration ||
+    current.occupancy === "exited"
+  ) return;
   if (pid === undefined) {
     // Give a just-typed launch time to reach exec; after that a successful
     // no-match snapshot authoritatively means the dedicated tab is a shell.
@@ -325,24 +352,42 @@ export function applyAgentProcessResult(
     );
     return;
   }
-  if (current.occupantPid === pid && current.occupancy === "present") return;
-  fallbacks.set(terminalId, { activity: { busy: false, attention: false } });
-  // Preserve startup screen evidence across the first absent→present PID
-  // discovery. A true PID replacement is a new generation and starts clean.
-  const preserveScreen =
-    current.occupantPid === undefined && current.authority === "screen";
+  // A failed process-table query temporarily changes occupancy to unknown,
+  // but retains the last-known PID. Seeing that same PID again restores the
+  // existing occupant; it must not mint a new generation (which would
+  // invalidate generation-owned prompts, task evidence, and notifications).
+  if (current.occupantPid === pid) {
+    if (current.occupancy !== "present") {
+      replaceState(terminalId, changed(current, { occupancy: "present" }));
+    }
+    return;
+  }
+
+  const firstOccupant = current.occupantPid === undefined;
+  // Activity can arrive while an explicitly launched process is still being
+  // discovered. Preserve that live fallback across the initial PID capture;
+  // a true PID replacement starts from a clean authority boundary.
+  if (!firstOccupant) {
+    fallbacks.set(terminalId, { activity: { busy: false, attention: false } });
+  }
+  const next: AgentRuntimeState = {
+    ...current,
+    occupancy: "present",
+    occupantPid: pid,
+    generation: current.generation + 1,
+    lifecycle: "unknown",
+    seen: true,
+    authority: undefined,
+    reason: undefined,
+    matchedRule: undefined,
+  };
+  const startupSignal = fallbacks.get(terminalId)?.activity;
+  const startupPatch = firstOccupant && (startupSignal?.busy || startupSignal?.attention)
+    ? fallbackFor(next, false)
+    : {};
   replaceState(
     terminalId,
-    changed(current, {
-      occupancy: "present",
-      occupantPid: pid,
-      generation: current.generation + 1,
-      lifecycle: preserveScreen ? current.lifecycle : "unknown",
-      seen: true,
-      authority: preserveScreen ? current.authority : undefined,
-      reason: preserveScreen ? current.reason : undefined,
-      matchedRule: preserveScreen ? current.matchedRule : undefined,
-    }),
+    changed(current, { ...next, ...startupPatch }),
   );
 }
 
@@ -352,7 +397,11 @@ export function applyAgentProcessSnapshot(
   queryGeneration: number,
 ): void {
   const current = useAgentRuntimeStore.getState().states[terminalId];
-  if (!current || current.generation !== queryGeneration) return;
+  if (
+    !current ||
+    current.generation !== queryGeneration ||
+    current.occupancy === "exited"
+  ) return;
   const discovery = discoveryTerminals.has(terminalId);
   const candidateNames = discovery
     ? ([...AGENT_PROFILES.claude.executableNames, ...AGENT_PROFILES.codex.executableNames] as string[])
@@ -386,25 +435,24 @@ export function applyAgentProcessSnapshot(
 export function markAgentProcessQueryFailed(terminalIds: readonly string[]): void {
   for (const id of terminalIds) {
     const current = useAgentRuntimeStore.getState().states[id];
-    if (!current) continue;
+    if (!current || current.occupancy === "exited") continue;
+    // Keep last-known identity and lifecycle metadata while authority is
+    // unavailable. occupancy=unknown suppresses their presentation, and a
+    // later successful snapshot can prove whether this is the same occupant
+    // without inventing a replacement generation.
     replaceState(
       id,
       changed(current, {
         occupancy: "unknown",
-        occupantPid: undefined,
-        lifecycle: "unknown",
-        authority: undefined,
-        reason: undefined,
-        matchedRule: undefined,
       }),
     );
-    replaceSubagents(id, undefined, []);
   }
 }
 
 export async function pollAgentProcesses(): Promise<void> {
   if (polling) return;
-  const states = Object.values(useAgentRuntimeStore.getState().states);
+  const states = Object.values(useAgentRuntimeStore.getState().states)
+    .filter((state) => state.occupancy !== "exited");
   if (states.length === 0) return;
   polling = true;
   const targets: AgentProcessTarget[] = states.map((state) => ({

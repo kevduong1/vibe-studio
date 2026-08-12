@@ -136,6 +136,26 @@ export const setBannerMode = (mode: BannerMode): void => {
 // Per-terminal toggle + the attention hook
 // ---------------------------------------------------------------------------
 
+const bannerOperations = new Map<string, Promise<void>>();
+
+/** Notification Center accepts adds asynchronously. Serialize each stable
+ * terminal identifier so a dismissal cannot run before an earlier add has
+ * actually been accepted and then reappear afterward. */
+export function enqueueAgentBannerOperation(
+  terminalId: string,
+  operation: () => Promise<void>,
+): Promise<void> {
+  const previous = bannerOperations.get(terminalId) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(operation);
+  bannerOperations.set(terminalId, next);
+  void next.catch(() => {}).then(() => {
+    if (bannerOperations.get(terminalId) === next) {
+      bannerOperations.delete(terminalId);
+    }
+  });
+  return next;
+}
+
 /** Concurrent enables share one in-flight authorization request — macOS
  *  only ever shows one prompt; this keeps N toggles from parking N IPC
  *  calls behind it. */
@@ -225,29 +245,35 @@ export function notifyAgentAttention(
   void playAttentionSound();
   const mode = bannerMode();
   if (mode === "never") return;
-  void notificationSend(
-    // Identifier = terminal id: a repeat onset replaces the terminal's
-    // delivered banner instead of stacking, and the dismiss paths (attention
-    // answered / tab closed / notifications disabled) remove by it.
+  void enqueueAgentBannerOperation(
     terminalId,
-    presentation.title,
-    type === "checks_failed"
-      ? "Automatic checks failed"
-      : presentation.topic ||
-        (type === "done" ? "Turn completed" : reasonLabel(runtime?.reason)),
-    mode === "always",
+    () => notificationSend(
+      // Identifier = terminal id: a repeat onset replaces the terminal's
+      // delivered banner instead of stacking, and the dismiss paths (attention
+      // answered / tab closed / notifications disabled) remove by it.
+      terminalId,
+      presentation.title,
+      type === "checks_failed"
+        ? "Automatic checks failed"
+        : presentation.topic ||
+          (type === "done" ? "Turn completed" : reasonLabel(runtime?.reason)),
+      mode === "always",
+    ),
   ).catch(() => {});
 }
 
 /**
- * Tear down the terminal's delivered banner: called on the attention
+ * Tear down the terminal's pending or delivered banner: called on the attention
  * true → false edge (the user answered), on terminal close, and on
  * notifications-disable. Deliberately unconditional — removing a
  * nonexistent identifier is a framework no-op (and dev has no banners), so
  * callers don't need to know whether one was ever posted.
  */
 export function dismissAgentAttention(terminalId: string): void {
-  void notificationDismiss(terminalId).catch(() => {});
+  void enqueueAgentBannerOperation(
+    terminalId,
+    () => notificationDismiss(terminalId),
+  ).catch(() => {});
 }
 
 // Semantic edge behavior is centralized here so redraws cannot repeat an

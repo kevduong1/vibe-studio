@@ -23,14 +23,14 @@ export interface AgentDetectionProfile {
 // stable UI phrases and glyphs, not implementation-specific escape output.
 export const CLAUDE_PROFILE: AgentDetectionProfile = {
   kind: "claude",
-  version: 1,
+  version: 2,
   authoredFor: "Claude Code 2.1.226",
   executableNames: ["claude"],
   rules: [
-    { id: "claude.permission", lifecycle: "blocked", reason: "permission", strong: true, tailLines: 8, pattern: /(?:Do you want to proceed|Allow this action|Yes, allow|permission (?:is )?required)/i },
-    { id: "claude.question", lifecycle: "blocked", reason: "question", strong: true, tailLines: 8, pattern: /(?:Would you like|Please (?:choose|select)|Which (?:option|approach)|Enter to select|Tab\/Arrow keys to navigate|Ready to submit your answers\?|Submit answers|You have not answered all questions)/i },
+    { id: "claude.permission", lifecycle: "blocked", reason: "permission", strong: true, tailLines: 8, pattern: /^\s*(?:(?:[>❯]\s*)?\d+\.\s*)?(?:Yes, allow(?:\s+this action)?|Allow this action|Permission (?:is )?required)[.!?]?\s*$/i },
+    { id: "claude.question", lifecycle: "blocked", reason: "question", strong: true, tailLines: 8, pattern: /^\s*(?:Please (?:choose|select)(?: an option)?[.:]?|Enter to select|Tab\/Arrow keys to navigate|Ready to submit your answers\?|Submit answers|You have not answered all questions[.!]?)\s*$/i },
     { id: "claude.auth", lifecycle: "blocked", reason: "auth", tailLines: 8, pattern: /(?:not logged in|authentication required|run [`']?claude login|sign in to continue)/i },
-    { id: "claude.quota", lifecycle: "blocked", reason: "quota", tailLines: 8, pattern: /(?:usage limit|rate limit|quota|resets at)/i },
+    { id: "claude.quota", lifecycle: "blocked", reason: "quota", tailLines: 8, pattern: /\b(?:you['’]ve hit your usage limit|usage limit (?:has been )?(?:reached|exceeded)|rate limit (?:has been )?(?:reached|exceeded))\b/i },
     { id: "claude.error", lifecycle: "blocked", reason: "error", tailLines: 6, pattern: /(?:API Error|Error:|request failed|connection failed)/i },
     { id: "claude.working", lifecycle: "working", tailLines: 8, pattern: /(?:esc to interrupt|ctrl-c to cancel|(?:Thinking|Working|Reading|Searching|Editing|Running)…|[✻✶✽] .+)/i },
     { id: "claude.idle", lifecycle: "idle", tailLines: 4, pattern: /(?:^|\n)\s*[>❯]\s*(?:$|Try\b|Ask\b)/im },
@@ -40,12 +40,12 @@ export const CLAUDE_PROFILE: AgentDetectionProfile = {
 // Authored independently against Codex CLI 0.147.0.
 export const CODEX_PROFILE: AgentDetectionProfile = {
   kind: "codex",
-  version: 2,
+  version: 3,
   authoredFor: "Codex CLI 0.147.0",
   executableNames: ["codex"],
   rules: [
-    { id: "codex.permission", lifecycle: "blocked", reason: "permission", strong: true, tailLines: 9, pattern: /(?:Would you like to run|Do you want to run|Approve (?:this|command)|approval required|Press enter to confirm)/i },
-    { id: "codex.question", lifecycle: "blocked", reason: "question", strong: true, tailLines: 9, pattern: /(?:Choose an option|Which (?:option|approach)|Please answer|waiting for your response|Question \d+\/\d+(?:\s+\(\d+\s+unanswered\))?|to submit (?:answer|all)|Type your answer(?: \(optional\))?|Submit with unanswered questions\?)/i },
+    { id: "codex.permission", lifecycle: "blocked", reason: "permission", strong: true, tailLines: 9, pattern: /^\s*(?:Approve (?:this|command)|Approval required|Press enter to confirm)[.!?]?\s*$/i },
+    { id: "codex.question", lifecycle: "blocked", reason: "question", strong: true, tailLines: 9, pattern: /^\s*(?:Choose an option|Waiting for your response|Question \d+\/\d+(?:\s+\(\d+\s+unanswered\))?|(?:Enter|Press enter) to submit (?:answer|all)|Type your answer(?: \(optional\))?|Submit with unanswered questions\?)[.!?]?\s*$/i },
     { id: "codex.auth", lifecycle: "blocked", reason: "auth", tailLines: 8, pattern: /(?:not signed in|login required|authentication required|sign in to continue)/i },
     { id: "codex.quota", lifecycle: "blocked", reason: "quota", tailLines: 8, pattern: /\b(?:you['’]ve hit your usage limit|usage limit (?:has been )?(?:reached|exceeded)|rate limit (?:has been )?(?:reached|exceeded))\b/i },
     { id: "codex.error", lifecycle: "blocked", reason: "error", tailLines: 6, pattern: /(?:Error:|request failed|connection failed|stream disconnected)/i },
@@ -66,42 +66,44 @@ export interface ScreenClassification {
   strong: boolean;
 }
 
-export const UNKNOWN_SCREEN: ScreenClassification = {
+const UNKNOWN_SCREEN: ScreenClassification = {
   lifecycle: "unknown",
   strong: false,
 };
 
-/** Classify only current tail evidence. A newer idle prompt invalidates old
- * blocked/working text that still happens to be in the bounded snapshot. */
+/** Classify only current tail evidence. Evidence recency wins across rule
+ * classes; rule priority is only the tie-breaker for the same logical line.
+ * This prevents an old prompt from outranking newer working/idle UI. */
 export function classifyAgentScreen(
   kind: AgentKind,
   logicalLines: readonly string[],
 ): ScreenClassification {
   const lines = logicalLines.slice(-40);
   const profile = AGENT_PROFILES[kind];
-  const latestIdleRule = profile.rules.find((rule) => rule.lifecycle === "idle");
-  let latestIdle = -1;
-  if (latestIdleRule) {
-    lines.forEach((line, index) => {
-      latestIdleRule.pattern.lastIndex = 0;
-      if (latestIdleRule.pattern.test(line)) latestIdle = index;
-    });
-  }
-  for (const rule of profile.rules) {
+  let best: { rule: DetectionRule; line: number; priority: number } | undefined;
+  for (let priority = 0; priority < profile.rules.length; priority++) {
+    const rule = profile.rules[priority];
     const from = Math.max(0, lines.length - rule.tailLines);
     for (let index = lines.length - 1; index >= from; index--) {
       rule.pattern.lastIndex = 0;
       if (!rule.pattern.test(lines[index])) continue;
-      if (rule.lifecycle !== "idle" && latestIdle > index) break;
-      return {
-        lifecycle: rule.lifecycle,
-        reason: rule.reason,
-        matchedRule: rule.id,
-        strong: rule.strong === true,
-      };
+      if (
+        !best ||
+        index > best.line ||
+        (index === best.line && priority < best.priority)
+      ) {
+        best = { rule, line: index, priority };
+      }
+      break;
     }
   }
-  return UNKNOWN_SCREEN;
+  if (!best) return UNKNOWN_SCREEN;
+  return {
+    lifecycle: best.rule.lifecycle,
+    reason: best.rule.reason,
+    matchedRule: best.rule.id,
+    strong: best.rule.strong === true,
+  };
 }
 
 export const boundedLogicalTail = (

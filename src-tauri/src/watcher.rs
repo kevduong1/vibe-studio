@@ -42,7 +42,7 @@ struct RepoChanged {
 }
 
 /// What a batch of fs events means for the app.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Hit {
     Worktree,
     GitMeta,
@@ -52,6 +52,13 @@ fn classify(path: &Path, git_dir: &Path, common_dir: &Path) -> Option<Hit> {
     let s = path.to_string_lossy();
     if s.contains("/node_modules/") || s.contains("/target/") || s.contains("/.DS_Store") {
         return None;
+    }
+    // The shared worktree administration directory changes when any linked
+    // checkout is added, removed, locked, unlocked, or pruned. Treat the
+    // entire subtree as Git metadata so every open checkout refreshes its
+    // repository-wide worktree list.
+    if path.starts_with(common_dir.join("worktrees")) {
+        return Some(Hit::GitMeta);
     }
     if path.starts_with(git_dir) || path.starts_with(common_dir) {
         // Only HEAD / FETCH_HEAD / ORIG_HEAD..., the index, and refs matter.
@@ -78,6 +85,7 @@ pub async fn watch_repo(
         Err(_) => (root.join(".git"), root.join(".git")),
     };
     let common_refs = common_dir.join("refs");
+    let common_worktrees = common_dir.join("worktrees");
 
     // Debouncer: the watcher callback pushes classified hits into this
     // channel; a dedicated thread waits for a 250 ms quiet period (max 1 s)
@@ -92,15 +100,10 @@ pub async fn watch_repo(
             while let Ok(first) = rx.recv() {
                 let mut git_changed = matches!(first, Hit::GitMeta);
                 let started = std::time::Instant::now();
-                loop {
-                    match rx.recv_timeout(Duration::from_millis(250)) {
-                        Ok(hit) => {
-                            git_changed |= matches!(hit, Hit::GitMeta);
-                            if started.elapsed() > Duration::from_secs(1) {
-                                break; // sustained storm: don't starve the UI
-                            }
-                        }
-                        Err(_) => break, // quiet period reached (or sender gone)
+                while let Ok(hit) = rx.recv_timeout(Duration::from_millis(250)) {
+                    git_changed |= matches!(hit, Hit::GitMeta);
+                    if started.elapsed() > Duration::from_secs(1) {
+                        break; // sustained storm: don't starve the UI
                     }
                 }
                 let _ = app.emit(
@@ -140,6 +143,11 @@ pub async fn watch_repo(
     if !git_dir.starts_with(&root) {
         let _ = watcher.watch(&git_dir, RecursiveMode::NonRecursive);
         let _ = watcher.watch(&common_refs, RecursiveMode::Recursive);
+        // Sibling worktree records do not live under this checkout's git_dir.
+        // Watch the shared parent for directory creation/removal and the
+        // existing subtree for record contents.
+        let _ = watcher.watch(&common_dir, RecursiveMode::NonRecursive);
+        let _ = watcher.watch(&common_worktrees, RecursiveMode::Recursive);
     }
 
     // Re-watching the same root replaces (and thus drops) the previous
@@ -149,6 +157,35 @@ pub async fn watch_repo(
         .lock()
         .insert(repo_path, ActiveWatch { _watcher: watcher });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_worktree_administration_is_git_metadata() {
+        let common = Path::new("/repo/.git");
+        let linked_git = common.join("worktrees/task-one");
+        assert_eq!(
+            classify(
+                &common.join("worktrees/task-two/gitdir"),
+                &linked_git,
+                common,
+            ),
+            Some(Hit::GitMeta),
+        );
+        assert_eq!(
+            classify(&common.join("worktrees"), &linked_git, common),
+            Some(Hit::GitMeta),
+        );
+    }
+
+    #[test]
+    fn irrelevant_shared_git_files_remain_filtered() {
+        let common = Path::new("/repo/.git");
+        assert_eq!(classify(&common.join("config"), common, common), None);
+    }
 }
 
 #[tauri::command]

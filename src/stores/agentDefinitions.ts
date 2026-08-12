@@ -214,9 +214,20 @@ export function parseEnvironmentLines(value: string): Record<string, string> {
     const separator = line.indexOf("=");
     if (separator < 1) continue;
     const key = line.slice(0, separator).trim();
-    if (key) entries.push([key, line.slice(separator + 1)]);
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      entries.push([key, line.slice(separator + 1)]);
+    }
   }
   return Object.fromEntries(entries);
+}
+
+export function invalidEnvironmentLines(value: string): number[] {
+  return value.split("\n").flatMap((line, index) => {
+    if (!line.trim()) return [];
+    const separator = line.indexOf("=");
+    const key = separator > 0 ? line.slice(0, separator).trim() : "";
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ? [] : [index + 1];
+  });
 }
 
 export function launchCommand(
@@ -228,20 +239,29 @@ export function launchCommand(
       !(
         argument === "--yolo" &&
         definition.detectionProfile === "codex" &&
-        (profile.permissionMode || profile.sandbox)
+        ((profile.permissionMode && definition.capabilities.permissions) ||
+          (profile.sandbox && definition.capabilities.sandbox))
       ),
   );
-  if (profile.model) args.push("--model", profile.model);
-  if (profile.reasoning && definition.detectionProfile === "codex") {
+  if (profile.model && definition.capabilities.models) args.push("--model", profile.model);
+  if (
+    profile.reasoning &&
+    definition.capabilities.reasoning &&
+    definition.detectionProfile === "codex"
+  ) {
     args.push("-c", `model_reasoning_effort=${JSON.stringify(profile.reasoning)}`);
   }
-  if (profile.permissionMode) {
+  if (profile.permissionMode && definition.capabilities.permissions) {
     args.push(
       definition.detectionProfile === "codex" ? "--ask-for-approval" : "--permission-mode",
       profile.permissionMode,
     );
   }
-  if (profile.sandbox && definition.detectionProfile === "codex") {
+  if (
+    profile.sandbox &&
+    definition.capabilities.sandbox &&
+    definition.detectionProfile === "codex"
+  ) {
     args.push("--sandbox", profile.sandbox);
   }
   args.push(...profile.extraArguments);

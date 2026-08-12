@@ -7,6 +7,7 @@ import {
   isInboxActionable,
   inboxWaitingAt,
   markAgentTaskFeedback,
+  markAgentTaskReviewOpened,
   markAgentTaskReviewed,
   nextActionableId,
   refreshAgentTask,
@@ -180,8 +181,8 @@ function InboxOverlay({
   useEffect(() => {
     setPeek(null);
     setPipelineError(null);
+    setPipelines([]);
     if (!selected) {
-      setPipelines([]);
       return;
     }
     void refreshAgentTask(selected.runtime.terminalId);
@@ -189,7 +190,10 @@ function InboxOverlay({
     void loadTaskDocument(selected.runtime.workspacePath).then((document) => {
       if (current) setPipelines(selectablePipelineRoots(document));
     }, (error) => {
-      if (current) setPipelineError(String(error));
+      if (current) {
+        setPipelines([]);
+        setPipelineError(String(error));
+      }
     });
     return () => { current = false; };
   }, [selected?.runtime.terminalId]);
@@ -214,7 +218,14 @@ function InboxOverlay({
       setMessage(result.message);
       return;
     }
-    markAgentTaskReviewed(item.runtime.terminalId);
+    if (!markAgentTaskReviewOpened(
+      item.runtime.terminalId,
+      result.review.generation,
+      result.review.fingerprint,
+    )) {
+      setMessage("Changes changed while the review was opening. Open the current evidence again.");
+      return;
+    }
     onClose();
   };
 
@@ -228,14 +239,24 @@ function InboxOverlay({
         tabIndex={-1}
         ref={dialogRef}
         onKeyDown={(event) => {
+          const target = event.target as HTMLElement;
+          const listNavigation =
+            target === event.currentTarget || target.closest(".inbox-list") !== null;
           if (event.key === "Escape") onClose();
-          else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          else if (
+            listNavigation &&
+            (event.key === "ArrowDown" || event.key === "ArrowUp")
+          ) {
             event.preventDefault();
             if (!visible.length) return;
             const index = Math.max(0, visible.findIndex((item) => item.runtime.terminalId === selected?.runtime.terminalId));
             const delta = event.key === "ArrowDown" ? 1 : -1;
             setSelectedId(visible[(index + delta + visible.length) % visible.length].runtime.terminalId);
-          } else if (event.key === "Enter" && selected) {
+          } else if (
+            (target === event.currentTarget || target.closest(".inbox-row") !== null) &&
+            event.key === "Enter" &&
+            selected
+          ) {
             event.preventDefault();
             void activate(selected.runtime.terminalId);
           }
@@ -286,11 +307,52 @@ function InboxOverlay({
                 <div className="inbox-review-actions">
                   <button onClick={() => void openReview(selected)}>Review changes</button>
                   <button
+                    disabled={selected.task.reviewOpenedFingerprint !== selected.task.latestFingerprint || !selected.task.latestFingerprint}
+                    title={selected.task.reviewOpenedFingerprint === selected.task.latestFingerprint ? "Confirm that you inspected the opened evidence" : "Open the current changes before marking them reviewed"}
+                    onClick={() => {
+                      if (!selected.task?.latestFingerprint) return;
+                      if (!markAgentTaskReviewed(
+                        selected.runtime.terminalId,
+                        selected.task.generation,
+                        selected.task.latestFingerprint,
+                      )) {
+                        setMessage("The review evidence changed. Open the current changes again.");
+                      }
+                    }}
+                  >Mark reviewed</button>
+                  <button
                     disabled={selected.task.reviewedFingerprint !== selected.task.latestFingerprint || !selected.task.latestFingerprint}
                     title={selected.task.reviewedFingerprint === selected.task.latestFingerprint ? "Accept the reviewed changes" : "Review the current changes first"}
-                    onClick={() => acceptAgentTask(selected.runtime.terminalId)}
+                    onClick={() => {
+                      const selectedTask = selected.task;
+                      const fingerprint = selectedTask?.latestFingerprint;
+                      if (!selectedTask || !fingerprint) return;
+                      if (!acceptAgentTask(
+                        selected.runtime.terminalId,
+                        selectedTask.generation,
+                        fingerprint,
+                      )) {
+                        setMessage("The review evidence changed. Review the current changes before accepting them.");
+                      }
+                    }}
                   >Accept</button>
-                  <button onClick={() => { markAgentTaskFeedback(selected.runtime.terminalId); void activate(selected.runtime.terminalId); }}>Needs changes</button>
+                  <button
+                    disabled={!selected.task.latestFingerprint}
+                    onClick={() => {
+                      const selectedTask = selected.task;
+                      const fingerprint = selectedTask?.latestFingerprint;
+                      if (!selectedTask || !fingerprint) return;
+                      if (!markAgentTaskFeedback(
+                        selected.runtime.terminalId,
+                        selectedTask.generation,
+                        fingerprint,
+                      )) {
+                        setMessage("The review evidence changed. Review the current changes before requesting revisions.");
+                        return;
+                      }
+                      void activate(selected.runtime.terminalId);
+                    }}
+                  >Needs changes</button>
                 </div>
                 <label className="pipeline-select">Check pipeline
                   <select value={selected.task.selectedPipeline ?? ""} onChange={(event) => setAgentTaskPipeline(selected.runtime.terminalId, event.target.value || null)}>

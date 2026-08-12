@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useState, type CSSProperties } from "react";
 import { useStore } from "zustand";
 import { message, open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -18,9 +18,7 @@ import { loadTasks, sortForPicker, type TaskDef } from "./lib/tasks";
 import { runTask } from "./lib/taskRunner";
 import TaskPicker from "./components/TaskPicker";
 import QuickOpen from "./components/QuickOpen";
-import SettingsModal from "./components/SettingsModal";
-import AgentLaunchDialog, { type AgentLaunchRequest } from "./components/AgentLaunchDialog";
-import WorktreeDialog from "./components/WorktreeDialog";
+import type { AgentLaunchRequest } from "./lib/agentLaunchRequest";
 import type { AgentLaunchProfile } from "./stores/agentDefinitions";
 import Titlebar from "./components/Titlebar";
 import StatusBar from "./components/StatusBar";
@@ -28,7 +26,6 @@ import FileExplorer from "./components/FileExplorer";
 import SearchPanel from "./components/SearchPanel";
 import SourceControl from "./components/SourceControl";
 import MemoriesPanel from "./components/MemoriesPanel";
-import IsolatedTasksPanel from "./components/IsolatedTasksPanel";
 import EditorArea from "./components/EditorArea";
 import Panel from "./components/Panel";
 import { Resizer } from "./components/Resizer";
@@ -36,6 +33,11 @@ import { IcBrain, IcBranch, IcFile, IcSearch, IcTree } from "./components/icons"
 import { listenAgentNotificationActivations } from "./lib/agentInbox";
 import { listenNativeAgentSessionCapture } from "./lib/nativeAgentSessions";
 import { listenAgentControlPlane } from "./lib/agentControlPlane";
+
+const SettingsModal = lazy(() => import("./components/SettingsModal"));
+const AgentLaunchDialog = lazy(() => import("./components/AgentLaunchDialog"));
+const WorktreeDialog = lazy(() => import("./components/WorktreeDialog"));
+const IsolatedTasksPanel = lazy(() => import("./components/IsolatedTasksPanel"));
 
 /** Slim far-left icon strip for switching sidebar panels. */
 function ActivityBar() {
@@ -162,7 +164,9 @@ function WorkspaceSidebarContent({ visible }: { visible: boolean }) {
       ) : sidebarTab === "search" ? (
         <SearchPanel />
       ) : sidebarTab === "tasks" ? (
-        <IsolatedTasksPanel />
+        <Suspense fallback={<div className="sidebar-empty">Loading worktrees…</div>}>
+          <IsolatedTasksPanel />
+        </Suspense>
       ) : sidebarTab === "memories" ? (
         <MemoriesPanel />
       ) : (
@@ -430,25 +434,27 @@ export default function App() {
       {quickOpen && (
         <QuickOpen ws={quickOpen} onClose={() => setQuickOpen(null)} />
       )}
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
-      {agentLaunch && (
-        <AgentLaunchDialog request={agentLaunch} onClose={() => setAgentLaunch(null)} />
-      )}
-      {profileWorktree && (
-        <WorktreeDialog
-          parent={profileWorktree.parent}
-          mode="create-agent"
-          launchProfile={profileWorktree.profile}
-          onClose={() => setProfileWorktree(null)}
-        />
-      )}
-      {newTaskWorkspace && (
-        <WorktreeDialog
-          parent={newTaskWorkspace}
-          mode="create-agent"
-          onClose={() => setNewTaskWorkspace(null)}
-        />
-      )}
+      <Suspense fallback={null}>
+        {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+        {agentLaunch && (
+          <AgentLaunchDialog request={agentLaunch} onClose={() => setAgentLaunch(null)} />
+        )}
+        {profileWorktree && (
+          <WorktreeDialog
+            parent={profileWorktree.parent}
+            mode="create-agent"
+            launchProfile={profileWorktree.profile}
+            onClose={() => setProfileWorktree(null)}
+          />
+        )}
+        {newTaskWorkspace && (
+          <WorktreeDialog
+            parent={newTaskWorkspace}
+            mode="create-agent"
+            onClose={() => setNewTaskWorkspace(null)}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

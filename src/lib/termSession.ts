@@ -21,13 +21,14 @@ import {
   ptySpawn,
   ptyWrite,
 } from "./ipc";
-import { classifyAgentScreen } from "./agentProfiles";
+import { boundedLogicalTail, classifyAgentScreen } from "./agentProfiles";
 import type { AgentKind, AgentRuntimeState } from "./agentState";
 import {
   acknowledgeAgentRuntime,
   applyAgentActivity,
   applyAgentScreen,
   markAgentLaunching as markRuntimeLaunching,
+  markAgentTerminalExited,
   registerAgentRuntime,
   unregisterAgentRuntime,
   useAgentRuntimeStore,
@@ -77,6 +78,65 @@ let lastDockFitDims: { cols: number; rows: number } | null = null;
  * showing the exit code instead of flashing and vanishing.
  */
 const EARLY_EXIT_MS = 5000;
+/** A trailing screen-classification debounce may be refreshed by chatty
+ * output, but never postponed forever. */
+const SEMANTIC_MAX_DEBOUNCE_MS = 800;
+
+export type SemanticRuntimeTransitionAction =
+  | "none"
+  | "generation-inspect"
+  | "generation-reset-wait"
+  | "recovery-inspect"
+  | "reset-wait";
+
+/** Pure transition policy for generation screen boundaries. A true PID
+ * replacement cannot inspect the previous occupant's static tail, while a
+ * same-generation query recovery must reconsider output received during the
+ * outage. */
+export function semanticRuntimeTransitionAction(
+  previous: AgentRuntimeState | undefined,
+  current: AgentRuntimeState | undefined,
+  inspectedGeneration: number | undefined,
+  boundaryArmed: boolean,
+): SemanticRuntimeTransitionAction {
+  if (current?.occupancy === "present") {
+    if (current.generation !== inspectedGeneration) {
+      const replacedPid =
+        !boundaryArmed &&
+        previous?.occupantPid !== undefined &&
+        previous.occupantPid !== current.occupantPid;
+      return replacedPid ? "generation-reset-wait" : "generation-inspect";
+    }
+    if (previous?.occupancy === "unknown") return "recovery-inspect";
+  }
+  if (
+    current &&
+    (current.occupancy === "absent" || current.occupancy === "exited") &&
+    previous?.occupancy !== current.occupancy
+  ) return "reset-wait";
+  return "none";
+}
+
+export interface SemanticDebounceWindow {
+  key: string | null;
+  since: number | null;
+}
+
+/** Preserve the bounded debounce only while equivalent semantic evidence is
+ * repeating. A changed classification gets its own full stability window. */
+export function advanceSemanticDebounceWindow(
+  previous: SemanticDebounceWindow,
+  key: string,
+  now: number,
+): { window: SemanticDebounceWindow; remaining: number } {
+  const since = previous.key === key && previous.since !== null
+    ? previous.since
+    : now;
+  return {
+    window: { key, since },
+    remaining: SEMANTIC_MAX_DEBOUNCE_MS - (now - since),
+  };
+}
 
 export interface TermSessionOptions {
   /** Terminal id; doubles as the PTY id. */
@@ -91,8 +151,6 @@ export interface TermSessionOptions {
   discoverAgents?: boolean;
   workspacePath?: string;
   agentScope?: "global" | "workspace";
-  /** Semantic transition callback, after the runtime state has changed. */
-  onSemanticTransition?: (state: AgentRuntimeState) => void;
   /** OSC 0/2 window-title changes (agent sessions only). Claude Code
    *  auto-generates topic summaries and emits them as OSC 0 titles for
    *  recognized terminals — the TERM_PROGRAM masquerade satisfies its
@@ -129,8 +187,14 @@ export interface TermSession {
    *  the command line before the pane host has even mounted). */
   sendText(data: string): void;
   /** Submit one sanitized prompt. Multiline content uses bracketed paste when
-   * the live terminal mode supports it, then exactly one Enter. */
-  sendPrompt(text: string): Promise<void>;
+   * the live terminal mode supports it, then exactly one Enter. An optional
+   * prepare callback runs inside the terminal input queue and returns a
+   * synchronous commit callback that is invoked immediately before the PTY
+   * write. */
+  sendPrompt(
+    text: string,
+    prepareWrite?: () => void | (() => void) | Promise<void | (() => void)>,
+  ): Promise<void>;
   /** Privacy-bounded logical tail for an explicit, in-memory context peek. */
   readTail(maxLines: number, maxChars: number): string[];
   /** Run a shell line with an unforgeable private OSC completion marker.
@@ -177,6 +241,10 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
   let runtimeRegistered = false;
   let unRuntime: (() => void) | null = null;
   let semanticTimer: number | null = null;
+  let semanticPendingSince: number | null = null;
+  let semanticPendingKey: string | null = null;
+  let semanticBoundary: { bufferType: string; firstLine: number } | null = null;
+  let semanticBoundaryArmed = false;
   const tracked = new Map<
     string,
     { runId: string; resolve: (result: TrackedCommandResult) => void }
@@ -203,11 +271,42 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     let generation = runtimeState?.generation;
     unRuntime = useAgentRuntimeStore.subscribe((store) => {
       const next = store.states[id];
-      if (next && next !== runtimeState) opts.onSemanticTransition?.(next);
+      const previous = runtimeState;
       runtimeState = next;
-      if (next?.occupancy === "present" && next.generation !== generation) {
-        generation = next.generation;
+      const action = semanticRuntimeTransitionAction(
+        previous,
+        next,
+        generation,
+        semanticBoundaryArmed,
+      );
+      if (action === "generation-inspect") {
+        generation = next?.generation;
+        clearSemanticTimer();
+        // App-owned launches arm an exact pre-command boundary. For a manually
+        // typed launch, reuse the boundary captured when the prior occupant
+        // became absent; on the first discovered occupant, bound inspection to
+        // its current cursor line. Inspect immediately because a static
+        // idle/question screen may produce no later write event.
+        if (!semanticBoundaryArmed && !semanticBoundary) resetSemanticBoundary();
         inspectSemanticScreen();
+        semanticBoundaryArmed = false;
+      } else if (action === "generation-reset-wait") {
+        generation = next?.generation;
+        clearSemanticTimer();
+        // A replacement PID has no app-owned pre-command boundary. Start at
+        // discovery and require new parsed output so old static scrollback can
+        // never become evidence for the replacement generation.
+        resetSemanticBoundary();
+        semanticBoundaryArmed = false;
+      } else if (action === "recovery-inspect") {
+        clearSemanticTimer();
+        // Writes parsed during occupancy=unknown were intentionally rejected;
+        // reconsider the current bounded tail now that the same PID is proven.
+        inspectSemanticScreen();
+      } else if (action === "reset-wait") {
+        clearSemanticTimer();
+        resetSemanticBoundary();
+        semanticBoundaryArmed = false;
       }
     });
   };
@@ -304,12 +403,20 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
         )
       : null;
 
-  const readTail = (maxLines: number, maxChars: number): string[] => {
+  const readLogicalTail = (
+    maxLines: number,
+    maxChars: number,
+    firstLine = 0,
+  ): string[] => {
     const lineLimit = Math.max(0, Math.floor(maxLines));
     const charLimit = Math.max(0, Math.floor(maxChars));
     if (lineLimit === 0 || charLimit === 0) return [];
     const buffer = term.buffer.active;
-    const first = Math.max(0, buffer.length - Math.max(120, lineLimit * 8));
+    const first = Math.max(
+      0,
+      firstLine,
+      buffer.length - Math.max(120, lineLimit * 8),
+    );
     const logical: string[] = [];
     for (let y = first; y < buffer.length; y++) {
       const line = buffer.getLine(y);
@@ -318,19 +425,29 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       if (line.isWrapped && logical.length > 0) logical[logical.length - 1] += text;
       else logical.push(text);
     }
-    let chars = 0;
-    const tail: string[] = [];
-    for (let i = logical.length - 1; i >= 0 && tail.length < lineLimit; i--) {
-      const room = charLimit - chars;
-      if (room <= 0) break;
-      const text = logical[i].length > room ? logical[i].slice(-room) : logical[i];
-      tail.unshift(text);
-      chars += text.length;
-    }
-    return tail;
+    return boundedLogicalTail(logical, lineLimit, charLimit);
   };
 
-  const logicalScreenTail = (): string[] => readTail(40, 16 * 1024);
+  const readTail = (maxLines: number, maxChars: number): string[] =>
+    readLogicalTail(maxLines, maxChars);
+
+  const resetSemanticBoundary = () => {
+    const buffer = term.buffer.active;
+    semanticBoundary = {
+      bufferType: buffer.type,
+      // Include the cursor's current line: the launch command and its first
+      // response can append to it without increasing buffer.length.
+      firstLine: buffer.baseY + buffer.cursorY,
+    };
+  };
+
+  const logicalScreenTail = (): string[] => {
+    const buffer = term.buffer.active;
+    const firstLine = semanticBoundary?.bufferType === buffer.type
+      ? semanticBoundary.firstLine
+      : 0;
+    return readLogicalTail(40, 16 * 1024, firstLine);
+  };
 
   // 6973 is app-private. Returning true consumes the marker before xterm
   // renders it; a matching random nonce is required before any promise is
@@ -357,6 +474,13 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     tracked.clear();
   };
 
+  const clearSemanticTimer = () => {
+    if (semanticTimer !== null) window.clearTimeout(semanticTimer);
+    semanticTimer = null;
+    semanticPendingSince = null;
+    semanticPendingKey = null;
+  };
+
   const inspectSemanticScreen = () => {
     if (!semanticEnabled || !runtimeRegistered || disposed) return;
     const state = useAgentRuntimeStore.getState().states[id];
@@ -370,11 +494,40 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
         : classification.lifecycle === "working"
           ? 180
           : 250;
+    if (classification.strong) {
+      clearSemanticTimer();
+      applyAgentScreen(id, generation, classification, watched());
+      return;
+    }
+    const now = Date.now();
+    const key = [
+      generation,
+      classification.lifecycle,
+      classification.reason ?? "",
+      classification.matchedRule ?? "",
+    ].join(":");
+    const advanced = advanceSemanticDebounceWindow(
+      { key: semanticPendingKey, since: semanticPendingSince },
+      key,
+      now,
+    );
+    semanticPendingKey = advanced.window.key;
+    semanticPendingSince = advanced.window.since;
+    const { remaining } = advanced;
     if (semanticTimer !== null) window.clearTimeout(semanticTimer);
+    if (remaining <= 0) {
+      semanticTimer = null;
+      semanticPendingSince = null;
+      semanticPendingKey = null;
+      applyAgentScreen(id, generation, classification, watched());
+      return;
+    }
     semanticTimer = window.setTimeout(() => {
       semanticTimer = null;
+      semanticPendingSince = null;
+      semanticPendingKey = null;
       applyAgentScreen(id, generation, classification, watched());
-    }, delay);
+    }, Math.min(delay, remaining));
   };
   const semanticSub = semanticEnabled ? term.onWriteParsed(inspectSemanticScreen) : null;
   const onWindowFocus = () => {
@@ -401,6 +554,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
 
       const u2 = await onPtyExit(id, (code) => {
         exited = true;
+        markAgentTerminalExited(id);
         cancelTracked();
         // A shell dying non-zero right after spawn (bad $SHELL, deleted
         // project dir) would close the terminal and destroy its own error
@@ -536,13 +690,19 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       else pendingInput += data;
     },
 
-    async sendPrompt(text) {
+    async sendPrompt(text, prepareWrite) {
       if (disposed || exited) {
         throw new Error("The terminal is no longer live.");
       }
-      const data = terminalPromptInput(text, term.modes.bracketedPasteMode);
       const write = inputChain.then(async () => {
         if (disposed || exited) throw new Error("The terminal is no longer live.");
+        const commit = await prepareWrite?.();
+        if (disposed || exited) throw new Error("The terminal is no longer live.");
+        // The callback is deliberately synchronous: checkpoint publication
+        // and the PTY invocation share one JavaScript continuation, so no
+        // later keyboard input can slip between them.
+        commit?.();
+        const data = terminalPromptInput(text, term.modes.bracketedPasteMode);
         if (shellReady) await ptyWrite(id, data);
         else pendingInput += data;
       });
@@ -574,6 +734,9 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     },
 
     markAgentLaunching() {
+      resetSemanticBoundary();
+      semanticBoundaryArmed = true;
+      clearSemanticTimer();
       ensureRuntime();
       markRuntimeLaunching(id);
     },
@@ -598,7 +761,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       cancelTracked();
       if (semanticEnabled) window.removeEventListener("focus", onWindowFocus);
       unRuntime?.();
-      if (semanticTimer !== null) window.clearTimeout(semanticTimer);
+      clearSemanticTimer();
       if (tracker) {
         tracker.dispose();
         tracker = null;

@@ -27,7 +27,7 @@ import {
 import { Dock, type DockPaneProps } from "./Dock";
 import { ContextMenu } from "./ContextMenu";
 import { AgentSubagents } from "./AgentSubagents";
-import { requestAgentLaunch } from "./AgentLaunchDialog";
+import { requestAgentLaunch } from "../lib/agentLaunchRequest";
 import {
   ActivityGlyph,
   IcBell,
@@ -118,7 +118,14 @@ function TerminalTabIcon({ terminal }: { terminal: WorkspaceTerminal }) {
 function TerminalTabBadge({ terminal }: { terminal: WorkspaceTerminal }) {
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
   const agentPresent = terminal.kind !== "shell" || runtime?.occupancy === "present";
-  if (!agentPresent) return null;
+  // A discovered agent can exit while its notification opt-in remains set.
+  // Keep the bell (and context-menu disable path below) available after the
+  // shell returns instead of stranding an invisible enabled toggle.
+  if (!agentPresent) {
+    return terminal.notificationsEnabled
+      ? <IcBell className="dock-tab-bell" />
+      : null;
+  }
 
   const display = displayAgentState(runtime);
   const showStatus = display !== "idle" && display !== "unknown";
@@ -201,7 +208,11 @@ export default function TerminalPanel() {
         Empty={TerminalEmpty}
         onTabContextMenu={(terminal, event) => {
           const runtime = useAgentRuntimeStore.getState().states[terminal.id];
-          if (terminal.kind === "shell" && runtime?.occupancy !== "present") return;
+          if (
+            terminal.kind === "shell" &&
+            runtime?.occupancy !== "present" &&
+            terminal.notificationsEnabled !== true
+          ) return;
           event.preventDefault();
           setTabMenu({ id: terminal.id, x: event.clientX, y: event.clientY });
         }}

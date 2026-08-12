@@ -28,8 +28,11 @@ vibe-agent capability /absolute/project --ttl-seconds 900
 
 `start` creates an isolated worktree by default; pass `--shared` only when the
 caller explicitly wants the existing checkout. Prompt and wait operations pin
-the terminal occupant generation. Prefer `queue`; use `steer` only when the
-user explicitly wants input sent during active work.
+the terminal occupant generation. A project capability that successfully
+starts an isolated task is explicitly delegated access to that returned
+checkout, so the same token can list, wait for, focus, and prompt its agent;
+unrelated sibling worktrees remain inaccessible. Prefer `queue`; use `steer`
+only when the user explicitly wants input sent during active work.
 
 Event consumers must begin with `list`, then request `events` after the
 snapshot sequence. When an events response says `resync: true`, discard local

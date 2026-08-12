@@ -213,7 +213,10 @@ cd src-tauri && cargo test      # backend unit tests
   `pty_agent_process_snapshot` establishes whether the exact agent executable
   is a descendant of that PTY shell. Only then may the bounded xterm tail
   classifier own lifecycle. Detection rules must match complete app-owned UI
-  phrases, never bare domain words that can appear in ordinary agent prose.
+  phrases, never bare domain words that can appear in ordinary agent prose;
+  the newest matching logical line wins. A transient process-table failure
+  changes presentation to Unknown but retains last-known PID/generation and
+  evidence until a successful poll proves replacement or absence.
   Screen > OSC > activity; delayed evidence must match the occupant
   generation. Read `docs/architecture/agent-runtime.md` before changing this
   pipeline.
@@ -235,24 +238,34 @@ cd src-tauri && cargo test      # backend unit tests
   `docs/architecture/attention-review.md` and
   `docs/architecture/isolated-agent-tasks.md`.
 - Worktree cleanup never deletes a branch. Normal Git removal must refuse a
-  dirty checkout before the UI may offer a confirmed force retry; a live
-  global terminal bound to the checkout blocks removal, and successful removal
-  prunes non-live persisted terminal records and rebinds global-group navigation
-  memory for that path. Merge must prove both paths belong to the same Git
-  worktree set. Workspace close, task archive, and checkout removal are distinct
-  transitions.
+  dirty or locked checkout before the UI may offer a confirmed force retry;
+  locked removal requires Git's double-force form. A live global terminal or a
+  retained child task bound to the checkout blocks removal, and successful
+  removal prunes non-live persisted terminal records and rebinds global-group
+  navigation memory for that path. Merge requires the owning agent to be
+  proven idle or stopped and must prove both paths belong to the same Git
+  worktree set. Workspace close, task archive, task-record deletion, and
+  checkout removal are distinct transitions; records with live bound terminals
+  retain their preview-port reservation and cannot be deleted.
 - Review fingerprints are backend-only content hashes. Plain-text context
   peek is explicit, capped at 12 logical lines/4,096 characters, and component-only.
   Never log or persist terminal snapshots or check output.
+- Opening review evidence and marking it reviewed are separate, pinned actions.
+  Never let async navigation acknowledge a newer occupant generation or
+  repository fingerprint than the one the user opened.
 - A prompt-owned user Enter in a detected agent terminal is delayed until
-  `git_checkpoint_create` snapshots tracked/untracked non-ignored content into
-  an unreachable Git tree through a private index. The real index is never
-  mutated. A checkpoint error must withhold Enter and be surfaced; never
-  silently submit an uncheckpointed prompt. Checkpoint diffs are read-only
-  evidence and cannot undo external effects.
+  `git_checkpoint_snapshot` atomically captures opaque review hashes and
+  tracked/untracked non-ignored content in an unreachable Git tree through a
+  private index. The real index is never mutated. A checkpoint error must
+  withhold Enter and be surfaced; never silently submit an uncheckpointed
+  prompt. Checkpoint diffs are read-only evidence and cannot undo external
+  effects.
 - Queued/steered automation prompts are session-only, capped at 8,192 characters, pinned
-  to the detected occupant generation, and checkpoint before sending. Timeout
-  or cancellation removes pending text before it can reach the PTY. Never
+  to the detected occupant generation, and checkpoint inside their reserved
+  terminal-input slot before sending. A committed user/automation turn gates
+  later queued input until semantic evidence leaves its accepting prompt state;
+  do not infer turn completion from `pty_write` returning. Timeout or
+  cancellation removes pending text before it can reach the PTY. Never
   persist a prompt queue, truncate instructions silently, or retarget it after
   process replacement. Multiline
   programmatic prompts must go through `TermSession.sendPrompt()` so terminal
@@ -260,14 +273,17 @@ cd src-tauri && cargo test      # backend unit tests
 - The local agent-control socket synchronizes privacy-bounded semantic state
   into Rust; Rust never reads screen text or writes PTYs directly. Keep the
   global token out of repository processes, enforce exact project scope for
-  short-lived capabilities, and preserve snapshot → ordered events → resync
-  semantics. See `docs/architecture/agent-control.md`.
+  short-lived capabilities, explicitly delegate isolated-child scope created by
+  those capabilities, and preserve snapshot → ordered events → resync semantics.
+  See `docs/architecture/agent-control.md`.
 - Check completion comes only from a random-nonce private OSC marker. Never
   parse terminal prose for exit status. Closed/exited sessions cancel evidence;
   automatic checks require persisted project trust. A pass is valid only when
   its pre/post fingerprint is stable; one formatter mutation reruns the full
   DAG, while a second invalidates it. Check panes are never reused because the
-  user may have taken over their shell after completion.
+  user may have taken over their shell after completion. A coalesced autorun
+  must revalidate generation, selected root, enablement, and trust immediately
+  before starting.
 - ALL dock terminals (both groups) decouple PTY lifetime from React via the
   session registry: host unmount = `detach()` ONLY (drag-and-drop and split
   rewraps remount bystander panes); the PTY dies exclusively via

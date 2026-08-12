@@ -3,6 +3,7 @@ import {
   BUILTIN_AGENT_DEFINITIONS,
   BUILTIN_LAUNCH_PROFILES,
   definitionForProfile,
+  invalidEnvironmentLines,
   launchCommand,
   parseEnvironmentLines,
 } from "./agentDefinitions";
@@ -38,9 +39,26 @@ describe("agent launch profiles", () => {
   });
 
   it("preserves equals signs and empty values in environment lines", () => {
-    expect(parseEnvironmentLines("TOKEN=header.payload=sig\nEMPTY=\ninvalid")).toEqual({
+    expect(parseEnvironmentLines("TOKEN=header.payload=sig\nEMPTY=\nBAD-KEY=no\ninvalid")).toEqual({
       TOKEN: "header.payload=sig",
       EMPTY: "",
     });
+    expect(invalidEnvironmentLines("TOKEN=x\nBAD-KEY=no\ninvalid\n\nEMPTY=")).toEqual([2, 3]);
+  });
+
+  it("honors the definition's declared launch capabilities", () => {
+    const claude = BUILTIN_AGENT_DEFINITIONS.find((item) => item.id === "builtin.claude")!;
+    const profile = {
+      ...BUILTIN_LAUNCH_PROFILES.find((item) => item.id === "builtin.claude.default")!,
+      model: "sonnet",
+      reasoning: "high",
+      permissionMode: "plan",
+      sandbox: "read-only",
+    };
+    const command = launchCommand(claude, profile).command;
+    expect(command).toContain("'--model' 'sonnet'");
+    expect(command).toContain("'--permission-mode' 'plan'");
+    expect(command).not.toContain("reasoning");
+    expect(command).not.toContain("sandbox");
   });
 });

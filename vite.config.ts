@@ -18,5 +18,18 @@ export default defineConfig({
   build: {
     target: "safari16",
     sourcemap: false,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "xterm",
+              test: /node_modules[\\/]@xterm[\\/]/,
+              priority: 10,
+            },
+          ],
+        },
+      },
+    },
   },
 });

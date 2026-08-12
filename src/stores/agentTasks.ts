@@ -2,8 +2,9 @@ import { create } from "zustand";
 import {
   gitReviewHead,
   gitReviewSnapshot,
-  gitCheckpointCreate,
+  gitCheckpointSnapshot,
   onRepoChanged,
+  type GitCheckpointSnapshot,
   type GitReviewSnapshot,
 } from "../lib/ipc";
 import {
@@ -92,6 +93,8 @@ export interface AgentTask {
   turnBaseTree: string | null;
   /** Paths whose opaque hashes changed during the current/last turn. */
   latestTurnChangedFiles: string[];
+  /** Evidence successfully opened for inspection, but not yet acknowledged. */
+  reviewOpenedFingerprint: string | null;
   reviewedFingerprint: string | null;
   feedbackFingerprint: string | null;
   acceptedFingerprint: string | null;
@@ -111,6 +114,9 @@ const replaceTask = (task: AgentTask): void =>
 
 export function removeAgentTask(terminalId: string): void {
   refreshSequences.delete(terminalId);
+  checkpointSequences.delete(terminalId);
+  pendingTurnCheckpoints.delete(terminalId);
+  pendingPromptTurns.delete(terminalId);
   useAgentTasksStore.setState((state) => {
     if (!state.tasks[terminalId]) return state;
     const tasks = { ...state.tasks };
@@ -153,6 +159,21 @@ export function checkStateFor(task: AgentTask): CheckState {
 
 const snapshotRequests = new Map<string, Promise<GitReviewSnapshot>>();
 const refreshSequences = new Map<string, number>();
+const checkpointSequences = new Map<string, number>();
+/** App-owned prompts consume their captured boundary on the next Working edge. */
+const pendingTurnCheckpoints = new Map<string, number>();
+/** Input was committed while this lifecycle owned the prompt, but the agent
+ * has not rendered evidence that it consumed the turn yet. This closes the
+ * gap where a PTY write resolves before the first Working frame is parsed. */
+const pendingPromptTurns = new Map<
+  string,
+  { generation: number; lifecycle: AgentRuntimeState["lifecycle"] }
+>();
+
+export const agentPromptTurnPending = (
+  terminalId: string,
+  generation: number,
+): boolean => pendingPromptTurns.get(terminalId)?.generation === generation;
 
 export function changedReviewPaths(
   before: Record<string, string>,
@@ -260,6 +281,7 @@ export function createAgentTask(meta: {
     turnBaseFileFingerprints: null,
     turnBaseTree: null,
     latestTurnChangedFiles: [],
+    reviewOpenedFingerprint: null,
     reviewedFingerprint: null,
     feedbackFingerprint: null,
     acceptedFingerprint: null,
@@ -365,14 +387,22 @@ const runtimeAcceptsPrompt = (
     (runtime.lifecycle === "blocked" && runtime.reason === "question") ||
     (allowWorking && runtime.lifecycle === "working"));
 
-/** Capture the exact generation selected by a programmatic prompt action.
- * Unlike the raw-keyboard helper below, invalid ownership is an error: callers
- * must never continue and silently send uncheckpointed text. */
-export async function captureAgentTurnCheckpoint(
+export interface PreparedAgentTurnCheckpoint {
+  terminalId: string;
+  generation: number;
+  allowWorking: boolean;
+  sequence: number;
+  checkpoint: GitCheckpointSnapshot;
+}
+
+/** Prepare a turn boundary without publishing it. Queue cancellation can occur
+ * while Git snapshots the checkout or an async dispatch guard runs; publishing
+ * here would falsely attribute later changes to a prompt that was never sent. */
+export async function prepareAgentTurnCheckpoint(
   terminalId: string,
   generation: number,
   allowWorking = false,
-): Promise<void> {
+): Promise<PreparedAgentTurnCheckpoint> {
   const task = useAgentTasksStore.getState().tasks[terminalId];
   const runtime = useAgentRuntimeStore.getState().states[terminalId];
   if (!task || task.generation !== generation) {
@@ -381,10 +411,13 @@ export async function captureAgentTurnCheckpoint(
   if (!runtime || runtime.generation !== generation || !runtimeAcceptsPrompt(runtime, allowWorking)) {
     throw new Error("The terminal occupant changed or no longer owns an agent prompt.");
   }
-  const [tree, checkpointSnapshot] = await Promise.all([
-    gitCheckpointCreate(task.workspacePath),
-    gitReviewSnapshot(task.workspacePath, task.baseHead, task.baseHead === null),
-  ]);
+  const sequence = (checkpointSequences.get(terminalId) ?? 0) + 1;
+  checkpointSequences.set(terminalId, sequence);
+  const checkpoint = await gitCheckpointSnapshot(
+    task.workspacePath,
+    task.baseHead,
+    task.baseHead === null,
+  );
   const latest = useAgentTasksStore.getState().tasks[terminalId];
   const latestRuntime = useAgentRuntimeStore.getState().states[terminalId];
   if (
@@ -392,17 +425,65 @@ export async function captureAgentTurnCheckpoint(
     latest.generation !== generation ||
     !latestRuntime ||
     latestRuntime.generation !== generation ||
-    !runtimeAcceptsPrompt(latestRuntime, allowWorking)
+    !runtimeAcceptsPrompt(latestRuntime, allowWorking) ||
+    checkpointSequences.get(terminalId) !== sequence
   ) {
     throw new Error("The terminal occupant changed while its checkpoint was being created.");
   }
-  const refreshed = taskWithSnapshot(latest, checkpointSnapshot);
+  return { terminalId, generation, allowWorking, sequence, checkpoint };
+}
+
+/** Publish a prepared boundary synchronously at the prompt dispatch commit
+ * point. The caller must invoke the PTY write without yielding afterward. */
+export function commitAgentTurnCheckpoint(
+  prepared: PreparedAgentTurnCheckpoint,
+): void {
+  const {
+    terminalId,
+    generation,
+    allowWorking,
+    sequence,
+    checkpoint,
+  } = prepared;
+  const latest = useAgentTasksStore.getState().tasks[terminalId];
+  const latestRuntime = useAgentRuntimeStore.getState().states[terminalId];
+  if (
+    !latest ||
+    latest.generation !== generation ||
+    !latestRuntime ||
+    latestRuntime.generation !== generation ||
+    !runtimeAcceptsPrompt(latestRuntime, allowWorking) ||
+    checkpointSequences.get(terminalId) !== sequence
+  ) {
+    throw new Error("The terminal occupant changed before its prompt was dispatched.");
+  }
+  const refreshed = taskWithSnapshot(latest, checkpoint.snapshot);
   replaceTask({
     ...refreshed,
-    turnBaseTree: tree,
-    turnBaseFileFingerprints: checkpointSnapshot.fileFingerprints,
+    turnBaseTree: checkpoint.tree,
+    turnBaseFileFingerprints: checkpoint.snapshot.fileFingerprints,
     latestTurnChangedFiles: [],
   });
+  if (latestRuntime.lifecycle === "working") {
+    pendingTurnCheckpoints.delete(terminalId);
+    pendingPromptTurns.delete(terminalId);
+  } else {
+    pendingTurnCheckpoints.set(terminalId, generation);
+    pendingPromptTurns.set(terminalId, {
+      generation,
+      lifecycle: latestRuntime.lifecycle,
+    });
+  }
+}
+
+/** Capture and immediately publish a physical user-submit boundary. */
+export async function captureAgentTurnCheckpoint(
+  terminalId: string,
+  generation: number,
+  allowWorking = false,
+): Promise<void> {
+  const prepared = await prepareAgentTurnCheckpoint(terminalId, generation, allowWorking);
+  commitAgentTurnCheckpoint(prepared);
 }
 
 /** A physical Enter is also used for permission UIs and shell interaction.
@@ -413,23 +494,63 @@ export async function checkpointAgentUserSubmit(terminalId: string): Promise<voi
   await captureAgentTurnCheckpoint(terminalId, runtime.generation);
 }
 
-export function markAgentTaskFeedback(terminalId: string): void {
+export function markAgentTaskFeedback(
+  terminalId: string,
+  expectedGeneration: number,
+  expectedFingerprint: string,
+): boolean {
   const task = useAgentTasksStore.getState().tasks[terminalId];
-  if (!task?.latestFingerprint) return;
+  if (
+    !task?.latestFingerprint ||
+    task.generation !== expectedGeneration ||
+    task.latestFingerprint !== expectedFingerprint
+  ) return false;
   replaceTask({
     ...task,
+    reviewOpenedFingerprint: null,
     reviewedFingerprint: null,
-    feedbackFingerprint: task.latestFingerprint,
+    feedbackFingerprint: expectedFingerprint,
     acceptedFingerprint: null,
     reviewState: "feedback",
     updatedAt: Date.now(),
     attentionSince: Date.now(),
   });
+  return true;
 }
 
-export function markAgentTaskReviewed(terminalId: string): void {
+export function markAgentTaskReviewOpened(
+  terminalId: string,
+  expectedGeneration: number,
+  expectedFingerprint: string,
+): boolean {
   const task = useAgentTasksStore.getState().tasks[terminalId];
-  if (!task?.latestFingerprint) return;
+  if (
+    !task?.latestFingerprint ||
+    task.generation !== expectedGeneration ||
+    task.latestFingerprint !== expectedFingerprint
+  ) return false;
+  replaceTask({
+    ...task,
+    reviewOpenedFingerprint: expectedFingerprint,
+  });
+  return true;
+}
+
+/** Mark only the evidence the user actually opened. Navigation can await
+ * workspace/repository work, so a newer generation or fingerprint must not be
+ * acknowledged by a stale completion. */
+export function markAgentTaskReviewed(
+  terminalId: string,
+  expectedGeneration: number,
+  expectedFingerprint: string,
+): boolean {
+  const task = useAgentTasksStore.getState().tasks[terminalId];
+  if (
+    !task?.latestFingerprint ||
+    task.generation !== expectedGeneration ||
+    task.latestFingerprint !== expectedFingerprint ||
+    task.reviewOpenedFingerprint !== expectedFingerprint
+  ) return false;
   replaceTask({
     ...task,
     reviewedFingerprint: task.latestFingerprint,
@@ -437,22 +558,30 @@ export function markAgentTaskReviewed(terminalId: string): void {
     updatedAt: Date.now(),
     attentionSince: Date.now(),
   });
+  return true;
 }
 
-export function acceptAgentTask(terminalId: string): void {
+export function acceptAgentTask(
+  terminalId: string,
+  expectedGeneration: number,
+  expectedFingerprint: string,
+): boolean {
   const task = useAgentTasksStore.getState().tasks[terminalId];
   if (
     !task?.latestFingerprint ||
-    task.reviewedFingerprint !== task.latestFingerprint
-  ) return;
+    task.generation !== expectedGeneration ||
+    task.latestFingerprint !== expectedFingerprint ||
+    task.reviewedFingerprint !== expectedFingerprint
+  ) return false;
   replaceTask({
     ...task,
-    acceptedFingerprint: task.latestFingerprint,
+    acceptedFingerprint: expectedFingerprint,
     reviewState: "accepted",
     updatedAt: Date.now(),
     attentionSince: Date.now(),
   });
   void refreshAgentTask(terminalId);
+  return true;
 }
 
 export function beginCheckRun(terminalId: string, generation: number, run: CheckRun): void {
@@ -500,6 +629,12 @@ export function reconcileDetectedAgentTasks(): void {
 subscribeAgentTransitions(({ previous, current }) => {
   if (!current) return;
   if (current.occupancy === "present" && previous?.generation !== current.generation) {
+    if (pendingTurnCheckpoints.get(current.terminalId) !== current.generation) {
+      pendingTurnCheckpoints.delete(current.terminalId);
+    }
+    if (pendingPromptTurns.get(current.terminalId)?.generation !== current.generation) {
+      pendingPromptTurns.delete(current.terminalId);
+    }
     const task = useAgentTasksStore.getState().tasks[current.terminalId];
     if (!task || task.generation !== current.generation) {
       void createAgentTask({
@@ -517,12 +652,24 @@ subscribeAgentTransitions(({ previous, current }) => {
   if (previous?.lifecycle === "working" && current.lifecycle === "idle") {
     void refreshAgentTask(current.terminalId);
   }
+  const pendingPrompt = pendingPromptTurns.get(current.terminalId);
+  if (
+    pendingPrompt?.generation === current.generation &&
+    pendingPrompt.lifecycle !== current.lifecycle
+  ) {
+    pendingPromptTurns.delete(current.terminalId);
+  }
   if (previous?.lifecycle !== "working" && current.lifecycle === "working") {
     const task = useAgentTasksStore.getState().tasks[current.terminalId];
     if (task) {
+      if (pendingTurnCheckpoints.get(current.terminalId) === current.generation) {
+        pendingTurnCheckpoints.delete(current.terminalId);
+        return;
+      }
       replaceTask({
         ...task,
         turnBaseFileFingerprints: task.latestSnapshot?.fileFingerprints ?? {},
+        turnBaseTree: null,
         latestTurnChangedFiles: [],
       });
     }

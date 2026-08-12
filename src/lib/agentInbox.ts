@@ -12,6 +12,10 @@ export type FocusAgentResult =
   | { ok: true }
   | { ok: false; message: string };
 
+export type ReviewAgentResult =
+  | { ok: true; review: { generation: number; fingerprint: string } }
+  | { ok: false; message: string };
+
 /** The one navigation router used by inbox rows, keyboard cycling, review
  * feedback, and notification activation. */
 export async function focusAgentTerminal(terminalId: string): Promise<FocusAgentResult> {
@@ -50,9 +54,16 @@ export async function focusAgentTerminal(terminalId: string): Promise<FocusAgent
 /** Open the owning project's Source Control view and, when possible, put the
  * first current worktree/index change directly in the diff editor. Committed
  * changes remain reachable from the commit graph in the same sidebar. */
-export async function reviewAgentChanges(terminalId: string): Promise<FocusAgentResult> {
+export async function reviewAgentChanges(terminalId: string): Promise<ReviewAgentResult> {
   const task = useAgentTasksStore.getState().tasks[terminalId];
   if (!task) return { ok: false, message: "Review is no longer available" };
+  if (!task.latestFingerprint) {
+    return { ok: false, message: "There are no current changes to review" };
+  }
+  const review = {
+    generation: task.generation,
+    fingerprint: task.latestFingerprint,
+  };
 
   await switchToProject(task.workspacePath);
   const ws = useWorkspacesStore
@@ -82,7 +93,7 @@ export async function reviewAgentChanges(terminalId: string): Promise<FocusAgent
       origPath: file.origPath,
     });
   }
-  return { ok: true };
+  return { ok: true, review };
 }
 
 export async function listenAgentNotificationActivations(): Promise<UnlistenFn> {

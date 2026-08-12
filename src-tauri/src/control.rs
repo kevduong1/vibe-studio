@@ -54,7 +54,30 @@ struct ControlEvent {
 #[derive(Debug, Clone)]
 struct Capability {
     project_path: String,
+    /// Exact isolated checkout paths created through this capability. This is
+    /// an explicit delegation, not a path-prefix rule: sibling worktrees that
+    /// the caller did not create remain outside the capability.
+    delegated_paths: HashSet<String>,
     expires_at_ms: u64,
+}
+
+impl Capability {
+    fn permits(&self, project_path: &str) -> bool {
+        self.project_path == project_path || self.delegated_paths.contains(project_path)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CapabilityScope {
+    token: String,
+    project_path: String,
+    delegated_paths: HashSet<String>,
+}
+
+impl CapabilityScope {
+    fn permits(&self, project_path: &str) -> bool {
+        self.project_path == project_path || self.delegated_paths.contains(project_path)
+    }
 }
 
 #[derive(Default)]
@@ -63,7 +86,7 @@ struct Data {
     agents: HashMap<String, AgentControlSnapshot>,
     events: VecDeque<ControlEvent>,
     capabilities: HashMap<String, Capability>,
-    frontend_responses: HashMap<String, Option<Result<Value, String>>>,
+    frontend_responses: HashMap<String, FrontendResponseSlot>,
     active_request_projects: HashMap<String, String>,
     cancelled: HashSet<String>,
 }
@@ -124,6 +147,10 @@ struct ApiRequest {
 #[serde(rename_all = "camelCase")]
 pub struct FrontendControlRequest {
     request_id: String,
+    /// Backend-generated identity for this exact frontend delivery. Caller
+    /// request IDs may be reused after timeout, so frontend callbacks must
+    /// echo this value before they can affect the response slot.
+    delivery_id: String,
     action: String,
     terminal_id: Option<String>,
     generation: Option<u64>,
@@ -133,6 +160,28 @@ pub struct FrontendControlRequest {
     kind: Option<String>,
     task_name: Option<String>,
     isolated: bool,
+    deadline_at_ms: u64,
+}
+
+struct FrontendResponseSlot {
+    delivery_id: String,
+    terminal_id: Option<String>,
+    generation: Option<u64>,
+    response: Option<Result<Value, String>>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FrontendControlCancel {
+    request_id: String,
+    delivery_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentControlPromptBoundary {
+    seq: u64,
+    working: bool,
 }
 
 #[derive(Serialize)]
@@ -142,14 +191,6 @@ pub struct ControlInfo {
     token_path: String,
     cli_path: String,
     skill_path: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IssuedCapability {
-    token: String,
-    project_path: String,
-    expires_at_ms: u64,
 }
 
 fn now_ms() -> u64 {
@@ -280,7 +321,7 @@ pub fn stop(state: &ControlState) {
     }
 }
 
-fn capability_for(inner: &Inner, token: &str) -> Result<Option<String>, String> {
+fn capability_for(inner: &Inner, token: &str) -> Result<Option<CapabilityScope>, String> {
     if token == *inner.global_token.lock() {
         return Ok(None);
     }
@@ -289,7 +330,13 @@ fn capability_for(inner: &Inner, token: &str) -> Result<Option<String>, String> 
         .retain(|_, capability| capability.expires_at_ms > now_ms());
     data.capabilities
         .get(token)
-        .map(|capability| Some(capability.project_path.clone()))
+        .map(|capability| {
+            Some(CapabilityScope {
+                token: token.to_string(),
+                project_path: capability.project_path.clone(),
+                delegated_paths: capability.delegated_paths.clone(),
+            })
+        })
         .ok_or_else(|| "unauthorized".to_string())
 }
 
@@ -312,12 +359,32 @@ fn request_project(data: &Data, request: &ApiRequest) -> Result<Option<String>, 
     Ok(request.workspace_path.clone())
 }
 
-fn authorize_project(scope: Option<&str>, project: Option<&str>) -> Result<(), String> {
+fn authorize_project(scope: Option<&CapabilityScope>, project: Option<&str>) -> Result<(), String> {
     match (scope, project) {
-        (Some(scope), Some(project)) if scope == project => Ok(()),
+        (Some(scope), Some(project)) if scope.permits(project) => Ok(()),
         (Some(_), _) => Err("capability is not valid for this project".to_string()),
         (None, _) => Ok(()),
     }
+}
+
+fn delegate_started_project(
+    data: &mut Data,
+    scope: &CapabilityScope,
+    source_project: &str,
+    delegated_project: &str,
+) -> bool {
+    let Some(capability) = data.capabilities.get_mut(&scope.token) else {
+        return false;
+    };
+    if capability.expires_at_ms <= now_ms()
+        || !scope.permits(source_project)
+        || !capability.permits(source_project)
+    {
+        return false;
+    }
+    capability
+        .delegated_paths
+        .insert(delegated_project.to_string())
 }
 
 fn handle_connection(mut stream: UnixStream, inner: Arc<Inner>) {
@@ -349,13 +416,13 @@ fn handle_connection(mut stream: UnixStream, inner: Arc<Inner>) {
     let _ = writeln!(stream, "{body}");
 }
 
-fn filtered_agents(data: &Data, scope: Option<&str>) -> Vec<AgentControlSnapshot> {
+fn filtered_agents(data: &Data, scope: Option<&CapabilityScope>) -> Vec<AgentControlSnapshot> {
     let mut agents: Vec<_> = data
         .agents
         .values()
         .filter(|agent| {
             scope
-                .map(|path| path == agent.workspace_path)
+                .map(|scope| scope.permits(&agent.workspace_path))
                 .unwrap_or(true)
         })
         .cloned()
@@ -379,10 +446,10 @@ fn validate_request(request: &ApiRequest) -> Result<(), String> {
             if request.terminal_id.is_none() {
                 return Err("terminalId is required".to_string());
             }
-            if !request
+            if request
                 .text
                 .as_deref()
-                .is_some_and(|text| !text.trim().is_empty())
+                .is_none_or(|text| text.trim().is_empty())
             {
                 return Err("text is required".to_string());
             }
@@ -436,29 +503,32 @@ fn handle_request(inner: &Arc<Inner>, request: ApiRequest) -> Result<Value, Stri
             .active_request_projects
             .get(&id)
             .ok_or_else(|| "active request not found".to_string())?;
-        authorize_project(scope.as_deref(), Some(project))?;
+        authorize_project(scope.as_ref(), Some(project))?;
         data.cancelled.insert(id.clone());
-        let frontend_pending = data.frontend_responses.contains_key(&id);
+        let frontend_delivery = data
+            .frontend_responses
+            .get(&id)
+            .map(|slot| slot.delivery_id.clone());
         drop(data);
         inner.changed.notify_all();
-        if frontend_pending {
-            emit_frontend_cancel(inner, &id);
+        if let Some(delivery_id) = frontend_delivery {
+            emit_frontend_cancel(inner, &id, &delivery_id);
         }
         return Ok(json!({ "requestId": id, "cancelled": true }));
     }
     validate_request(&request)?;
     let project = request_project(&inner.data.lock(), &request)?;
     if !matches!(request.command.as_str(), "list" | "snapshot" | "events") {
-        authorize_project(scope.as_deref(), project.as_deref())?;
+        authorize_project(scope.as_ref(), project.as_deref())?;
     }
     match request.command.as_str() {
         "list" | "snapshot" => {
             let data = inner.data.lock();
-            Ok(json!({ "seq": data.seq, "agents": filtered_agents(&data, scope.as_deref()) }))
+            Ok(json!({ "seq": data.seq, "agents": filtered_agents(&data, scope.as_ref()) }))
         }
         "events" => wait_events(
             inner,
-            scope.as_deref(),
+            scope.as_ref(),
             request.after_seq.unwrap_or(0),
             request.timeout_ms,
         ),
@@ -477,23 +547,40 @@ fn handle_request(inner: &Arc<Inner>, request: ApiRequest) -> Result<Value, Stri
                 token.clone(),
                 Capability {
                     project_path: project_path.clone(),
+                    delegated_paths: HashSet::new(),
                     expires_at_ms,
                 },
             );
             Ok(json!({ "token": token, "projectPath": project_path, "expiresAtMs": expires_at_ms }))
         }
-        "focus" | "prompt" | "start" => dispatch_frontend(
+        "focus" | "prompt" => dispatch_frontend(
             inner,
             request,
             project.ok_or_else(|| "project could not be resolved".to_string())?,
         ),
+        "start" => {
+            let isolated = request.isolated.unwrap_or(true);
+            let source_project =
+                project.ok_or_else(|| "project could not be resolved".to_string())?;
+            let result = dispatch_frontend(inner, request, source_project.clone())?;
+            if isolated {
+                if let (Some(scope), Some(workspace_path)) = (
+                    scope.as_ref(),
+                    result.get("workspacePath").and_then(Value::as_str),
+                ) {
+                    let mut data = inner.data.lock();
+                    delegate_started_project(&mut data, scope, &source_project, workspace_path);
+                }
+            }
+            Ok(result)
+        }
         _ => Err(format!("unknown command: {}", request.command)),
     }
 }
 
 fn wait_events(
     inner: &Arc<Inner>,
-    scope: Option<&str>,
+    scope: Option<&CapabilityScope>,
     after_seq: u64,
     timeout_ms: Option<u64>,
 ) -> Result<Value, String> {
@@ -522,7 +609,7 @@ fn wait_events(
                     .as_ref()
                     .map(|agent| {
                         scope
-                            .map(|path| path == agent.workspace_path)
+                            .map(|scope| scope.permits(&agent.workspace_path))
                             .unwrap_or(true)
                     })
                     .unwrap_or(scope.is_none())
@@ -654,18 +741,16 @@ fn dispatch_frontend_inner(inner: &Arc<Inner>, request: ApiRequest) -> Result<Va
     } else {
         None
     };
-    let (baseline_seq, baseline_working) = {
-        let data = inner.data.lock();
-        let working = request
-            .terminal_id
-            .as_ref()
-            .and_then(|id| data.agents.get(id))
-            .map(|agent| agent.lifecycle == "working")
-            .unwrap_or(false);
-        (data.seq, working)
-    };
+    let timeout_ms = request
+        .timeout_ms
+        .unwrap_or(DEFAULT_TIMEOUT_MS)
+        .clamp(1, 300_000);
+    let timeout = Duration::from_millis(timeout_ms);
+    let started = std::time::Instant::now();
+    let delivery_id = random_token()?;
     let payload = FrontendControlRequest {
         request_id: request_id.clone(),
+        delivery_id: delivery_id.clone(),
         action: request.command.clone(),
         terminal_id: request.terminal_id.clone(),
         generation,
@@ -675,40 +760,62 @@ fn dispatch_frontend_inner(inner: &Arc<Inner>, request: ApiRequest) -> Result<Va
         kind: request.kind.clone(),
         task_name: request.task_name.clone(),
         isolated: request.isolated.unwrap_or(true),
+        deadline_at_ms: now_ms().saturating_add(timeout_ms),
     };
     let app = inner
         .app
         .lock()
         .clone()
         .ok_or_else(|| "frontend unavailable".to_string())?;
-    inner
-        .data
-        .lock()
-        .frontend_responses
-        .insert(request_id.clone(), None);
+    inner.data.lock().frontend_responses.insert(
+        request_id.clone(),
+        FrontendResponseSlot {
+            delivery_id: delivery_id.clone(),
+            terminal_id: request.terminal_id.clone(),
+            generation,
+            response: None,
+        },
+    );
     if let Err(error) = app.emit_to("main", "agent-control-request", payload) {
         inner.data.lock().frontend_responses.remove(&request_id);
         return Err(error.to_string());
     }
-    let timeout = Duration::from_millis(
-        request
-            .timeout_ms
-            .unwrap_or(DEFAULT_TIMEOUT_MS)
-            .clamp(1, 300_000),
-    );
-    let started = std::time::Instant::now();
     let mut data = inner.data.lock();
     loop {
         if data.cancelled.remove(&request_id) {
             data.frontend_responses.remove(&request_id);
             drop(data);
-            emit_frontend_cancel(inner, &request_id);
+            emit_frontend_cancel(inner, &request_id, &delivery_id);
             return Err("request cancelled".to_string());
         }
-        if let Some(Some(response)) = data.frontend_responses.remove(&request_id) {
+        let response = data
+            .frontend_responses
+            .get_mut(&request_id)
+            .filter(|slot| slot.delivery_id == delivery_id)
+            .and_then(|slot| slot.response.take());
+        if let Some(response) = response {
+            data.frontend_responses.remove(&request_id);
             let value = response?;
+            let prompt_boundary = if request.command == "prompt" {
+                Some((
+                    value
+                        .get("promptBaselineSeq")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| {
+                            "frontend omitted the prompt sequence boundary".to_string()
+                        })?,
+                    value
+                        .get("promptBaselineWorking")
+                        .and_then(Value::as_bool)
+                        .ok_or_else(|| "frontend omitted the prompt state boundary".to_string())?,
+                ))
+            } else {
+                None
+            };
             drop(data);
             if request.command == "prompt" && request.wait.unwrap_or(false) {
+                let (prompt_baseline_seq, prompt_baseline_working) = prompt_boundary
+                    .ok_or_else(|| "frontend omitted the prompt boundary".to_string())?;
                 let remaining = timeout.saturating_sub(started.elapsed());
                 if remaining.is_zero() {
                     return Err("prompt wait timed out".to_string());
@@ -718,8 +825,8 @@ fn dispatch_frontend_inner(inner: &Arc<Inner>, request: ApiRequest) -> Result<Va
                     request.terminal_id.as_deref().unwrap_or_default(),
                     generation.unwrap_or_default(),
                     &request_id,
-                    baseline_seq,
-                    baseline_working && request.mode.as_deref() == Some("steer"),
+                    prompt_baseline_seq,
+                    prompt_baseline_working && request.mode.as_deref() == Some("steer"),
                     remaining,
                 );
             }
@@ -729,17 +836,80 @@ fn dispatch_frontend_inner(inner: &Arc<Inner>, request: ApiRequest) -> Result<Va
         if remaining.is_zero() {
             data.frontend_responses.remove(&request_id);
             drop(data);
-            emit_frontend_cancel(inner, &request_id);
+            emit_frontend_cancel(inner, &request_id, &delivery_id);
             return Err("frontend request timed out".to_string());
         }
         inner.changed.wait_for(&mut data, remaining);
     }
 }
 
-fn emit_frontend_cancel(inner: &Inner, request_id: &str) {
+fn emit_frontend_cancel(inner: &Inner, request_id: &str, delivery_id: &str) {
     if let Some(app) = inner.app.lock().clone() {
-        let _ = app.emit_to("main", "agent-control-cancel", request_id.to_string());
+        let _ = app.emit_to(
+            "main",
+            "agent-control-cancel",
+            FrontendControlCancel {
+                request_id: request_id.to_string(),
+                delivery_id: delivery_id.to_string(),
+            },
+        );
     }
+}
+
+/// Consume ordered snapshots for one prompt turn. Looking only at the latest
+/// agent snapshot loses a fast working -> idle transition that completes while
+/// the frontend response is still in flight.
+fn prompt_turn_completion(
+    data: &Data,
+    terminal_id: &str,
+    generation: u64,
+    after_seq: u64,
+    mut saw_working: bool,
+) -> Result<(u64, bool, Option<AgentControlSnapshot>), String> {
+    let current = data
+        .agents
+        .get(terminal_id)
+        .ok_or_else(|| "terminal no longer available".to_string())?;
+    if current.generation != generation {
+        return Err("terminal occupant generation changed".to_string());
+    }
+    let oldest = data
+        .events
+        .front()
+        .map(|event| event.seq)
+        .unwrap_or(data.seq.saturating_add(1));
+    if after_seq > data.seq {
+        return Err("prompt transition boundary is invalid".to_string());
+    }
+    if after_seq.saturating_add(1) < oldest {
+        return Err("prompt transition history is no longer available".to_string());
+    }
+
+    let mut consumed_seq = after_seq;
+    for event in data.events.iter().filter(|event| event.seq > after_seq) {
+        consumed_seq = event.seq;
+        if event.terminal_id != terminal_id {
+            continue;
+        }
+        if event.kind == "removed" {
+            return Err("terminal no longer available".to_string());
+        }
+        let Some(agent) = event.agent.as_ref() else {
+            continue;
+        };
+        if agent.generation != generation {
+            return Err("terminal occupant generation changed".to_string());
+        }
+        if agent.occupancy != "present" {
+            continue;
+        }
+        if agent.lifecycle == "working" {
+            saw_working = true;
+        } else if saw_working && (agent.lifecycle == "idle" || agent.lifecycle == "blocked") {
+            return Ok((consumed_seq, saw_working, Some(agent.clone())));
+        }
+    }
+    Ok((consumed_seq, saw_working, None))
 }
 
 fn wait_prompt_turn(
@@ -747,7 +917,7 @@ fn wait_prompt_turn(
     terminal_id: &str,
     generation: u64,
     request_id: &str,
-    baseline_seq: u64,
+    mut baseline_seq: u64,
     mut saw_working: bool,
     timeout: Duration,
 ) -> Result<Value, String> {
@@ -757,21 +927,14 @@ fn wait_prompt_turn(
         if data.cancelled.remove(request_id) {
             return Err("prompt wait cancelled".to_string());
         }
-        let agent = data
-            .agents
-            .get(terminal_id)
-            .ok_or_else(|| "terminal no longer available".to_string())?;
-        if agent.generation != generation {
-            return Err("terminal occupant generation changed".to_string());
-        }
-        if data.seq > baseline_seq {
-            if agent.lifecycle == "working" {
-                saw_working = true;
-            } else if saw_working && (agent.lifecycle == "idle" || agent.lifecycle == "blocked") {
-                return Ok(
-                    json!({ "requestId": request_id, "generation": generation, "agent": agent }),
-                );
-            }
+        let (consumed_seq, observed_working, completed) =
+            prompt_turn_completion(&data, terminal_id, generation, baseline_seq, saw_working)?;
+        baseline_seq = consumed_seq;
+        saw_working = observed_working;
+        if let Some(agent) = completed {
+            return Ok(
+                json!({ "requestId": request_id, "generation": generation, "agent": agent }),
+            );
         }
         let remaining = timeout.saturating_sub(started.elapsed());
         if remaining.is_zero() {
@@ -816,20 +979,85 @@ pub fn agent_control_sync(
 pub fn agent_control_respond(
     state: tauri::State<'_, ControlState>,
     request_id: String,
+    delivery_id: String,
     ok: bool,
     result: Option<Value>,
     error: Option<String>,
 ) {
     let mut data = state.inner.data.lock();
-    if let Some(slot) = data.frontend_responses.get_mut(&request_id) {
-        *slot = Some(if ok {
+    let accepted = accept_frontend_response(
+        &mut data,
+        &request_id,
+        &delivery_id,
+        if ok {
             Ok(result.unwrap_or(Value::Null))
         } else {
             Err(error.unwrap_or_else(|| "frontend request failed".to_string()))
-        });
-    }
+        },
+    );
     drop(data);
-    state.inner.changed.notify_all();
+    if accepted {
+        state.inner.changed.notify_all();
+    }
+}
+
+#[tauri::command]
+pub fn agent_control_prompt_boundary(
+    state: tauri::State<'_, ControlState>,
+    request_id: String,
+    delivery_id: String,
+) -> Result<AgentControlPromptBoundary, String> {
+    let data = state.inner.data.lock();
+    prompt_boundary_for_delivery(&data, &request_id, &delivery_id)
+}
+
+fn accept_frontend_response(
+    data: &mut Data,
+    request_id: &str,
+    delivery_id: &str,
+    response: Result<Value, String>,
+) -> bool {
+    let Some(slot) = data.frontend_responses.get_mut(request_id) else {
+        return false;
+    };
+    if slot.delivery_id != delivery_id || slot.response.is_some() {
+        return false;
+    }
+    slot.response = Some(response);
+    true
+}
+
+fn prompt_boundary_for_delivery(
+    data: &Data,
+    request_id: &str,
+    delivery_id: &str,
+) -> Result<AgentControlPromptBoundary, String> {
+    if data.cancelled.contains(request_id) {
+        return Err("request cancelled".to_string());
+    }
+    let slot = data
+        .frontend_responses
+        .get(request_id)
+        .filter(|slot| slot.delivery_id == delivery_id)
+        .ok_or_else(|| "control request is no longer active".to_string())?;
+    let terminal_id = slot
+        .terminal_id
+        .as_deref()
+        .ok_or_else(|| "prompt target is missing".to_string())?;
+    let generation = slot
+        .generation
+        .ok_or_else(|| "prompt generation is missing".to_string())?;
+    let agent = data
+        .agents
+        .get(terminal_id)
+        .ok_or_else(|| "terminal not found".to_string())?;
+    if agent.generation != generation || agent.occupancy != "present" {
+        return Err("terminal occupant generation changed".to_string());
+    }
+    Ok(AgentControlPromptBoundary {
+        seq: data.seq,
+        working: agent.lifecycle == "working",
+    })
 }
 
 #[tauri::command]
@@ -869,28 +1097,6 @@ pub fn agent_control_info(
             .join("resources/vibe-agent-skill/SKILL.md")
             .to_string_lossy()
             .into_owned(),
-    })
-}
-
-#[tauri::command]
-pub fn agent_control_issue_capability(
-    state: tauri::State<'_, ControlState>,
-    project_path: String,
-    ttl_seconds: u64,
-) -> Result<IssuedCapability, String> {
-    let token = random_token()?;
-    let expires_at_ms = now_ms() + ttl_seconds.clamp(1, 3600) * 1000;
-    state.inner.data.lock().capabilities.insert(
-        token.clone(),
-        Capability {
-            project_path: project_path.clone(),
-            expires_at_ms,
-        },
-    );
-    Ok(IssuedCapability {
-        token,
-        project_path,
-        expires_at_ms,
     })
 }
 
@@ -955,6 +1161,141 @@ mod tests {
         assert_eq!(data.events.len(), EVENT_LIMIT);
         assert_eq!(data.events.front().unwrap().seq, 6);
         assert_eq!(data.events.back().unwrap().seq, (EVENT_LIMIT + 5) as u64);
+    }
+
+    #[test]
+    fn prompt_wait_consumes_fast_working_then_idle_events() {
+        let mut data = Data::default();
+        let working = agent("a", "working");
+        let idle = agent("a", "idle");
+        data.agents.insert("a".to_string(), idle.clone());
+        push_event(&mut data, "upserted", "a".to_string(), Some(working));
+        push_event(&mut data, "upserted", "a".to_string(), Some(idle));
+
+        let (seq, saw_working, completed) =
+            prompt_turn_completion(&data, "a", 2, 0, false).unwrap();
+        assert_eq!(seq, 2);
+        assert!(saw_working);
+        assert_eq!(completed.unwrap().lifecycle, "idle");
+    }
+
+    #[test]
+    fn prompt_wait_ignores_a_queued_turn_before_the_dispatch_boundary() {
+        let mut data = Data::default();
+        let working = agent("a", "working");
+        let idle = agent("a", "idle");
+        data.agents.insert("a".to_string(), idle.clone());
+        push_event(&mut data, "upserted", "a".to_string(), Some(working));
+        push_event(&mut data, "upserted", "a".to_string(), Some(idle));
+
+        let (seq, saw_working, completed) =
+            prompt_turn_completion(&data, "a", 2, 2, false).unwrap();
+        assert_eq!(seq, 2);
+        assert!(!saw_working);
+        assert!(completed.is_none());
+    }
+
+    #[test]
+    fn stale_frontend_delivery_cannot_answer_a_reused_request_id() {
+        let mut data = Data {
+            seq: 17,
+            ..Data::default()
+        };
+        data.agents.insert("a".to_string(), agent("a", "working"));
+        data.frontend_responses.insert(
+            "same-request".to_string(),
+            FrontendResponseSlot {
+                delivery_id: "new-delivery".to_string(),
+                terminal_id: Some("a".to_string()),
+                generation: Some(2),
+                response: None,
+            },
+        );
+
+        assert!(!accept_frontend_response(
+            &mut data,
+            "same-request",
+            "old-delivery",
+            Ok(json!({ "source": "old" })),
+        ));
+        assert!(data.frontend_responses["same-request"].response.is_none());
+        assert!(prompt_boundary_for_delivery(&data, "same-request", "old-delivery").is_err());
+
+        assert_eq!(
+            prompt_boundary_for_delivery(&data, "same-request", "new-delivery").unwrap(),
+            AgentControlPromptBoundary {
+                seq: 17,
+                working: true,
+            }
+        );
+        assert!(accept_frontend_response(
+            &mut data,
+            "same-request",
+            "new-delivery",
+            Ok(json!({ "source": "new" })),
+        ));
+        assert_eq!(
+            data.frontend_responses["same-request"]
+                .response
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()["source"],
+            "new"
+        );
+    }
+
+    #[test]
+    fn prompt_boundary_rejects_a_replaced_terminal_generation() {
+        let mut data = Data::default();
+        data.agents.insert("a".to_string(), agent("a", "idle"));
+        data.frontend_responses.insert(
+            "request".to_string(),
+            FrontendResponseSlot {
+                delivery_id: "delivery".to_string(),
+                terminal_id: Some("a".to_string()),
+                generation: Some(1),
+                response: None,
+            },
+        );
+
+        assert!(prompt_boundary_for_delivery(&data, "request", "delivery")
+            .unwrap_err()
+            .contains("generation changed"));
+    }
+
+    #[test]
+    fn capability_delegates_only_a_successfully_started_isolated_project() {
+        let state = ControlState::default();
+        *state.inner.global_token.lock() = "global".to_string();
+        let mut issue = request("global", "capability");
+        issue.workspace_path = Some("/repo".to_string());
+        let issued = handle_request(&state.inner, issue).unwrap();
+        let token = issued["token"].as_str().unwrap().to_string();
+        let scope = capability_for(&state.inner, &token).unwrap().unwrap();
+
+        assert!(delegate_started_project(
+            &mut state.inner.data.lock(),
+            &scope,
+            "/repo",
+            "/worktrees/child",
+        ));
+
+        let mut child = agent("child", "idle");
+        child.workspace_path = "/worktrees/child".to_string();
+        let mut sibling = agent("sibling", "idle");
+        sibling.workspace_path = "/worktrees/sibling".to_string();
+        let mut data = state.inner.data.lock();
+        data.agents.insert("child".to_string(), child);
+        data.agents.insert("sibling".to_string(), sibling);
+        drop(data);
+
+        let refreshed = capability_for(&state.inner, &token).unwrap().unwrap();
+        assert!(authorize_project(Some(&refreshed), Some("/worktrees/child")).is_ok());
+        assert!(authorize_project(Some(&refreshed), Some("/worktrees/sibling")).is_err());
+        let visible = filtered_agents(&state.inner.data.lock(), Some(&refreshed));
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].terminal_id, "child");
     }
 
     #[test]

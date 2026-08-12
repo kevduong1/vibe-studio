@@ -35,13 +35,12 @@ use objc2::rc::Retained;
 use objc2::runtime::{Bool, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, AnyThread};
 use objc2_foundation::{NSArray, NSBundle, NSError, NSString};
-use parking_lot::Mutex;
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
     UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
-    UNNotificationSettings,
-    UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+    UNNotificationSettings, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
+use parking_lot::Mutex;
 use tauri::{Emitter, Manager};
 
 /// Permission state as the frontend sees it. "unsupported" = the process has
@@ -141,8 +140,7 @@ define_class!(
             completion: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
             let opts = if PRESENT_FOREGROUND.load(Ordering::Relaxed) {
-                UNNotificationPresentationOptions::Banner
-                    | UNNotificationPresentationOptions::List
+                UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List
             } else {
                 UNNotificationPresentationOptions::empty()
             };
@@ -233,14 +231,16 @@ pub async fn notification_request() -> Result<String, String> {
     .await
 }
 
-/// Fire-and-forget banner (no notification sound — the attention sound is
+/// Post a banner (no notification sound — the attention sound is
 /// app-played via `play_sound`). `id` is the caller's stable key (terminal
 /// id): the framework REPLACES a delivered notification when its identifier
 /// is reused, capping pile-up at one live banner per terminal, and it's the
 /// handle `notification_dismiss` removes by. `present_foreground` is the
 /// settings-modal "Show banners" policy: whether the delegate presents
-/// while the app is frontmost. Unauthorized posts are dropped by the
-/// framework; dev (no bundle) is a silent no-op.
+/// while the app is frontmost. Unauthorized posts are rejected by the
+/// framework; dev (no bundle) is a silent no-op. The command resolves only
+/// after Notification Center accepts or rejects the request, allowing the
+/// frontend to serialize a later dismissal after asynchronous acceptance.
 #[tauri::command]
 pub async fn notification_send(
     app: tauri::AppHandle,
@@ -265,8 +265,16 @@ pub async fn notification_send(
             &content,
             None,
         );
-        center.addNotificationRequest_withCompletionHandler(&request, None);
-        Ok(())
+        let (tx, rx) = mpsc::channel();
+        let completion = RcBlock::new(move |error: *mut NSError| {
+            let _ = tx.send(error.is_null());
+        });
+        center.addNotificationRequest_withCompletionHandler(&request, Some(&completion));
+        match rx.recv() {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("notification request was rejected".to_string()),
+            Err(_) => Err("notification request completion channel closed".to_string()),
+        }
     })
     .await
 }
@@ -303,8 +311,10 @@ mod activation_tests {
 
     #[test]
     fn pending_activation_keeps_latest_terminal() {
-        let mut state = ActivationState::default();
-        state.pending = Some("first".into());
+        let mut state = ActivationState {
+            pending: Some("first".into()),
+            ..Default::default()
+        };
         state.pending = Some("second".into());
         assert_eq!(state.pending.as_deref(), Some("second"));
         state.frontend_ready = true;
@@ -313,9 +323,11 @@ mod activation_tests {
     }
 }
 
-/// Remove the delivered banner posted under this identifier (attention was
-/// answered, the terminal closed, or notifications were disabled). Removing
-/// a nonexistent identifier is a framework no-op, as is dev (no bundle).
+/// Remove pending and delivered banners under this identifier (attention was
+/// answered, the terminal closed, or notifications were disabled). Delivery
+/// is asynchronous, so removing only the delivered set can let an already
+/// accepted request appear after dismissal. Missing identifiers are a
+/// framework no-op, as is dev (no bundle).
 #[tauri::command]
 pub async fn notification_dismiss(id: String) -> Result<(), String> {
     blocking(move || {
@@ -323,8 +335,9 @@ pub async fn notification_dismiss(id: String) -> Result<(), String> {
             return Ok(());
         }
         let ids = NSArray::from_retained_slice(&[NSString::from_str(&id)]);
-        UNUserNotificationCenter::currentNotificationCenter()
-            .removeDeliveredNotificationsWithIdentifiers(&ids);
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        center.removePendingNotificationRequestsWithIdentifiers(&ids);
+        center.removeDeliveredNotificationsWithIdentifiers(&ids);
         Ok(())
     })
     .await

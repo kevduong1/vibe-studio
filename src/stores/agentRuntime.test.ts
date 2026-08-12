@@ -1,4 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { mockAgentProcessSnapshot } = vi.hoisted(() => ({
+  mockAgentProcessSnapshot: vi.fn(),
+}));
+
+vi.mock("../lib/ipc", () => ({
+  agentProcessSnapshot: mockAgentProcessSnapshot,
+}));
+
 import {
   acknowledgeAgentRuntime,
   applyAgentActivity,
@@ -6,7 +15,9 @@ import {
   applyAgentProcessSnapshot,
   applyAgentScreen,
   markAgentLaunching,
+  markAgentTerminalExited,
   markAgentProcessQueryFailed,
+  pollAgentProcesses,
   registerAgentRuntime,
   selectAgentSubagents,
   selectTerminalRollup,
@@ -33,6 +44,7 @@ const makePresent = (id: string, pid = 10) => {
 afterEach(() => {
   for (const id of ids) unregisterAgentRuntime(id);
   ids.clear();
+  mockAgentProcessSnapshot.mockReset();
 });
 
 describe("agent runtime transitions", () => {
@@ -94,6 +106,79 @@ describe("agent runtime transitions", () => {
     expect(state("a")).toMatchObject({ occupancy: "absent", lifecycle: "unknown" });
   });
 
+  it("marks an exited PTY as proven stopped without inventing a generation", () => {
+    register("a");
+    makePresent("a", 42);
+    markAgentTerminalExited("a");
+    expect(state("a")).toMatchObject({
+      occupancy: "exited",
+      occupantPid: undefined,
+      generation: 1,
+      lifecycle: "unknown",
+    });
+    expect(displayAgentState(state("a"))).toBe("absent");
+  });
+
+  it("does not let an in-flight process poll overwrite a proven PTY exit", () => {
+    register("a");
+    makePresent("a", 42);
+    markAgentTerminalExited("a");
+
+    applyAgentProcessSnapshot("a", [
+      {
+        pid: 42,
+        parentPid: 1,
+        parentAgentPid: null,
+        rootAgentPid: 42,
+        executable: "claude",
+        foreground: true,
+      },
+      {
+        pid: 43,
+        parentPid: 42,
+        parentAgentPid: 42,
+        rootAgentPid: 42,
+        executable: "claude",
+        foreground: false,
+      },
+    ], 1);
+    markAgentProcessQueryFailed(["a"]);
+
+    expect(state("a")).toMatchObject({
+      occupancy: "exited",
+      occupantPid: undefined,
+      generation: 1,
+      lifecycle: "unknown",
+    });
+    expect(selectAgentSubagents(useAgentRuntimeStore.getState(), "a")).toHaveLength(0);
+  });
+
+  it("does not query the backend when every retained terminal has exited", async () => {
+    register("a");
+    makePresent("a", 42);
+    markAgentTerminalExited("a");
+
+    await pollAgentProcesses();
+
+    expect(mockAgentProcessSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("omits retained exited terminals from a mixed process poll", async () => {
+    register("active");
+    register("exited");
+    makePresent("active", 41);
+    makePresent("exited", 42);
+    markAgentTerminalExited("exited");
+    mockAgentProcessSnapshot.mockResolvedValue([]);
+
+    await pollAgentProcesses();
+
+    expect(mockAgentProcessSnapshot).toHaveBeenCalledOnce();
+    expect(mockAgentProcessSnapshot).toHaveBeenCalledWith([
+      expect.objectContaining({ terminalId: "active" }),
+    ]);
+  });
+
   it("exposes additional matching processes as generation-owned read-only subagents", () => {
     register("a");
     applyAgentProcessSnapshot("a", [
@@ -135,8 +220,53 @@ describe("agent runtime transitions", () => {
     register("a");
     makePresent("a");
     markAgentProcessQueryFailed(["a"]);
-    expect(state("a").occupancy).toBe("unknown");
+    expect(state("a")).toMatchObject({
+      occupancy: "unknown",
+      occupantPid: 10,
+      generation: 1,
+    });
     expect(displayAgentState(state("a"))).toBe("unknown");
+  });
+
+  it("restores the same PID after a query failure without replacing its generation", () => {
+    register("a");
+    makePresent("a", 42);
+    applyAgentScreen(
+      "a",
+      1,
+      { lifecycle: "blocked", reason: "permission", matchedRule: "permission", strong: true },
+      false,
+    );
+    markAgentProcessQueryFailed(["a"]);
+    applyAgentProcessResult("a", 42, 1);
+    expect(state("a")).toMatchObject({
+      occupancy: "present",
+      occupantPid: 42,
+      generation: 1,
+      lifecycle: "blocked",
+      matchedRule: "permission",
+    });
+  });
+
+  it("preserves startup activity but not unowned screen evidence on first PID discovery", () => {
+    register("a");
+    markAgentLaunching("a");
+    applyAgentActivity("a", { busy: true, attention: false }, false);
+    applyAgentScreen(
+      "a",
+      0,
+      { lifecycle: "blocked", reason: "question", matchedRule: "stale", strong: true },
+      false,
+    );
+    applyAgentProcessResult("a", 42, 0);
+    expect(state("a")).toMatchObject({
+      occupancy: "present",
+      occupantPid: 42,
+      generation: 1,
+      lifecycle: "working",
+      authority: "activity",
+    });
+    expect(state("a").matchedRule).toBeUndefined();
   });
 
   it("lets screen evidence override activity and falls back when it disappears", () => {

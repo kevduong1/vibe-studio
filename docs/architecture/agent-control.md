@@ -14,9 +14,13 @@ start. The frontend may display the two paths but never the token value.
 
 The global token is for same-user tools such as the bundled `vibe-agent` CLI.
 Repository-scoped automation should receive only a random, short-lived
-capability (1–3600 seconds) bound to one exact workspace path. Capabilities can
-observe and act only on that project and can cancel only active requests owned
-by it. They are session-only and are never injected automatically into PTYs.
+capability (1–3600 seconds) bound initially to one exact workspace path. When
+that capability successfully starts an isolated task, the exact returned
+checkout path is delegated to the same token so it can observe and control the
+agent it created. This is an explicit path grant, never a prefix rule: unrelated
+sibling worktrees remain inaccessible. Capabilities can cancel only active
+requests owned by one of their granted paths. They are session-only and are
+never injected automatically into PTYs.
 
 The newline-delimited JSON protocol accepts one request per connection and
 caps requests at 64 KiB. It is currently a macOS/Unix local API; it does not
@@ -45,14 +49,39 @@ Shared-checkout starts require an explicit CLI flag.
 
 Prompt requests pin the occupant generation before frontend dispatch. Queue is
 the default and waits for an idle/question-owned prompt; steer is explicit and
-may write during active work. Both checkpoint an isolated task before the text
-reaches the PTY. Prompt-and-wait uses one overall deadline, observes a working
-edge followed by idle/blocked, and fails if the occupant generation changes.
+may write during active work. Both reserve a terminal input-queue slot before
+checkpointing, so earlier keyboard input completes first and later input cannot
+overtake the delivery. An input-owned turn remains gated until semantic output
+leaves its accepting prompt state; a fast PTY write cannot make the next queued
+request mistake the prior turn for its own. Immediately before dispatch, the
+frontend asks Rust to capture the current event sequence and working state
+atomically as the turn boundary; Rust also revalidates the delivery's pinned
+terminal generation under that same lock. Prompt-and-wait uses one overall
+deadline and the ordered event ring after that boundary to observe a working
+edge followed by idle/blocked. Thus it
+neither mistakes the preceding turn of a queued prompt for completion nor loses
+a fast completed turn behind the frontend response. It fails if the occupant
+generation changes.
 Independent waits use the same generation pin. Request IDs allow cancellation;
 if a queued prompt is still checkpointing or waiting for safe input, Rust tells
 the frontend to remove it before returning. Active-request project ownership
 and the terminal's actual synchronized workspace—not a caller-supplied alias—
 enforce capability scope.
+
+Caller-owned request IDs may be reused after a request finishes even while its
+old frontend handler is still unwinding. Rust therefore assigns every frontend
+dispatch a fresh delivery ID. Prompt boundaries and responses must echo both
+identities, cancellation events carry both, and the frontend prompt queue uses
+the delivery ID internally. A late callback or cancellation for an expired
+delivery cannot answer, cancel, or remove its replacement.
+
+Every frontend-routed request carries the backend's absolute deadline. The
+frontend checks cancellation and that deadline again after asynchronous
+side-effect boundaries. A cancelled shared start may resolve the repository or
+open its workspace but never launches a terminal afterward. If an isolated
+start is cancelled after Git created its checkout, the checkout and task record
+remain recoverable/listable, but workspace opening and agent launch stop at the
+next safe boundary.
 
 Prompt text is bounded to 8,192 characters in session memory and is not persisted. Start
 prompts become ordinary CLI launch arguments and therefore follow the selected
@@ -80,8 +109,10 @@ Settings shows the exact bundled CLI and skill paths (and can copy the CLI
 path); the bundle does not mutate the user's `PATH`. The CLI locates the normal
 app-data socket/token by default and accepts
 `--socket`, `--token-file`, or a project capability through `--token` or
-`VIBE_STUDIO_CAPABILITY`. It prints structured JSON and returns nonzero on API
-errors.
+`VIBE_STUDIO_CAPABILITY`. Packaged copies discover app data through their
+nearest `Info.plist`; the unbundled `tauri dev` copy reads the nearest Tauri
+development config so it cannot accidentally connect to the release socket.
+It prints structured JSON and returns nonzero on API errors.
 
 ## Failure behavior
 

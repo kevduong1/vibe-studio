@@ -3,6 +3,10 @@ import { create } from "zustand";
 export interface ReviewLineComment {
   id: string;
   taskId: string;
+  /** Exact semantic owner and evidence the draft was authored against. */
+  terminalId: string;
+  generation: number;
+  fingerprint: string;
   path: string;
   /** One-based source line. */
   line: number;

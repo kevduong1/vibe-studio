@@ -140,6 +140,17 @@ export const agentAlertAction = (
 ): AgentAlertAction => {
   const before = displayAgentState(previous);
   const after = displayAgentState(current);
+  // A process-table outage temporarily masks an otherwise unchanged
+  // generation as occupancy=unknown. Restoring that same semantic evidence
+  // is not a new blocked/completion edge and must not replay its alert.
+  if (
+    previous?.occupancy === "unknown" &&
+    current?.occupancy === "present" &&
+    previous.terminalId === current.terminalId &&
+    previous.generation === current.generation &&
+    previous.lifecycle === current.lifecycle &&
+    previous.seen === current.seen
+  ) return "none";
   if (current && !current.seen && after === "blocked" && before !== "blocked") {
     return "blocked";
   }

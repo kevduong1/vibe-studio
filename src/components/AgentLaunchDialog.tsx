@@ -5,25 +5,16 @@ import { openWorkspaceTerminal } from "../lib/workspaceSessions";
 import {
   allLaunchProfiles,
   definitionForProfile,
+  invalidEnvironmentLines,
   launchCommand,
   parseEnvironmentLines,
   useAgentDefinitionsStore,
   type AgentLaunchProfile,
 } from "../stores/agentDefinitions";
 import { useWorkspacesStore } from "../stores/workspaces";
-import type { AgentKind } from "../lib/agentState";
 import { useNativeOverlay } from "../lib/nativeOverlays";
+import type { AgentLaunchRequest } from "../lib/agentLaunchRequest";
 import "./AgentLaunchDialog.css";
-
-export interface AgentLaunchRequest {
-  workspacePath: string;
-  scope: "global" | "workspace";
-  kind: AgentKind;
-}
-
-export const requestAgentLaunch = (request: AgentLaunchRequest): void => {
-  window.dispatchEvent(new CustomEvent("vibe:launch-agent", { detail: request }));
-};
 
 export default function AgentLaunchDialog({
   request,
@@ -44,12 +35,21 @@ export default function AgentLaunchDialog({
   const [draft, setDraft] = useState<AgentLaunchProfile>(selected);
   const [health, setHealth] = useState<"checking" | "available" | "missing">("checking");
   const [rememberName, setRememberName] = useState("");
+  const [environmentText, setEnvironmentText] = useState(
+    Object.entries(selected?.environment ?? {}).map(([key, value]) => `${key}=${value}`).join("\n"),
+  );
   const launched = useRef(false);
   const definition = draft ? definitionForProfile(draft) : null;
   const built = definition && draft ? launchCommand(definition, draft) : null;
+  const invalidEnvironment = invalidEnvironmentLines(environmentText);
 
   useEffect(() => {
-    if (selected) setDraft({ ...selected, environment: { ...selected.environment }, extraArguments: [...selected.extraArguments] });
+    if (selected) {
+      setDraft({ ...selected, environment: { ...selected.environment }, extraArguments: [...selected.extraArguments] });
+      setEnvironmentText(
+        Object.entries(selected.environment).map(([key, value]) => `${key}=${value}`).join("\n"),
+      );
+    }
   }, [profileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -70,7 +70,13 @@ export default function AgentLaunchDialog({
 
   const patch = (value: Partial<AgentLaunchProfile>) => setDraft((current) => ({ ...current, ...value }));
   const launch = () => {
-    if (launched.current || !definition || !built || health !== "available") return;
+    if (
+      launched.current ||
+      !definition ||
+      !built ||
+      health !== "available" ||
+      invalidEnvironment.length > 0
+    ) return;
     launched.current = true;
     if (rememberName.trim()) {
       useAgentDefinitionsStore.getState().upsertProfile({
@@ -117,10 +123,10 @@ export default function AgentLaunchDialog({
           <>
             <div className={`agent-launch-health ${health}`}>{definition.name} · {health}</div>
             <div className="agent-launch-grid">
-              <label>Model<input value={draft.model ?? ""} placeholder="Agent default" onChange={(event) => patch({ model: event.target.value || null })} /></label>
-              <label>Reasoning<input value={draft.reasoning ?? ""} placeholder="Agent default" onChange={(event) => patch({ reasoning: event.target.value || null })} /></label>
-              <label>Permission mode<input value={draft.permissionMode ?? ""} placeholder="Agent default" onChange={(event) => patch({ permissionMode: event.target.value || null })} /></label>
-              <label>Sandbox<input value={draft.sandbox ?? ""} placeholder="Agent default" onChange={(event) => patch({ sandbox: event.target.value || null })} /></label>
+              {definition.capabilities.models && <label>Model<input value={draft.model ?? ""} placeholder="Agent default" onChange={(event) => patch({ model: event.target.value || null })} /></label>}
+              {definition.capabilities.reasoning && <label>Reasoning<input value={draft.reasoning ?? ""} placeholder="Agent default" onChange={(event) => patch({ reasoning: event.target.value || null })} /></label>}
+              {definition.capabilities.permissions && <label>Permission mode<input value={draft.permissionMode ?? ""} placeholder="Agent default" onChange={(event) => patch({ permissionMode: event.target.value || null })} /></label>}
+              {definition.capabilities.sandbox && <label>Sandbox<input value={draft.sandbox ?? ""} placeholder="Agent default" onChange={(event) => patch({ sandbox: event.target.value || null })} /></label>}
               <label>Folder
                 <select value={draft.folderChoice} onChange={(event) => patch({ folderChoice: event.target.value as AgentLaunchProfile["folderChoice"] })}>
                   <option value="current">Current workspace</option>
@@ -128,22 +134,26 @@ export default function AgentLaunchDialog({
                 </select>
               </label>
             </div>
-            <label>Extra arguments<input value={draft.extraArguments.join(" ")} placeholder="Space-separated" onChange={(event) => patch({ extraArguments: event.target.value.split(/\s+/).filter(Boolean) })} /></label>
+            <label>Extra arguments (one argument per line)<textarea value={draft.extraArguments.join("\n")} placeholder={"--flag\nvalue with spaces"} onChange={(event) => patch({ extraArguments: event.target.value.split("\n").filter((value) => value.length > 0) })} /></label>
             <label>Environment (KEY=value per line)
               <textarea
-                value={Object.entries(draft.environment).map(([key, value]) => `${key}=${value}`).join("\n")}
-                onChange={(event) => patch({
-                  environment: parseEnvironmentLines(event.target.value),
-                })}
+                value={environmentText}
+                onChange={(event) => {
+                  setEnvironmentText(event.target.value);
+                  patch({ environment: parseEnvironmentLines(event.target.value) });
+                }}
               />
             </label>
+            {invalidEnvironment.length > 0 && <div className="agent-launch-error">
+              Invalid environment assignment on {invalidEnvironment.length === 1 ? "line" : "lines"} {invalidEnvironment.join(", ")}.
+            </div>}
             <div className="agent-launch-command"><code>{built?.command}</code></div>
             <label>Save edited profile as<input value={rememberName} placeholder="Optional profile name" onChange={(event) => setRememberName(event.target.value)} /></label>
           </>
         )}
         <div className="agent-launch-actions">
           <button onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={!definition || health !== "available"} onClick={launch}>Launch</button>
+          <button className="primary" disabled={!definition || health !== "available" || invalidEnvironment.length > 0} onClick={launch}>Launch</button>
         </div>
       </div>
     </div>

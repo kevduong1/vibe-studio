@@ -73,6 +73,15 @@ pub struct GitReviewSnapshot {
     pub fingerprint: String,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCheckpointSnapshot {
+    /// Unreachable tree containing the checkpointed worktree state.
+    pub tree: String,
+    /// Review evidence captured within the same repository-generation guard.
+    pub snapshot: GitReviewSnapshot,
+}
+
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RefLabel {
@@ -688,17 +697,6 @@ fn checkpoint_tree_once(repo_path: &str) -> Result<String, String> {
     result
 }
 
-fn checkpoint_tree(repo_path: &str) -> Result<String, String> {
-    for _ in 0..3 {
-        let before = repository_generation(repo_path)?;
-        let tree = checkpoint_tree_once(repo_path)?;
-        if before == repository_generation(repo_path)? {
-            return Ok(tree);
-        }
-    }
-    Err("repository kept changing while the turn checkpoint was captured".to_string())
-}
-
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -884,52 +882,56 @@ pub async fn git_worktree_create(
 /// Remove only the checkout. Git's first refusal is preserved for dirty
 /// worktrees; callers may retry with force after explicit confirmation.
 /// Associated branches are never deleted here.
+fn remove_worktree(repo_path: &str, path: &str, force: bool) -> Result<(), String> {
+    let requested = PathBuf::from(path);
+    let requested_key = requested.canonicalize().unwrap_or(requested.clone());
+    let item = worktree_list(repo_path)?
+        .into_iter()
+        .find(|candidate| {
+            Path::new(&candidate.path)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&candidate.path))
+                == requested_key
+        })
+        .ok_or_else(|| format!("not a worktree of this repository: {path}"))?;
+    if item.main {
+        return Err("the main worktree cannot be removed".to_string());
+    }
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(repo_path)
+        .args(["worktree", "remove"]);
+    if force {
+        // Git deliberately requires force twice to override an explicit
+        // worktree lock. This path is reached only after the UI's second,
+        // destructive confirmation and still never deletes the branch.
+        command.args(["--force", "--force"]);
+    }
+    let output = command
+        .arg(&item.path)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            stderr
+        })
+    }
+}
+
 #[tauri::command]
 pub async fn git_worktree_remove(
     repo_path: String,
     path: String,
     force: bool,
 ) -> Result<(), String> {
-    blocking(move || {
-        let requested = PathBuf::from(&path);
-        let requested_key = requested.canonicalize().unwrap_or(requested.clone());
-        let item = worktree_list(&repo_path)?
-            .into_iter()
-            .find(|candidate| {
-                Path::new(&candidate.path)
-                    .canonicalize()
-                    .unwrap_or_else(|_| PathBuf::from(&candidate.path))
-                    == requested_key
-            })
-            .ok_or_else(|| format!("not a worktree of this repository: {path}"))?;
-        if item.main {
-            return Err("the main worktree cannot be removed".to_string());
-        }
-        let mut command = Command::new("git");
-        command
-            .arg("-C")
-            .arg(&repo_path)
-            .args(["worktree", "remove"]);
-        if force {
-            command.arg("--force");
-        }
-        let output = command
-            .arg(&item.path)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map_err(|error| format!("failed to run git: {error}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            Err(if stderr.is_empty() {
-                String::from_utf8_lossy(&output.stdout).trim().to_string()
-            } else {
-                stderr
-            })
-        }
-    })
-    .await
+    blocking(move || remove_worktree(&repo_path, &path, force)).await
 }
 
 /// Merge an isolated task branch into the currently checked-out parent.
@@ -1402,6 +1404,22 @@ fn review_snapshot(
     Err("repository kept changing while review evidence was captured".to_string())
 }
 
+fn checkpoint_snapshot(
+    repo_path: &str,
+    base_head: Option<&str>,
+    base_unborn: bool,
+) -> Result<GitCheckpointSnapshot, String> {
+    for _ in 0..3 {
+        let before = repository_generation(repo_path)?;
+        let tree = checkpoint_tree_once(repo_path)?;
+        let snapshot = review_snapshot_once(repo_path, base_head, base_unborn)?;
+        if before == repository_generation(repo_path)? {
+            return Ok(GitCheckpointSnapshot { tree, snapshot });
+        }
+    }
+    Err("repository kept changing while checkpoint evidence was captured".to_string())
+}
+
 #[tauri::command]
 pub async fn git_review_head(repo_path: String) -> Result<Option<String>, String> {
     blocking(move || {
@@ -1427,12 +1445,16 @@ pub async fn git_review_snapshot(
     blocking(move || review_snapshot(&repo_path, base_head.as_deref(), base_unborn)).await
 }
 
-/// Snapshot tracked and untracked (non-ignored) worktree content into an
-/// unreachable Git tree using a private temporary index. The real index and
-/// worktree are not changed; object retention follows normal Git GC.
+/// Capture the checkpoint tree and its per-file review hashes under one
+/// repository-generation guard, so latest-turn evidence cannot combine two
+/// different filesystem states.
 #[tauri::command]
-pub async fn git_checkpoint_create(repo_path: String) -> Result<String, String> {
-    blocking(move || checkpoint_tree(&repo_path)).await
+pub async fn git_checkpoint_snapshot(
+    repo_path: String,
+    base_head: Option<String>,
+    base_unborn: bool,
+) -> Result<GitCheckpointSnapshot, String> {
+    blocking(move || checkpoint_snapshot(&repo_path, base_head.as_deref(), base_unborn)).await
 }
 
 #[tauri::command]
@@ -2743,16 +2765,14 @@ mod tests {
         assert_eq!(listed[1].branch.as_deref(), Some("vibe/test-task"));
 
         std::fs::write(checkout.join("tracked.txt"), b"dirty\n").unwrap();
-        let refused = run_git(
+        let refused = remove_worktree(path.to_str().unwrap(), &checkout_text, false);
+        assert!(refused.is_err());
+        let locked = run_git(
             path.to_str().unwrap(),
-            &["worktree", "remove", &checkout_text],
+            &["worktree", "lock", &checkout_text],
         );
-        assert!(!refused.ok);
-        let forced = run_git(
-            path.to_str().unwrap(),
-            &["worktree", "remove", "--force", &checkout_text],
-        );
-        assert!(forced.ok, "{}", forced.output);
+        assert!(locked.ok, "{}", locked.output);
+        remove_worktree(path.to_str().unwrap(), &checkout_text, true).unwrap();
         let repository = open_repo(path.to_str().unwrap()).unwrap();
         assert!(repository
             .find_branch("vibe/test-task", BranchType::Local)
@@ -2762,20 +2782,28 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_tree_captures_worktree_without_mutating_the_real_index() {
+    fn checkpoint_snapshot_returns_tree_and_matching_review_evidence() {
         let (path, repo) = temp_repo();
-        commit_file(&repo, Path::new("tracked.txt"), b"base\n", "base");
-        let clean_tree = checkpoint_tree(path.to_str().unwrap()).unwrap();
+        let base = commit_file(&repo, Path::new("tracked.txt"), b"base\n", "base");
         std::fs::write(path.join("tracked.txt"), b"edited\n").unwrap();
         std::fs::write(path.join("new.txt"), b"new\n").unwrap();
-        let changed_tree = checkpoint_tree(path.to_str().unwrap()).unwrap();
-        assert_ne!(clean_tree, changed_tree);
+
+        let captured =
+            checkpoint_snapshot(path.to_str().unwrap(), Some(&base.to_string()), false).unwrap();
+        assert_eq!(
+            captured.snapshot.changed_files,
+            vec!["new.txt".to_string(), "tracked.txt".to_string()]
+        );
+        assert_eq!(captured.snapshot.file_fingerprints.len(), 2);
         let tree = repo
-            .find_tree(Oid::from_str(&changed_tree).unwrap())
+            .find_tree(Oid::from_str(&captured.tree).unwrap())
             .unwrap();
         assert!(tree.get_path(Path::new("new.txt")).is_ok());
+        let tracked = tree.get_path(Path::new("tracked.txt")).unwrap();
+        assert_eq!(repo.find_blob(tracked.id()).unwrap().content(), b"edited\n");
         let index = repo.index().unwrap();
         assert!(index.get_path(Path::new("new.txt"), 0).is_none());
+
         drop(tree);
         drop(repo);
         std::fs::remove_dir_all(path).unwrap();

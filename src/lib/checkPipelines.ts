@@ -7,7 +7,11 @@ import {
   loadTaskDocument,
   shellCommandLine,
 } from "./tasks";
-import { fingerprintDecision, validatePipeline } from "./pipelineModel";
+import {
+  automaticPipelineAuthorized,
+  fingerprintDecision,
+  validatePipeline,
+} from "./pipelineModel";
 export { selectablePipelineRoots, validatePipeline } from "./pipelineModel";
 import {
   beginCheckRun,
@@ -29,7 +33,24 @@ function createCheckTerminal(ws: Workspace, label: string): string {
 }
 
 const running = new Map<string, Promise<CheckRun>>();
-const followup = new Map<string, { rootLabel: string; source: "auto" }>();
+const followup = new Map<
+  string,
+  { rootLabel: string; source: "auto"; generation: number }
+>();
+
+const autoRunAuthorized = (
+  terminalId: string,
+  rootLabel: string,
+  generation: number,
+): boolean => {
+  const task = useAgentTasksStore.getState().tasks[terminalId];
+  return automaticPipelineAuthorized(
+    task,
+    rootLabel,
+    generation,
+    Boolean(task && isAutoCheckTrusted(task.workspacePath)),
+  );
+};
 
 const trustRecord = (): Record<string, true> => {
   try {
@@ -67,8 +88,8 @@ async function executePipeline(
   if (!owner) throw new Error("Agent task is no longer available");
   const ws = useWorkspacesStore.getState().workspaces.find((item) => item.path === owner.workspacePath);
   if (!ws) throw new Error("Open the owning project before running checks");
-  if (source === "auto" && !isAutoCheckTrusted(owner.workspacePath)) {
-    throw new Error("Automatic checks are not approved for this project");
+  if (source === "auto" && !autoRunAuthorized(terminalId, rootLabel, owner.generation)) {
+    throw new Error("Automatic checks are no longer enabled for this task and pipeline");
   }
   await refreshAgentTask(terminalId);
   const refreshedOwner = useAgentTasksStore.getState().tasks[terminalId];
@@ -81,6 +102,12 @@ async function executePipeline(
   const preparedOwner = useAgentTasksStore.getState().tasks[terminalId];
   if (!preparedOwner || preparedOwner.generation !== owner.generation) {
     throw new Error("The terminal occupant changed while checks were being prepared");
+  }
+  // Loading the repository snapshot and tasks document both yield to the UI.
+  // Revoke a queued automatic run if the user disabled auto-run, changed its
+  // pipeline, replaced the occupant, or revoked project trust in that window.
+  if (source === "auto" && !autoRunAuthorized(terminalId, rootLabel, owner.generation)) {
+    throw new Error("Automatic checks are no longer enabled for this task and pipeline");
   }
   const ownerGeneration = owner.generation;
 
@@ -247,7 +274,12 @@ export function runAgentTaskPipeline(
   if (active) {
     // Manual double-clicks are one authorization, not a request to queue a
     // second run. Autorun events coalesce to the latest selected root.
-    if (source === "auto") followup.set(terminalId, { rootLabel, source });
+    if (source === "auto") {
+      const generation = useAgentTasksStore.getState().tasks[terminalId]?.generation;
+      if (generation != null && autoRunAuthorized(terminalId, rootLabel, generation)) {
+        followup.set(terminalId, { rootLabel, source, generation });
+      }
+    }
     return active;
   }
   const promise = executePipeline(terminalId, rootLabel, source);
@@ -256,9 +288,11 @@ export function runAgentTaskPipeline(
     if (running.get(terminalId) !== promise) return;
     running.delete(terminalId);
     const queued = followup.get(terminalId);
-    if (queued) {
+    if (queued && autoRunAuthorized(terminalId, queued.rootLabel, queued.generation)) {
       followup.delete(terminalId);
       void runAgentTaskPipeline(terminalId, queued.rootLabel, queued.source).catch(() => {});
+    } else if (queued) {
+      followup.delete(terminalId);
     }
   }).catch(() => {});
   return promise;
@@ -283,6 +317,7 @@ subscribeAgentTransitions(({ previous, current }) => {
     await refreshAgentTask(current.terminalId);
     const task = useAgentTasksStore.getState().tasks[current.terminalId];
     if (
+      task?.generation === current.generation &&
       task?.autoRun &&
       task.selectedPipeline &&
       task.latestSnapshot?.changedFiles.length &&

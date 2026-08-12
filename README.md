@@ -113,8 +113,10 @@ or was approved.
   frontend. Unborn repositories are supported, while late/manual-launch
   baselines are clearly marked as potentially incomplete review boundaries.
 - **Review changes** opens Source Control and the first current worktree/index
-  diff when one is available. **Accept** records the human decision after that
-  review; checks are optional evidence and do not gate it. **Needs changes**
+  diff when one is available. Return to the inbox and explicitly **Mark
+  reviewed** after inspecting that exact fingerprint; only then does **Accept**
+  become available. Async navigation cannot acknowledge a newer generation or
+  repository state. Checks are optional evidence and do not gate acceptance. **Needs changes**
   records feedback and returns to the terminal without sending text. If the
   repository changes after acceptance, the inbox marks that approval stale.
 - Agents in a normal workspace still use “all repository changes since the
@@ -142,8 +144,11 @@ or was approved.
   launches the selected agent; **Removed tasks** appears only when task records
   remain after their Git checkouts were deleted. Every linked worktree has a
   confirmed remove action that keeps its branch; the main checkout cannot be
-  removed. Task rows separately support permanent **Delete Task Record**, which
-  deletes Vibe metadata while leaving a live worktree and branch intact.
+  removed. A checkout that parents retained child tasks cannot be removed, and
+  confirmed force removal handles both dirty and locked worktrees. Task rows
+  separately support permanent **Delete Task Record**, which deletes Vibe
+  metadata while leaving its worktree and branch intact after bound terminals
+  have stopped.
 - Vibe-owned worktree rows additionally combine whole-task/latest-turn
   changes, conflicts, checks, diagnostics, commits, previews, agent state, and
   read-only child-agent rows. Every live worktree row uses the same path-keyed
@@ -151,8 +156,10 @@ or was approved.
   project's color.
   Prompt-owned turns snapshot into a private Git tree first, so latest-turn
   files open as checkpoint-to-current diffs without changing the real index.
-  Line comments can be batched into a follow-up only while the same agent
-  generation owns an idle/question prompt.
+  Line comments are pinned to the exact generation and review fingerprint where
+  they were drafted. Current comments can be batched into a follow-up only while
+  that same agent generation owns an idle/question prompt; outdated drafts stay
+  visible for removal instead of being silently sent against newer evidence.
 - Editable task plans support dependencies, explicit queue versus steer, one
   isolated worktree per approved independent step, and two-to-four-candidate
   Best-of-N runs whose results remain separate comparable task cards.
@@ -163,11 +170,12 @@ or was approved.
 - Task outcomes are explicit: **Apply / Merge**, **Keep Branch**, **Archive**,
   and **Remove Worktree**. Closing, archiving, checkout deletion, and permanent
   task-record deletion are separate. Git
-  gets the first dirty-removal refusal; force requires confirmation; live
+  gets the first dirty/locked-removal refusal; force requires confirmation; live
   global terminals block removal; successful cleanup forgets deleted checkout
   paths in global terminal groups; branches are never deleted implicitly.
-- Agent buttons open a launch sheet for model, reasoning, permissions, sandbox,
-  environment, extra arguments, and current/worktree folder choice. Conversation
+- Agent buttons open a launch sheet for each definition's supported model,
+  reasoning, permission, and sandbox controls, plus validated environment,
+  one-argument-per-line extras, and current/worktree folder choice. Conversation
   restore remains an explicit archived-task action. The initial Codex profile remains
   `codex --yolo`. Integrations reports
   executable health/version/capabilities and supports stable-ID custom commands.
@@ -177,8 +185,8 @@ Repository checks come from `.vscode/tasks.json`:
 - Tasks in the `build` or `test` groups can be selected as pipeline roots.
   Compound tasks are supported, dependencies run in parallel by default, and
   `dependsOrder: "sequence"` preserves listed order.
-- Reachable duplicate labels, malformed/missing dependencies, cycles,
-  unsupported/background tasks, and unavailable or unknown variables are
+- Reachable duplicate labels, malformed execution/dependency fields, missing
+  dependencies, cycles, unsupported/background tasks, and unavailable or unknown variables are
   rejected before execution; unrelated broken tasks do not block the pipeline.
 - Check nodes run in fresh app-reserved project terminals. Exit status is
   reported by a private nonce-bound terminal marker instead of parsing output;
@@ -189,7 +197,9 @@ Repository checks come from `.vscode/tasks.json`:
   structured runs are kept for the current app session, without raw output.
 - Manual runs are explicitly authorized by the click. **Auto-run on turn
   completion** requires one project-scoped approval before repository commands
-  may run automatically, and that approval can be revoked in the inbox.
+  may run automatically, and that approval can be revoked in the inbox. Queued
+  follow-ups revalidate the generation, selected root, enablement, and trust
+  immediately before running.
 
 ### ⌨️ Project terminals
 
@@ -232,8 +242,10 @@ Repository checks come from `.vscode/tasks.json`:
   explicitly steers prompts, and waits with timeouts/cancellation pinned to the
   exact occupant generation.
 - A fresh mode-0600 token and Unix socket live in the per-user app-data
-  directory. Short-lived capabilities restrict repository automation to one
-  exact project; the global credential is never injected into terminal shells.
+  directory. Short-lived capabilities initially restrict repository automation
+  to one exact project and explicitly gain only the isolated checkout paths they
+  successfully start; unrelated sibling worktrees remain hidden. The global
+  credential is never injected into terminal shells.
 - The bundle also includes an agent skill describing the CLI contract. Settings
   shows and can copy the bundled CLI path, and shows socket/token/skill paths,
   but never displays the token value or silently changes your `PATH`.

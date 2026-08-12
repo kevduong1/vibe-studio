@@ -45,8 +45,8 @@ owned by that grouping.
 
 On macOS, the frontend runs one shared one-second monitor while any dedicated
 or discovery-enabled shell tabs are registered. One
-`pty_agent_process_snapshot` IPC call covers all registered terminal IDs. The
-Rust backend:
+`pty_agent_process_snapshot` IPC call covers all non-exited registered terminal
+IDs. The Rust backend:
 
 1. Reads each PTY's shell PID and foreground process group.
 2. Runs one `ps` snapshot.
@@ -56,9 +56,16 @@ Rust backend:
    foreground membership—never arguments or environment.
 
 A successful query with no match means `absent`. A query failure means
-`unknown`; it must never manufacture a false absence. Unsupported platforms
-degrade to `unknown`. Generation checks reject delayed screen results from a
-previous agent occupant.
+`unknown`; it must never manufacture a false absence. The runtime retains the
+last-known PID, generation, child-process rows, and lifecycle evidence while
+the query authority is unavailable. Rediscovering that same PID restores the
+existing occupant without replacing its generation and immediately
+reclassifies the bounded screen tail, including output parsed during the
+outage. A process result that was already in flight cannot overwrite the
+stronger fact that the owning PTY exited. Unsupported platforms degrade to
+`unknown`. The process-table parser treats the complete final `comm` column as
+the executable path, including spaces. Generation checks reject delayed screen
+results from a previous agent occupant.
 
 Fresh launches call `markAgentLaunching()` before typing `claude` or
 `codex --yolo` into the shell. Dedicated Codex tabs deliberately default to
@@ -69,26 +76,38 @@ the product decision changes explicitly.
 ## Lifecycle authorities
 
 After xterm parses output, `termSession.ts` reads at most the bottom 40 logical
-lines and 16,384 characters from the active normal or alternate-screen buffer. Wrapped
-physical rows are joined before classification.
+lines and 16,384 characters from the active normal or alternate-screen buffer.
+Wrapped physical rows are joined before classification.
 
 `src/lib/agentProfiles.ts` contains independently authored profiles for Claude
 Code 2.1.226 and Codex CLI 0.147.0, including their structured multi-question
 overlays. Every profile declares a schema version and authored-for CLI version;
 Settings exposes rule counts and current privacy-bounded match diagnostics.
-Rules run in priority order:
+Eligible rules are compared by the logical line containing their evidence:
+the newest evidence wins. Priority resolves only a same-line tie:
 
 1. Blocked prompts, with reasons such as permission, question, authentication,
    quota, or error.
 2. Active work/spinners.
 3. Idle input prompts.
 
-Only near-tail evidence is eligible. A newer idle prompt invalidates stale
-blocked text above it. Strong permission/question matches apply immediately;
-ordinary changes are debounced, and idle requires stable evidence.
-Blocked rules match complete, CLI-owned UI phrases rather than isolated domain
-words. Arbitrary response prose in the bounded tail must not acquire screen
-authority merely because it discusses concepts such as quotas or rate limits.
+Only near-tail evidence is eligible. Newer working or idle UI therefore
+invalidates stale blocked text above it. Strong permission/question matches
+are anchored to complete CLI-owned action labels, navigation hints, or form
+controls and apply immediately; ordinary changes are debounced, and idle
+requires stable evidence. Each distinct classification gets a fresh stability
+window; repeated equivalent evidence shares a trailing debounce with an 800 ms
+maximum so a continuous output stream cannot postpone classification forever.
+Arbitrary response prose in the bounded tail must not acquire screen authority
+merely because it asks a conversational question or discusses concepts such as
+quotas or rate limits.
+
+Each occupant generation also has a screen boundary. App-initiated launches
+place it before the launch command so startup UI remains eligible; unannounced
+process discovery and PID replacement establish it at discovery and wait for
+new output. Old xterm scrollback is never promoted into a new generation.
+Activity fallback observed during startup is retained across the first PID
+capture, while screen evidence is reclassified inside the new boundary.
 
 Screen evidence has priority. When it disappears, the runtime falls back to
 the existing activity tracker:
@@ -158,6 +177,12 @@ per terminal replaces repeated banners rather than stacking them.
 Alerts fire once for a background transition into blocked and once when a
 completed turn becomes unseen Done. They are dismissed on acknowledgement,
 viewing Done, resumed work, agent exit, tab close, or notification disable.
+Dismissal removes both pending requests and delivered banners, preventing an
+asynchronously accepted request from appearing after its semantic state was
+cleared. Per-terminal frontend ordering waits for Notification Center to accept
+an add before a later dismissal is issued. A notification opt-in remains
+visible and disableable if a plain-shell-discovered agent exits back to its
+shell.
 Alert edge selection is pure and tested in `src/lib/agentState.test.ts`.
 The retained macOS delegate also handles notification responses. The terminal
 identifier is emitted through a typed activation event after focusing the main

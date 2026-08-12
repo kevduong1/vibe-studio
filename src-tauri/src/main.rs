@@ -54,7 +54,7 @@ fn main() {
             git::git_worktree_merge,
             git::git_review_head,
             git::git_review_snapshot,
-            git::git_checkpoint_create,
+            git::git_checkpoint_snapshot,
             git::git_status,
             git::git_stage,
             git::git_unstage,
@@ -84,8 +84,8 @@ fn main() {
             agent_sessions::codex_native_session_exists,
             control::agent_control_sync,
             control::agent_control_respond,
+            control::agent_control_prompt_boundary,
             control::agent_control_info,
-            control::agent_control_issue_capability,
             // fs
             fsops::fs_read_dir,
             fsops::fs_read_file,
@@ -155,7 +155,7 @@ fn main() {
             // their async kill is fine.
             if let tauri::RunEvent::Exit = event {
                 control::stop(&app_handle.state::<control::ControlState>());
-                preview::close_all(&app_handle);
+                preview::close_all(app_handle);
                 pty::kill_all_blocking(&app_handle.state::<pty::PtyState>());
                 lsp::kill_all(&app_handle.state::<lsp::LspState>());
             }

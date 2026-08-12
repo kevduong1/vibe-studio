@@ -1,5 +1,6 @@
 import {
   agentControlRespond,
+  agentControlPromptBoundary,
   agentControlSync,
   onAgentControlCancel,
   onAgentControlRequest,
@@ -40,14 +41,19 @@ function commandFor(kind: "claude" | "codex", prompt: string | null): {
   return { command: built.command, prelude: built.environmentPrelude };
 }
 
-async function handle(
+const throwIfCancelled = (cancelled: () => boolean): void => {
+  if (cancelled()) throw new Error("request cancelled");
+};
+
+export async function handleAgentControlRequest(
   request: AgentControlRequest,
   cancelled: () => boolean,
 ): Promise<unknown> {
-  if (cancelled()) throw new Error("request cancelled");
+  throwIfCancelled(cancelled);
   if (request.action === "focus") {
     if (!request.terminalId) throw new Error("terminalId is required");
     const result = await focusAgentTerminal(request.terminalId);
+    throwIfCancelled(cancelled);
     if (!result.ok) throw new Error(result.message);
     return { terminalId: request.terminalId };
   }
@@ -59,15 +65,39 @@ async function handle(
     if (!runtime || runtime.generation !== request.generation || runtime.occupancy !== "present") {
       throw new Error("terminal occupant generation changed");
     }
+    let promptBaselineSeq: number | null = null;
+    let promptBaselineWorking: boolean | null = null;
+    const capturePromptBoundary = async () => {
+      throwIfCancelled(cancelled);
+      const boundary = await agentControlPromptBoundary(
+        request.requestId,
+        request.deliveryId,
+      );
+      promptBaselineSeq = boundary.seq;
+      promptBaselineWorking = boundary.working;
+      throwIfCancelled(cancelled);
+    };
     if (request.mode === "steer") {
-      await steerAgentPrompt(request.terminalId, request.text, cancelled);
+      await steerAgentPrompt(
+        request.terminalId,
+        request.text,
+        cancelled,
+        capturePromptBoundary,
+      );
     } else {
-      await queueAgentPrompt(request.terminalId, request.text, request.requestId);
+      await queueAgentPrompt(
+        request.terminalId,
+        request.text,
+        request.deliveryId,
+        capturePromptBoundary,
+      );
     }
     return {
       terminalId: request.terminalId,
       generation: request.generation,
       mode: request.mode === "steer" ? "steer" : "queue",
+      promptBaselineSeq,
+      promptBaselineWorking,
     };
   }
   if (!request.workspacePath) throw new Error("workspacePath is required");
@@ -84,11 +114,17 @@ async function handle(
       agentKind: kind,
       agentCommand: built.command,
       agentPrelude: built.prelude,
+      cancelled,
     });
+    // createIsolatedTask checks immediately before its synchronous terminal
+    // launch. That launch is the commit point; do not report cancellation for
+    // an agent that has already been started successfully.
     return { taskId: task.id, terminalId: task.agentTerminalId, workspacePath: task.worktreePath };
   }
   const workspace = await gitOpen(request.workspacePath);
+  throwIfCancelled(cancelled);
   await useWorkspacesStore.getState().openWorkspace(workspace.root, false);
+  throwIfCancelled(cancelled);
   const terminalId = openGlobalTerminal(
     workspace.root,
     kind,
@@ -105,8 +141,11 @@ export function listenAgentControlPlane(): () => void {
   let syncTimer: number | null = null;
   let unlistenRequest: (() => void) | null = null;
   let unlistenCancel: (() => void) | null = null;
-  const activeRequests = new Set<string>();
-  const cancelledRequests = new Set<string>();
+  // Caller request IDs may be reused after timeout while an older frontend
+  // handler is still unwinding. Track the backend nonce so late responses,
+  // boundaries, and cancels apply only to their exact delivery.
+  const activeDeliveries = new Map<string, string>();
+  const cancelledDeliveries = new Set<string>();
   const sync = () => {
     if (disposed || syncTimer !== null) return;
     syncTimer = window.setTimeout(() => {
@@ -117,22 +156,37 @@ export function listenAgentControlPlane(): () => void {
   const unsubscribe = useAgentRuntimeStore.subscribe(sync);
   sync();
   void onAgentControlRequest((request) => {
-    activeRequests.add(request.requestId);
-    void handle(request, () => cancelledRequests.has(request.requestId)).then(
-      (result) => agentControlRespond(request.requestId, true, result),
-      (error) => agentControlRespond(request.requestId, false, undefined, String(error)),
+    activeDeliveries.set(request.deliveryId, request.requestId);
+    const cancelled = () =>
+      cancelledDeliveries.has(request.deliveryId) || Date.now() >= request.deadlineAtMs;
+    void handleAgentControlRequest(request, cancelled).then(
+      (result) => agentControlRespond(
+        request.requestId,
+        request.deliveryId,
+        true,
+        result,
+      ),
+      (error) => agentControlRespond(
+        request.requestId,
+        request.deliveryId,
+        false,
+        undefined,
+        String(error),
+      ),
     ).catch(() => {}).finally(() => {
-      activeRequests.delete(request.requestId);
-      cancelledRequests.delete(request.requestId);
+      if (activeDeliveries.get(request.deliveryId) === request.requestId) {
+        activeDeliveries.delete(request.deliveryId);
+      }
+      cancelledDeliveries.delete(request.deliveryId);
     });
   }).then((value) => {
     if (disposed) value();
     else unlistenRequest = value;
   }).catch(() => {});
-  void onAgentControlCancel((requestId) => {
-    if (!activeRequests.has(requestId)) return;
-    cancelledRequests.add(requestId);
-    cancelQueuedAgentPrompt(requestId);
+  void onAgentControlCancel(({ requestId, deliveryId }) => {
+    if (activeDeliveries.get(deliveryId) !== requestId) return;
+    cancelledDeliveries.add(deliveryId);
+    cancelQueuedAgentPrompt(deliveryId);
   }).then((value) => {
     if (disposed) value();
     else unlistenCancel = value;

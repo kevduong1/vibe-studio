@@ -35,8 +35,7 @@ export interface IsolatedTask {
   branch: string;
   agentKind: AgentKind | null;
   agentTerminalId: string | null;
-  reviewAgentTerminalIds: string[];
-  nativeSessionRef: { transport: "acp" | "agent-hook"; id: string } | null;
+  nativeSessionRef: { transport: "agent-hook"; id: string } | null;
   plan: TaskPlanStep[];
   previewPort: number;
   bootstrapCommand: string | null;
@@ -112,14 +111,11 @@ const sanitizeTask = (id: string, value: unknown): IsolatedTask | null => {
     branch: task.branch,
     agentKind: task.agentKind === "claude" || task.agentKind === "codex" ? task.agentKind : null,
     agentTerminalId: typeof task.agentTerminalId === "string" ? task.agentTerminalId : null,
-    reviewAgentTerminalIds: Array.isArray(task.reviewAgentTerminalIds)
-      ? task.reviewAgentTerminalIds.filter((item): item is string => typeof item === "string")
-      : [],
     nativeSessionRef:
       nativeRef &&
       typeof nativeRef.id === "string" &&
-      (nativeRef.transport === "acp" || nativeRef.transport === "agent-hook")
-        ? { id: nativeRef.id, transport: nativeRef.transport }
+      nativeRef.transport === "agent-hook"
+        ? { id: nativeRef.id, transport: "agent-hook" }
         : null,
     plan: Array.isArray(task.plan)
       ? task.plan.flatMap((step) => {

@@ -33,6 +33,18 @@ describe("semantic notification edges", () => {
     expect(agentAlertAction(done, { ...done })).toBe("none");
   });
 
+  it("does not replay an alert when the same generation recovers from an occupancy query outage", () => {
+    for (const lifecycle of ["blocked", "idle"] as const) {
+      const recovered = runtime(lifecycle, false);
+      expect(
+        agentAlertAction(
+          { ...recovered, occupancy: "unknown" },
+          recovered,
+        ),
+      ).toBe("none");
+    }
+  });
+
   it("dismisses on acknowledgement, resumed work, exit, close, and disable-equivalent removal", () => {
     const blocked = runtime("blocked", false);
     expect(agentAlertAction(blocked, { ...blocked, seen: true })).toBe("dismiss");

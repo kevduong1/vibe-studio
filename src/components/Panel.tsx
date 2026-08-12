@@ -39,7 +39,7 @@ import TerminalPanel from "./TerminalPanel";
 import AgentDock from "./AgentDock";
 import { Resizer } from "./Resizer";
 import { ContextMenu } from "./ContextMenu";
-import { requestAgentLaunch } from "./AgentLaunchDialog";
+import { requestAgentLaunch } from "../lib/agentLaunchRequest";
 import {
   ActivityGlyph,
   IcChevronDown,

@@ -34,9 +34,13 @@ automatic commands is also persisted.
 
 Lifecycle, human review, conflicts, and checks are independent. Human review
 states are `clean`, `unreviewed`, `reviewed`, `feedback`, `stale`, and
-`accepted`. Review changes records the current fingerprint as reviewed; Accept
-is then available for exactly that fingerprint and only records a session-local
-decision. Passing checks are visible evidence but never enable or disable
+`accepted`. Review changes records which fingerprint was successfully opened;
+the user explicitly marks that evidence reviewed after inspection. Accept is
+then available for exactly that fingerprint and only records a session-local
+decision. Navigation, review acknowledgement, and acceptance are all
+generation/fingerprint-pinned, so an async refresh cannot acknowledge newer
+evidence. **Needs changes** uses the same compare-and-set rule, including when
+invoked from a stale rendered inbox row. Passing checks are visible evidence but never enable or disable
 Accept. Needs changes and Accept neither send text nor mutate Git. A later
 repository fingerprint turns an accepted decision into `stale`; reviewing the
 new fingerprint enables acceptance again. Occupant generations replace all
@@ -67,11 +71,25 @@ reset elapsed age or oldest-first ordering.
 
 Evidence refreshes at task creation, repo watcher events, working→idle turn
 completion, inbox/detail opening, check start/completion, and acceptance.
-For prompt-owned user turns, Enter waits for `git_checkpoint_create`: a private
-temporary index writes an unreachable tree without touching the real index.
-The capture revalidates repository generation and retries a moving checkout up
-to three times. The tree backs read-only latest-turn file diffs; it is
-inspection evidence, not a restore or rollback facility.
+For prompt-owned user turns, Enter waits for `git_checkpoint_snapshot`: a
+private temporary index writes an unreachable tree without touching the real
+index. The tree and opaque per-path fingerprints are captured under one shared
+repository-generation guard, which retries a moving checkout up to three
+times. A later semantic Working edge consumes that app-owned boundary rather
+than overwriting it with a second snapshot. The tree backs read-only
+latest-turn file diffs; it is inspection evidence, not a restore or rollback
+facility.
+
+Programmatic prompt paths first reserve their place in the terminal's shared
+input queue. Inside that slot, Git prepares the snapshot without changing task
+state; the frontend then publishes it synchronously at the final PTY delivery
+commit point. A prior user Enter keeps later automation gated until semantic
+evidence leaves the prompt state that accepted that turn, even when the PTY
+write completes before the first Working frame is rendered. Cancellation or
+failed ownership checks while snapshotting/awaiting a dispatch guard leave the
+prior turn boundary unchanged. After delivery begins a queued request is
+non-cancellable, so its promise reflects PTY delivery instead of reporting
+cancellation for text that may already have reached the process.
 
 **Peek context** is a separate boundary: an explicit click reads at most 12
 logical xterm lines and 4,096 characters. Plaintext exists only in the mounted detail
@@ -96,8 +114,9 @@ an explanation. ⌘⌥↓/↑ cycle actionable entries circularly.
 Review changes calls `reviewAgentChanges(id)`: it opens or activates the owning
 project, reveals Source Control, and opens the first current worktree/index diff
 when available. Committed changes remain reachable from the commit graph. The
-action then records the current fingerprint as reviewed and closes the inbox so
-the diff is visible.
+action records the exact opened fingerprint and closes the inbox so the diff is
+visible. Returning to the inbox exposes an explicit **Mark reviewed** action
+only while that same generation and fingerprint remain current.
 
 The popover participates in the native-overlay counter so preview webviews hide.
 It has dialog/listbox semantics, roving selection, visible focus, text labels in
@@ -111,7 +130,8 @@ the selected row's detail actions inherit the same project scope.
 `.vscode/tasks.json` build/test tasks are selectable roots. Dependencies may
 belong to any supported group. Compound tasks without commands are valid.
 Validation rejects duplicate labels, missing dependencies, cycles, malformed
-`dependsOn`, referenced unsupported types, background/watch tasks, unavailable
+execution fields (`command`, `args`, options, environment, and dependency
+metadata), referenced unsupported types, background/watch tasks, unavailable
 active-file variables (including file-workspace/dirname/column variants), and
 unknown substitutions. Diagnostics and duplicate labels outside the selected
 reachable DAG do not block it. Repository `runOn: folderOpen` is ignored.
@@ -136,7 +156,9 @@ run changes the tree (for example, a formatter), the full DAG reruns once
 against that result. A second mutation invalidates the run instead of certifying
 untested content and surfaces as Checks Failed. Later mutations also make a pass stale. Runs retain node
 status/timing, terminal IDs, and fingerprints—not raw output. Autorun requests
-coalesce to the latest follow-up; repeated manual clicks never queue another run.
+coalesce to the latest follow-up; a queued follow-up revalidates its occupant
+generation, selected root, enabled flag, and project trust before it starts.
+Repeated manual clicks never queue another run.
 Current Passed/Failed/Running/Stale check evidence is presented beside, never
 inside, the human review state and does not gate acceptance.
 
@@ -156,6 +178,11 @@ Arbitrary terminal writes remain out of scope. The bounded programmatic paths
 are isolated-task line feedback, task-plan queue/steer, editor context, and the
 authenticated local control plane. Every path pins the live occupant generation
 and checkpoints before sending; implicit routing additionally requires an idle
-or question-owned prompt. Exact native Codex conversation restore is available
+or question-owned prompt. Line-feedback drafts and batches are pinned to the
+terminal generation and repository fingerprint they were authored against,
+capped by comment count and total prompt characters, and revalidated against
+the prepared checkpoint immediately before PTY delivery. Their post-delivery
+review transition uses the same compare-and-set identity. Exact
+native Codex conversation restore is available
 only from an unambiguous persisted opaque reference. Persistent semantic/check
 history and restorable filesystem checkpoints remain out of scope.

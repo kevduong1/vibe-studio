@@ -165,14 +165,25 @@ pub struct AgentProcessSnapshot {
     processes: Vec<AgentProcessInfo>,
 }
 
+fn take_process_field<'a>(rest: &mut &'a str) -> Option<&'a str> {
+    let trimmed = rest.trim_start();
+    let end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
+    let field = &trimmed[..end];
+    *rest = &trimmed[end..];
+    (!field.is_empty()).then_some(field)
+}
+
 fn parse_process_table(text: &str) -> Vec<ProcessRow> {
     text.lines()
         .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let pid = fields.next()?.parse().ok()?;
-            let parent_pid = fields.next()?.parse().ok()?;
-            let process_group = fields.next()?.parse().ok()?;
-            let executable = std::path::Path::new(fields.next()?)
+            let mut rest = line;
+            let pid = take_process_field(&mut rest)?.parse().ok()?;
+            let parent_pid = take_process_field(&mut rest)?.parse().ok()?;
+            let process_group = take_process_field(&mut rest)?.parse().ok()?;
+            // `ps ... comm=` is the final column and may itself contain
+            // spaces. Preserve the remainder instead of treating its first
+            // whitespace-delimited word as the executable.
+            let executable = std::path::Path::new(rest.trim_start())
                 .file_name()?
                 .to_string_lossy()
                 .to_string();
@@ -676,6 +687,20 @@ mod tests {
                     executable: "claude".into(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn preserves_spaces_in_the_process_command_column() {
+        let rows = parse_process_table("20 10 20 /Applications/Agent Tools/claude helper\n");
+        assert_eq!(
+            rows,
+            vec![ProcessRow {
+                pid: 20,
+                parent_pid: 10,
+                process_group: 20,
+                executable: "claude helper".into(),
+            }]
         );
     }
 
