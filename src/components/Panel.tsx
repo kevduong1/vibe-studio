@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   switchToProject,
+  useActiveEditorTabCount,
   useActiveWorkspace,
   useWorkspacesStore,
   WorkspaceContext,
@@ -433,6 +434,7 @@ export default function Panel() {
   const panelHeight = useUiStore((s) => s.panelHeight);
   const setPanelHeight = useUiStore((s) => s.setPanelHeight);
   const maximized = useUiStore((s) => s.panelMaximized);
+  const openTabCount = useActiveEditorTabCount();
   const group = useEffectivePanelGroup();
   const groupings = useAgentTerminalsStore((s) => s.groupings);
   const activeGroupingId = useAgentTerminalsStore((s) => s.activeGroupingId);
@@ -465,17 +467,20 @@ export default function Panel() {
   // disappears entirely; it is still MOUNTED either way — terminals hide
   // with display:none, never by unmounting (that would kill their PTYs).
   const shown = panelVisible && (workspaces.length > 0 || groupings.length > 0);
+  // Same deal without the explicit toggle: with no editor tab open App.tsx
+  // hides the editor card, so the panel is the only card in the column.
+  const full = maximized || openTabCount === 0;
 
   return (
     <div
       className="app-panel"
       style={{
-        // Maximized = fill the center column (App.tsx hides the editor area).
-        height: shown ? (maximized ? "100%" : panelHeight) : 0,
+        // Filling = own the whole center column (App.tsx hides the editor area).
+        height: shown ? (full ? "100%" : panelHeight) : 0,
         display: shown ? undefined : "none",
       }}
     >
-      {!maximized && (
+      {!full && (
         <Resizer
           direction="horizontal"
           onDelta={(d) => setPanelHeight(useUiStore.getState().panelHeight - d)}

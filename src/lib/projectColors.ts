@@ -95,6 +95,16 @@ export function projectColorIndex(path: string): number {
   return index;
 }
 
+/**
+ * The project's palette index ONLY when one already exists — never assigns.
+ * For callers that probe many candidate paths at once (the commit graph asks
+ * about every linked worktree); a lazy assignment there would burn palette
+ * entries on projects the user has never opened.
+ */
+export function assignedProjectColorIndex(path: string): number | undefined {
+  return assignments.get(path);
+}
+
 /** Explicitly recolor a project (titlebar tab context menu). */
 export function setProjectColorIndex(path: string, index: number): void {
   if (!Number.isInteger(index) || index < 0 || index >= PALETTE_SIZE) return;
@@ -113,6 +123,14 @@ export const paletteColor = (index: number): string =>
 /** CSS color for the project, as a theme-palette var() reference. */
 export const projectColorVar = (path: string): string =>
   paletteColor(projectColorIndex(path));
+
+/**
+ * Recolor subscription for components that resolve colors for a whole SET of
+ * paths inside a memo (the commit graph) rather than one path per hook.
+ */
+export function useProjectColorsVersion(): number {
+  return useColorsVersion((s) => s.version);
+}
 
 /** Reactive projectColorIndex: re-renders the caller on explicit recolors. */
 export function useProjectColorIndex(path: string): number {

@@ -18,6 +18,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -26,10 +27,18 @@ import { useRepo, useWorkspace } from "../stores/workspaces";
 import {
   gitCommitFiles,
   gitListRefs,
+  gitWorktreeList,
   type CommitFile,
+  type GitWorktree,
   type RefLabel,
   type ResetMode,
 } from "../lib/ipc";
+import {
+  assignedProjectColorIndex,
+  paletteColor,
+  useProjectColorsVersion,
+  useProjectColorVar,
+} from "../lib/projectColors";
 import { copyText } from "../lib/clipboard";
 import { statusColor } from "../lib/status";
 import { computeGraph, type GraphRow } from "../lib/graphLayout";
@@ -42,8 +51,6 @@ const OVERSCAN = 10;
 const LANE_W = 12;
 const LANE_X0 = 7;
 const MAX_PILLS = 2;
-
-const laneColor = (c: number) => `var(--graph-${c % 8})`;
 
 function relTime(timestamp: number): string {
   const s = Math.floor(Date.now() / 1000) - timestamp;
@@ -252,7 +259,7 @@ function Rail({ row }: { row: GraphRow }) {
   const width = (maxLane + 1) * LANE_W + 6;
   const x = (lane: number) => LANE_X0 + lane * LANE_W;
   const cx = x(row.lane);
-  const color = laneColor(row.color);
+  const color = row.color;
 
   const els: ReactNode[] = [];
   row.passLanes.forEach((p, i) => {
@@ -264,7 +271,7 @@ function Rail({ row }: { row: GraphRow }) {
         y1={0}
         x2={px}
         y2={ROW}
-        stroke={laneColor(p.color)}
+        stroke={p.color}
         strokeWidth={2}
       />,
     );
@@ -288,7 +295,7 @@ function Rail({ row }: { row: GraphRow }) {
         key={`c${i}`}
         d={d}
         fill="none"
-        stroke={laneColor(c.color)}
+        stroke={c.color}
         strokeWidth={2}
       />,
     );
@@ -333,7 +340,16 @@ function Rail({ row }: { row: GraphRow }) {
 
 const KIND_ORDER: Record<RefLabel["kind"], number> = { local: 0, remote: 1, tag: 2 };
 
-function RefPills({ refs, isHead }: { refs: RefLabel[]; isHead: boolean }) {
+function RefPills({
+  refs,
+  isHead,
+  branchColors,
+}: {
+  refs: RefLabel[];
+  isHead: boolean;
+  /** Local branch name -> project color, for branches checked out somewhere. */
+  branchColors: Map<string, string>;
+}) {
   if (refs.length === 0) return null;
   const sorted =
     refs.length > 1
@@ -345,16 +361,22 @@ function RefPills({ refs, isHead }: { refs: RefLabel[]; isHead: boolean }) {
   const headIdx = isHead ? shown.findIndex((r) => r.kind === "local") : -1;
   return (
     <>
-      {shown.map((r, i) => (
+      {shown.map((r, i) => {
+        // Only local pills carry a checkout's project color; --pill-accent
+        // falls back to --accent in CSS for every other pill.
+        const tint = r.kind === "local" ? branchColors.get(r.name) : undefined;
+        return (
         <span
           key={`${r.kind}:${r.name}`}
           className={`gg-pill ${i === headIdx ? "head" : r.kind}`}
           title={r.name}
+          style={tint ? ({ "--pill-accent": tint } as CSSProperties) : undefined}
         >
           {PILL_ICON[r.kind]}
           <span className="truncate">{r.name}</span>
         </span>
-      ))}
+        );
+      })}
       {extra > 0 && <span className="gg-pill more">+{extra}</span>}
     </>
   );
@@ -369,6 +391,7 @@ const CommitRow = memo(function CommitRow({
   top,
   expanded,
   selected,
+  branchColors,
   onSelect,
   onContext,
 }: {
@@ -376,6 +399,7 @@ const CommitRow = memo(function CommitRow({
   top: number;
   expanded: boolean;
   selected: boolean;
+  branchColors: Map<string, string>;
   /** Plain click toggles file expansion; ⌘/shift clicks build the selection. */
   onSelect: (oid: string, e: ReactMouseEvent) => void;
   onContext: (oid: string, e: ReactMouseEvent) => void;
@@ -393,7 +417,7 @@ const CommitRow = memo(function CommitRow({
       onContextMenu={(e) => onContext(c.oid, e)}
     >
       <Rail row={row} />
-      <RefPills refs={c.refs} isHead={c.isHead} />
+      <RefPills refs={c.refs} isHead={c.isHead} branchColors={branchColors} />
       <span className="gg-summary truncate">{c.summary}</span>
       <span className="gg-author truncate">{c.author}</span>
       <span className="gg-time">{relTime(c.timestamp)}</span>
@@ -475,7 +499,61 @@ export default function GitGraph() {
   const branchName = useRepo((s) => s.status?.branch.name);
   const detached = useRepo((s) => s.status?.branch.detached ?? false);
 
-  const layout = useMemo(() => computeGraph(commits), [commits]);
+  // Linked checkouts of THIS repository, so a branch someone else is sitting
+  // in shows up in that checkout's project color. Refetched with the log (the
+  // repo store only reloads it on git-affecting changes) under a seq guard.
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
+  useEffect(() => {
+    if (!repoPath) {
+      setWorktrees([]);
+      return;
+    }
+    let live = true;
+    void gitWorktreeList(repoPath)
+      .then((list) => {
+        if (live) setWorktrees(list);
+      })
+      // A worktree-list failure only costs the extra coloring.
+      .catch(() => {
+        if (live) setWorktrees([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [repoPath, commits]);
+
+  const colorsVersion = useProjectColorsVersion();
+  const activeColor = useProjectColorVar(ws.path);
+  // Branch name -> project color: every linked checkout that already HAS a
+  // color, then this workspace's own branch (the active project always wins
+  // over whatever its own worktree entry says).
+  const branchColors = useMemo(() => {
+    void colorsVersion;
+    const m = new Map<string, string>();
+    for (const wt of worktrees) {
+      if (!wt.branch) continue;
+      const index = assignedProjectColorIndex(wt.path);
+      if (index !== undefined) m.set(wt.branch, paletteColor(index));
+    }
+    if (branchName && !detached) m.set(branchName, activeColor);
+    return m;
+  }, [worktrees, branchName, detached, activeColor, colorsVersion]);
+
+  // The same colors keyed by the commit each checkout sits on, for the rail:
+  // a lane takes its color where it OPENS, so this only lands on branch tips.
+  const layout = useMemo(() => {
+    const tips = new Map<string, string>();
+    for (const wt of worktrees) {
+      if (!wt.head || !wt.branch) continue;
+      const color = branchColors.get(wt.branch);
+      if (color) tips.set(wt.head, color);
+    }
+    const head = commits.find((c) => c.isHead);
+    if (head) tips.set(head.oid, activeColor);
+    return computeGraph(commits, (oid, index) =>
+      tips.get(oid) ?? `var(--graph-${index})`,
+    );
+  }, [commits, worktrees, branchColors, activeColor]);
   const byOid = useMemo(
     () => new Map(commits.map((c) => [c.oid, c])),
     [commits],
@@ -783,6 +861,7 @@ export default function GitGraph() {
           top={top}
           expanded={it.row.commit.oid === expandedOid}
           selected={selected.has(it.row.commit.oid)}
+          branchColors={branchColors}
           onSelect={handleSelectClick}
           onContext={handleContext}
         />,

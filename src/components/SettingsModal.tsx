@@ -20,6 +20,12 @@ import {
   type BannerMode,
 } from "../lib/agentNotifications";
 import { copyText } from "../lib/clipboard";
+import {
+  APP_THEME_GROUPS,
+  APP_THEMES,
+  setAppTheme,
+  useAppTheme,
+} from "../lib/appTheme";
 import { agentControlInfo, executableVersion, lspResolve } from "../lib/ipc";
 import { useNativeOverlay } from "../lib/nativeOverlays";
 import { AGENT_PROFILES } from "../lib/agentProfiles";
@@ -54,6 +60,46 @@ import {
 } from "../stores/terminalRecipes";
 import { IcClose, IcPlay, IcRefresh } from "./icons";
 import "./SettingsModal.css";
+
+function AppearanceSettings() {
+  const theme = useAppTheme((state) => state.theme);
+
+  return (
+    <div className="settings-theme-library">
+      {APP_THEME_GROUPS.map((group) => (
+        <div
+          className="settings-theme-group"
+          role="group"
+          aria-labelledby={`settings-theme-${group.id}`}
+          key={group.id}
+        >
+          <div className="settings-theme-group-name" id={`settings-theme-${group.id}`}>
+            {group.label}
+          </div>
+          <div className="settings-theme-grid">
+            {APP_THEMES.filter((option) => option.group === group.id).map((option) => (
+              <button
+                key={option.id}
+                className={`settings-theme-option${theme === option.id ? " active" : ""}`}
+                data-theme={option.id}
+                aria-pressed={theme === option.id}
+                onClick={() => setAppTheme(option.id)}
+              >
+                <span className="settings-theme-preview" aria-hidden="true">
+                  <span className="settings-theme-preview-app" />
+                  <span className="settings-theme-preview-sidebar" />
+                  <span className="settings-theme-preview-editor" />
+                </span>
+                <span className="settings-theme-name">{option.label}</span>
+                <span className="settings-theme-description">{option.description}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ServerRow({
   lang,
@@ -640,6 +686,15 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="settings-content">
+          <section className="settings-section">
+            <h3>Appearance</h3>
+            <p className="settings-hint">
+              Choose from 22 dark background palettes across neutral, cool,
+              warm, earth, and jewel tones. The app, editor, and terminals
+              update immediately, and your choice is saved for the next launch.
+            </p>
+            <AppearanceSettings />
+          </section>
           <section className="settings-section">
             <h3>Language Servers</h3>
             <p className="settings-hint">

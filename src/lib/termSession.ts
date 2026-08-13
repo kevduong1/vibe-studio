@@ -40,24 +40,33 @@ import {
   noteAgentPromptOutput,
   settleAgentPromptTurn,
 } from "../stores/agentTasks";
+import { onAppThemeChange } from "./appTheme";
 import "@xterm/xterm/css/xterm.css";
 
-/** Terminal colors, mirroring theme.css (sanctioned hardcoded-color site:
- *  xterm themes are JS objects, they can't read CSS variables). */
-export const XTERM_THEME = {
-  background: "#0f1218",
-  foreground: "#e3e6ed",
-  cursor: "#e3e6ed",
+/** Resolve CSS tokens for xterm's canvas renderer. */
+const themeColor = (token: string, fallback: string): string => {
+  if (typeof document === "undefined") return fallback;
+  return getComputedStyle(document.documentElement)
+    .getPropertyValue(token)
+    .trim() || fallback;
+};
+
+/** Terminal colors mirroring theme.css. Called again on palette changes so
+ *  already-running terminal canvases update without losing their buffers. */
+export const xtermTheme = () => ({
+  background: themeColor("--bg-panel", "#0f1218"),
+  foreground: themeColor("--fg", "#e3e6ed"),
+  cursor: themeColor("--fg", "#e3e6ed"),
   selectionBackground: "rgba(124,111,242,0.35)",
-  black: "#353b46",
-  red: "#f06a6a",
-  green: "#52c97d",
-  yellow: "#e7b75b",
+  black: themeColor("--border-strong", "#353b46"),
+  red: themeColor("--danger", "#f06a6a"),
+  green: themeColor("--success", "#52c97d"),
+  yellow: themeColor("--warning", "#e7b75b"),
   blue: "#71a7f6",
   magenta: "#b476f4",
   cyan: "#51c5cf",
   white: "#e3e6ed",
-  brightBlack: "#626b7a",
+  brightBlack: themeColor("--fg-faint", "#626b7a"),
   brightRed: "#ff8585",
   brightGreen: "#6edb94",
   brightYellow: "#f2c96e",
@@ -65,7 +74,7 @@ export const XTERM_THEME = {
   brightMagenta: "#c68df8",
   brightCyan: "#70d5dc",
   brightWhite: "#ffffff",
-};
+});
 
 /**
  * cols/rows of the most recent dock-session resize, used to seed sessions
@@ -325,7 +334,11 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     cursorBlink: true,
     scrollback: 5000,
     allowProposedApi: true,
-    theme: XTERM_THEME,
+    theme: xtermTheme(),
+  });
+
+  const unTheme = onAppThemeChange(() => {
+    term.options.theme = xtermTheme();
   });
 
   const fit = new FitAddon();
@@ -781,6 +794,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       if (semanticEnabled) window.removeEventListener("focus", onWindowFocus);
       unRuntime?.();
       clearSemanticTimer();
+      unTheme();
       if (tracker) {
         tracker.dispose();
         tracker = null;

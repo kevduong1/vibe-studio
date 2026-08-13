@@ -4,6 +4,7 @@ import { message, open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getRecentRepos,
   restoreSession,
+  useActiveEditorTabCount,
   useActiveWorkspace,
   useWorkspacesStore,
   WorkspaceContext,
@@ -384,6 +385,12 @@ export default function App() {
   const sidebarWidth = useUiStore((s) => s.sidebarWidth);
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth);
   const panelMaximized = useUiStore((s) => s.panelMaximized);
+  const panelVisible = useUiStore((s) => s.panelVisible);
+  // Nothing open in the editor card = give the whole center column to the
+  // terminal card (Panel.tsx grows to match). With the panel hidden the
+  // editor card stays, so its empty state still greets an empty workspace.
+  const openTabCount = useActiveEditorTabCount();
+  const editorHidden = panelMaximized || (panelVisible && openTabCount === 0);
 
   // The whole accent family (commit button, rings, selections — derived from
   // --accent via color-mix in theme.css) follows the active project's color.
@@ -416,11 +423,11 @@ export default function App() {
         )}
         <div className="app-center">
           {hasWorkspaces ? (
-            // Hidden (not unmounted) while the panel is maximized — editor
+            // Hidden (not unmounted) while the panel owns the column — editor
             // buffers/scroll state follow the workspace-switch survival rule.
             <div
               className="app-editor-area"
-              style={{ display: panelMaximized ? "none" : undefined }}
+              style={{ display: editorHidden ? "none" : undefined }}
             >
               {workspaces.map((ws) => (
                 <WorkspaceContext.Provider key={ws.path} value={ws}>

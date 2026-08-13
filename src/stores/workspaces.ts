@@ -8,7 +8,7 @@
  * Invariant: activePath is always a member of `workspaces` while the list is
  * non-empty, and null when it is empty.
  */
-import { createContext, useContext } from "react";
+import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
 import { create, useStore } from "zustand";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { gitOpen } from "../lib/ipc";
@@ -371,5 +371,22 @@ export function useSearch<T>(selector: (s: SearchState) => T): T {
 export function useActiveWorkspace(): Workspace | null {
   return useWorkspacesStore(
     (s) => s.workspaces.find((w) => w.path === s.activePath) ?? null,
+  );
+}
+
+/**
+ * Open editor-tab count of the ACTIVE workspace (0 when no repo is open), for
+ * chrome that sizes itself around the editor card (App.tsx / Panel.tsx).
+ * Subscribed by hand rather than through `useStore` because the store to watch
+ * changes with the active workspace and can be absent entirely.
+ */
+export function useActiveEditorTabCount(): number {
+  const ws = useActiveWorkspace();
+  const subscribe = useCallback(
+    (onChange: () => void) => (ws ? ws.editor.subscribe(onChange) : () => {}),
+    [ws],
+  );
+  return useSyncExternalStore(subscribe, () =>
+    ws ? ws.editor.getState().tabs.length : 0,
   );
 }

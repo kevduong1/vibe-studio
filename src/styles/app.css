@@ -14,22 +14,25 @@
   padding: 0 6px;
 }
 
+/* Transparent column: the editor and the terminal panel are their own cards
+   (same treatment as the sidebar/activity bar), separated by the shell gap. */
 .app-center {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  background: var(--bg-editor);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-inset);
+  min-height: 0;
+  gap: 6px;
 }
 
 .app-editor-area {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
   background: var(--bg-editor);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
 }
 
 /* one per open repo; inactive ones are hidden (display:none) but stay
@@ -49,7 +52,11 @@
      at the xterm hosts = no ResizeObserver). Clamping here shrinks the
      panel with the window and lets the panes' observers refit. */
   max-height: 100%;
-  border-top: 1px solid var(--border);
+  /* NOT clipped: the drag-resizer hangs above the top edge (sidebar pattern) —
+     the header/body round their own corners instead. */
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
   background: var(--bg-panel);
   position: relative; /* the drag-resizer anchors to the top edge */
   display: flex;
@@ -167,11 +174,16 @@
 /* welcome screen (no repo open) */
 .welcome {
   flex: 1;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 36px;
   color: var(--fg-dim);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
   background:
     radial-gradient(circle at 50% 38%, var(--accent-muted), transparent 34%),
     var(--bg-editor);

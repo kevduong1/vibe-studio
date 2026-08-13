@@ -20,8 +20,11 @@ agent-driven development. Built with [Tauri 2](https://tauri.app) — native
 WKWebView, no bundled Chromium — so it stays light on CPU and RAM.
 
 The interface uses a modern, layered dark workspace: rounded inset surfaces,
-quiet near-black editor chrome, project-tinted accents, and elevated command
-overlays keep dense repository, editor, and terminal workflows easy to scan.
+project-tinted accents, and elevated command overlays keep dense repository,
+editor, and terminal workflows easy to scan. Pick Midnight, Charcoal, Soft
+Gray, Slate, or one of 18 additional neutral, cool, warm, earth, and jewel
+palettes in **Settings → Appearance**; the app remembers the background palette
+across launches.
 
 ## Features
 
@@ -41,7 +44,9 @@ overlays keep dense repository, editor, and terminal workflows easy to scan.
   (save / apply / pop / drop), fetch / pull / push using your existing git
   auth and credential helpers
 - **Commit graph** with colored branch lanes, branch & tag pills, and a
-  branch filter; virtualized so huge histories stay smooth
+  branch filter; virtualized so huge histories stay smooth. The checked-out
+  branch takes the active project's color, and a branch held by another
+  worktree takes that checkout's project color (when it has one)
 - Click a commit to browse and diff its files; multi-select + right-click
   for checkout, branch creation, squash, and copy-SHA
 - A debounced file watcher keeps status, log, and graph live — including

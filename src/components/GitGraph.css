@@ -100,13 +100,16 @@
   max-width: 110px;
 }
 
+/* Local branch pills follow the project color of the checkout sitting on that
+   branch (--pill-accent, set inline by GitGraph.tsx); everything else keeps
+   the graph's pinned default accent. */
 .gg-pill.local {
-  border: 1px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid var(--pill-accent, var(--accent));
+  background: color-mix(in srgb, var(--pill-accent, var(--accent)) 14%, transparent);
 }
 .gg-pill.head {
-  border: 1px solid var(--accent);
-  background: var(--accent);
+  border: 1px solid var(--pill-accent, var(--accent));
+  background: var(--pill-accent, var(--accent));
   color: var(--fg-inverse);
 }
 .gg-pill.remote {

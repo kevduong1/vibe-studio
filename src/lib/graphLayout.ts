@@ -5,7 +5,9 @@
  * multiple disconnected tips and parents that fall outside the loaded window.
  *
  * Algorithm (standard straight-branch): keep an ordered list of active lanes;
- * each lane records the oid it expects to see next plus a palette color index
+ * each lane records the oid it expects to see next plus the CSS color it was
+ * given when it opened (rotating `--graph-N` palette by default; the caller's
+ * `LaneColorFn` can pin a tip to a project color instead)
  * that it keeps for its whole lifetime. Per commit:
  *   1. The commit's lane is the first lane expecting its oid (else a new lane
  *      is appended with a fresh color).
@@ -28,8 +30,8 @@ export interface GraphConnector {
   fromLane: number;
   /** merge-in: the commit's lane. branch-out: bottom-edge lane. shift: new lane. */
   toLane: number;
-  /** Palette color index (0-7) of the line. */
-  color: number;
+  /** Resolved CSS color of the line. */
+  color: string;
   kind: ConnectorKind;
 }
 
@@ -37,26 +39,39 @@ export interface GraphRow {
   commit: CommitInfo;
   /** Column of the commit dot. */
   lane: number;
-  /** Palette color index (0-7) of the commit's lane. */
-  color: number;
+  /** Resolved CSS color of the commit's lane. */
+  color: string;
   /** True when a child above flows into the dot (line from top edge to dot). */
   linkUp: boolean;
   /** True when the lane continues below the dot (commit has a first parent). */
   linkDown: boolean;
   /** Lanes passing straight through this row (excludes the commit's lane). */
-  passLanes: { lane: number; color: number }[];
+  passLanes: { lane: number; color: string }[];
   connectors: GraphConnector[];
 }
 
 interface Lane {
   /** The oid this lane expects to encounter next. */
   oid: string;
-  color: number;
+  color: string;
 }
 
 const PALETTE_SIZE = 8;
 
-export function computeGraph(commits: CommitInfo[]): GraphRow[] {
+/**
+ * Color for a lane opening at `oid`, given the next rotating palette slot.
+ * Lanes are colored where they OPEN (at a tip), so an override only lands on a
+ * commit that actually starts a lane — an oid that merely sits inside another
+ * branch's lane keeps that lane's color.
+ */
+export type LaneColorFn = (oid: string, paletteIndex: number) => string;
+
+const defaultLaneColor: LaneColorFn = (_oid, index) => `var(--graph-${index})`;
+
+export function computeGraph(
+  commits: CommitInfo[],
+  laneColorFor: LaneColorFn = defaultLaneColor,
+): GraphRow[] {
   const rows: GraphRow[] = [];
   const lanes: Lane[] = [];
   let nextColor = 0;
@@ -76,7 +91,10 @@ export function computeGraph(commits: CommitInfo[]): GraphRow[] {
     if (laneIdx === -1) {
       // New tip (or disconnected root chain): open a lane with a fresh color.
       laneIdx = lanes.length;
-      lanes.push({ oid: commit.oid, color: nextColor++ % PALETTE_SIZE });
+      lanes.push({
+        oid: commit.oid,
+        color: laneColorFor(commit.oid, nextColor++ % PALETTE_SIZE),
+      });
       linkUp = false;
     }
     const lane = lanes[laneIdx];
@@ -121,7 +139,10 @@ export function computeGraph(commits: CommitInfo[]): GraphRow[] {
         }
         if (target === -1) {
           target = lanes.length;
-          lanes.push({ oid: parentOid, color: nextColor++ % PALETTE_SIZE });
+          lanes.push({
+            oid: parentOid,
+            color: laneColorFor(parentOid, nextColor++ % PALETTE_SIZE),
+          });
         }
         if (target !== laneIdx) {
           connectors.push({
@@ -137,7 +158,7 @@ export function computeGraph(commits: CommitInfo[]): GraphRow[] {
     // 4. Pass-through lanes vs. shifted lanes: every pre-row lane other than
     //    the commit's own either continues straight, moved left ("shift"), or
     //    closed via a merge-in (already recorded).
-    const passLanes: { lane: number; color: number }[] = [];
+    const passLanes: { lane: number; color: string }[] = [];
     for (let i = 0; i < pre.length; i++) {
       const l = pre[i];
       if (l === lane) continue; // the commit's own lane (dot column)

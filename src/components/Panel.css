@@ -10,6 +10,11 @@
   padding: 0 7px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-subtle);
+  /* The panel card can't clip (its resizer sits outside), so the header and
+     body carry the card's rounded corners themselves. */
+  border-radius: inherit;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .panel-group-tab {
@@ -149,6 +154,10 @@
   flex: 1;
   min-height: 0;
   position: relative;
+  overflow: hidden;
+  border-radius: inherit;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .panel-group-body {
