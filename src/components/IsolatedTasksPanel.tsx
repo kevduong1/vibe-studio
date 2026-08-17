@@ -711,7 +711,7 @@ export default function IsolatedTasksPanel() {
   const repositoryTasks = useMemo(() => {
     // Follow persisted parent links transitively so historical grandchildren
     // remain visible even when an intermediate parent checkout was removed
-    // outside Vibe Studio. Live worktree paths seed the repository family.
+    // outside Talos. Live worktree paths seed the repository family.
     const relatedPaths = new Set(worktreePaths);
     const relatedTaskIds = new Set<string>();
     let changed = true;

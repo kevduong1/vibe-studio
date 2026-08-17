@@ -1132,11 +1132,11 @@ pub fn agent_control_info(
             .to_string_lossy()
             .into_owned(),
         cli_path: resources
-            .join("resources/vibe-agent")
+            .join("resources/talos-agent")
             .to_string_lossy()
             .into_owned(),
         skill_path: resources
-            .join("resources/vibe-agent-skill/SKILL.md")
+            .join("resources/talos-agent-skill/SKILL.md")
             .to_string_lossy()
             .into_owned(),
     })

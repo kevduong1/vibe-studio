@@ -561,7 +561,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
   // renders it; a matching random nonce is required before any promise is
   // completed, so terminal output cannot impersonate a check result.
   const trackedMarkerSub = term.parser.registerOscHandler(6973, (data) => {
-    const match = /^vibe;([^;]+);([^;]+);(\d+)$/.exec(data);
+    const match = /^talos;([^;]+);([^;]+);(\d+)$/.exec(data);
     if (!match) return true;
     const pending = tracked.get(match[2]);
     if (!pending || encodeURIComponent(pending.runId) !== match[1]) return true;

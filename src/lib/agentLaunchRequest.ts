@@ -7,5 +7,5 @@ export interface AgentLaunchRequest {
 }
 
 export const requestAgentLaunch = (request: AgentLaunchRequest): void => {
-  window.dispatchEvent(new CustomEvent("vibe:launch-agent", { detail: request }));
+  window.dispatchEvent(new CustomEvent("talos:launch-agent", { detail: request }));
 };

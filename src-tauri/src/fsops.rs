@@ -152,7 +152,7 @@ fn write_file_impl(path: &str, text: &str) -> Result<(), String> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("file");
-    let tmp = dir.join(format!(".{file_name}.vibe-studio.tmp"));
+    let tmp = dir.join(format!(".{file_name}.talos.tmp"));
 
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
     // Preserve the original file's permissions (fresh temp files get defaults).

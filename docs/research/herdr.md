@@ -1,7 +1,7 @@
 # Agent control-plane roadmap
 
 Origin: research into [Herdr](https://github.com/herdrdev/herdr), reviewed
-2026-08-09 and updated for Vibe Studio on 2026-08-10.
+2026-08-09 and updated for Talos on 2026-08-10.
 
 This is an implementation roadmap, not a complete Herdr feature comparison.
 The operational contract for shipped terminal-agent state lives in
@@ -10,8 +10,8 @@ The operational contract for shipped terminal-agent state lives in
 ## Product direction
 
 Herdr's useful idea is an agent-aware control plane around real terminals:
-semantic state, task isolation, review, restoration, and automation. Vibe
-Studio should add that control plane to its existing IDE rather than become a
+semantic state, task isolation, review, restoration, and automation. Talos
+should add that control plane to its existing IDE rather than become a
 terminal multiplexer or copy Herdr's TUI.
 
 The target workflow is:
@@ -21,7 +21,7 @@ The target workflow is:
 3. Give feedback or approve the result.
 4. Apply, keep, or discard isolated work safely.
 
-Vibe Studio already owns the useful editor-facing pieces: workspaces, source
+Talos already owns the useful editor-facing pieces: workspaces, source
 control, editable diffs, LSP diagnostics, tasks, previews, and two terminal
 docks. The remaining work is to connect those pieces around an agent-owned
 task.
@@ -87,13 +87,13 @@ This is the smallest feature that turns semantic state into a workflow.
 ## Next: isolated worktree task loop
 
 Each substantial agent task should be able to own an isolated checkout and
-finish in Vibe Studio's native review UI.
+finish in Talos' native review UI.
 
 - [x] Add Git worktree list/create/open/remove backend commands.
 - [x] Add **New Worktree...**, **Open Worktree...**, and **New Worktree +
   Agent...** actions.
-- [x] Create worktrees under a configurable root and open them as ordinary Vibe
-  Studio workspaces.
+- [x] Create worktrees under a configurable root and open them as ordinary Talos
+  workspaces.
 - [x] Record task ID, parent workspace, worktree path, base commit, branch,
   agent terminal, and cleanup provenance.
 - [x] Reuse the shipped related-workspace titlebar grouping.
@@ -234,7 +234,7 @@ roadmap:
 
 - A Herdr-style TUI, prefix navigation, or copy mode.
 - A plugin marketplace before a small internal action/automation contract.
-- A proprietary model/runtime; Vibe Studio should coordinate existing agents.
+- A proprietary model/runtime; Talos should coordinate existing agents.
 - Remote/phone clients before a durable local runtime exists.
 - Cloud runners, schedules, or webhooks before local task ownership, review,
   cancellation, and cleanup are trustworthy.

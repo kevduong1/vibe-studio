@@ -1,9 +1,9 @@
 <div align="center">
-  <img src="app-icon.png" width="128" height="128" alt="Vibe Studio icon" />
+  <img src="app-icon.png" width="128" height="128" alt="Talos icon" />
 
-# Vibe Studio
+# Talos
 
-**The IDE for vibe coding.** Git, terminals, diffs, and a first-class dock for
+**The IDE for agent-driven coding.** Git, terminals, diffs, and a first-class dock for
 AI coding agents — in a fast, minimal, native macOS app.
 
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)
@@ -118,7 +118,7 @@ or was approved.
 - Human review states cover **Clean**, **Unreviewed**, **Reviewed**,
   **Feedback**, **Approval Stale**, and **Accepted**. Conflicts and check results
   are shown separately instead of controlling approval.
-- Vibe Studio captures the launch's base commit and refreshes privacy-bounded
+- Talos captures the launch's base commit and refreshes privacy-bounded
   Git evidence as the repository changes. Committed, staged, working-tree, and
   untracked changes, executable modes, conflict stages, and dirty submodules
   are included; file contents are hashed in Rust and never retained in the
@@ -141,27 +141,27 @@ or was approved.
   linked checkouts as ordinary workspaces. New Task also launches the selected
   agent. The root is configurable;
   repositories can opt into bootstrap, ignored-file includes, and a preview
-  port range with `.vibe/worktrees.json`.
+  port range with `.talos/worktrees.json`.
 - The Worktrees sidebar lists the main checkout and every linked worktree Git
   knows about for the current repository, including worktrees created outside
-  Vibe Studio. It shows branch/detached state, HEAD, main/linked and
+  Talos. It shows branch/detached state, HEAD, main/linked and
   locked/prunable status, and lets you open or switch to another checkout.
-  Ordinary worktrees stay in compact rows; Vibe-owned task rows expand for
+  Ordinary worktrees stay in compact rows; Talos-owned task rows expand for
   review evidence, plans, feedback, and lifecycle actions. The activity-bar
   tree icon opens this view. Ordering remains stable while switching: the main
   checkout comes first, followed by branch and path, while **Current** is only
   a status badge.
   Live Git data remains authoritative; ordinary worktrees are never silently
-  adopted as Vibe-owned tasks. **New Task** creates an isolated worktree and
+  adopted as Talos-owned tasks. **New Task** creates an isolated worktree and
   launches the selected agent; **Removed tasks** appears only when task records
   remain after their Git checkouts were deleted. Every linked worktree has a
   confirmed remove action that keeps its branch; the main checkout cannot be
   removed. A checkout that parents retained child tasks cannot be removed, and
   confirmed force removal handles both dirty and locked worktrees. Task rows
-  separately support permanent **Delete Task Record**, which deletes Vibe
+  separately support permanent **Delete Task Record**, which deletes Talos
   metadata while leaving its worktree and branch intact after bound terminals
   have stopped.
-- Vibe-owned worktree rows additionally combine whole-task/latest-turn
+- Talos-owned worktree rows additionally combine whole-task/latest-turn
   changes, conflicts, checks, diagnostics, commits, previews, agent state, and
   read-only child-agent rows. Every live worktree row uses the same path-keyed
   project color as its workspace tab; removed history falls back to its parent
@@ -262,7 +262,7 @@ Repository checks come from `.vscode/tasks.json`:
 
 ### 🔌 Local agent automation
 
-- The bundled `vibe-agent` CLI lists privacy-bounded semantic snapshots,
+- The bundled `talos-agent` CLI lists privacy-bounded semantic snapshots,
   follows ordered events, starts isolated agents, focuses terminals, queues or
   explicitly steers prompts, and waits with timeouts/cancellation pinned to the
   exact occupant generation. Cancellation is authoritative before the final
@@ -367,9 +367,9 @@ build, then copy the bundle into `/Applications`.
 
 ```sh
 pnpm tauri build
-rm -rf "/Applications/Vibe Studio.app" && ditto \
-  "src-tauri/target/release/bundle/macos/Vibe Studio.app" \
-  "/Applications/Vibe Studio.app"
+rm -rf "/Applications/Talos.app" && ditto \
+  "src-tauri/target/release/bundle/macos/Talos.app" \
+  "/Applications/Talos.app"
 ```
 
 Notes:

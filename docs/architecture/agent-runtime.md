@@ -1,12 +1,12 @@
 # Semantic agent runtime
 
-This document is the source of truth for Vibe Studio's semantic state for
+This document is the source of truth for Talos' semantic state for
 Claude and Codex processes. It covers dedicated agent tabs and agents
 discovered in plain shell tabs in both terminal docks.
 
 ## Scope
 
-Vibe Studio distinguishes the requested tab kind from the process currently
+Talos distinguishes the requested tab kind from the process currently
 inside it. A tab created for Claude may contain Claude, may be starting Claude,
 or may have returned to an ordinary shell after Claude exits. Plain shell tabs
 opt into process discovery and acquire a dynamic Claude/Codex identity only

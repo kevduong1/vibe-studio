@@ -139,7 +139,7 @@ function Welcome() {
         <div className="welcome-mark" aria-hidden="true">
           <IcSparkle />
         </div>
-        <div className="welcome-kicker">Vibe Studio</div>
+        <div className="welcome-kicker">Talos</div>
         <h1>Build with focus.</h1>
         <p>Open a Git repository and pick up exactly where you left off.</p>
         <button className="open-btn" onClick={pickFolder}>
@@ -271,7 +271,7 @@ export default function App() {
           const result = await message(
             `${count} unsaved ${count === 1 ? "file has" : "files have"} changes.`,
             {
-              title: "Quit Vibe Studio?",
+              title: "Quit Talos?",
               kind: "warning",
               buttons: {
                 yes: count === 1 ? "Save and Quit" : "Save All and Quit",
@@ -360,7 +360,7 @@ export default function App() {
     const onLaunch = (event: Event) => {
       setAgentLaunch((event as CustomEvent<AgentLaunchRequest>).detail);
     };
-    window.addEventListener("vibe:launch-agent", onLaunch);
+    window.addEventListener("talos:launch-agent", onLaunch);
     const onWorktree = (event: Event) => {
       const detail = (event as CustomEvent<{ workspacePath: string; profile: AgentLaunchProfile }>).detail;
       const parent = useWorkspacesStore
@@ -368,7 +368,7 @@ export default function App() {
         .workspaces.find((workspace) => workspace.path === detail.workspacePath);
       if (parent) setProfileWorktree({ parent, profile: detail.profile });
     };
-    window.addEventListener("vibe:new-worktree-agent", onWorktree);
+    window.addEventListener("talos:new-worktree-agent", onWorktree);
     const onNewTask = (event: Event) => {
       const detail = (event as CustomEvent<{ workspacePath: string }>).detail;
       const parent = useWorkspacesStore
@@ -376,11 +376,11 @@ export default function App() {
         .workspaces.find((workspace) => workspace.path === detail.workspacePath);
       if (parent) setNewTaskWorkspace(parent);
     };
-    window.addEventListener("vibe:new-isolated-task", onNewTask);
+    window.addEventListener("talos:new-isolated-task", onNewTask);
     return () => {
-      window.removeEventListener("vibe:launch-agent", onLaunch);
-      window.removeEventListener("vibe:new-worktree-agent", onWorktree);
-      window.removeEventListener("vibe:new-isolated-task", onNewTask);
+      window.removeEventListener("talos:launch-agent", onLaunch);
+      window.removeEventListener("talos:new-worktree-agent", onWorktree);
+      window.removeEventListener("talos:new-isolated-task", onNewTask);
     };
   }, []);
 

@@ -126,7 +126,7 @@ define_class!(
     // SAFETY: NSObject has no subclassing requirements; the delegate is
     // stateless (no ivars, no Drop) and callable from any thread.
     #[unsafe(super(NSObject))]
-    #[name = "VibeStudioNotifyDelegate"]
+    #[name = "TalosNotifyDelegate"]
     struct NotifyDelegate;
 
     unsafe impl NSObjectProtocol for NotifyDelegate {}

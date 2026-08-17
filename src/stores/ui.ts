@@ -72,8 +72,8 @@ export const useUiStore = create<UiState>((set) => ({
   panelMaximized: false,
   searchFocusNonce: 0,
   markdownPreview: false,
-  wordWrap: storedBool("vibe-studio:word-wrap"),
-  autoSave: storedBool("vibe-studio:auto-save"),
+  wordWrap: storedBool("talos:word-wrap"),
+  autoSave: storedBool("talos:auto-save"),
   nativeOverlayDepth: 0,
 
   setSidebarTab: (tab) =>
@@ -109,13 +109,13 @@ export const useUiStore = create<UiState>((set) => ({
   toggleWordWrap: () =>
     set((s) => {
       const wordWrap = !s.wordWrap;
-      storeBool("vibe-studio:word-wrap", wordWrap);
+      storeBool("talos:word-wrap", wordWrap);
       return { wordWrap };
     }),
   toggleAutoSave: () =>
     set((s) => {
       const autoSave = !s.autoSave;
-      storeBool("vibe-studio:auto-save", autoSave);
+      storeBool("talos:auto-save", autoSave);
       return { autoSave };
     }),
   pushNativeOverlay: () =>

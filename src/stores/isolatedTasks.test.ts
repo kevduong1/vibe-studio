@@ -16,7 +16,7 @@ const task = (): IsolatedTask => ({
   parentWorkspacePath: "/repo",
   worktreePath: "/repo-task",
   baseCommit: "base",
-  branch: "vibe/task",
+  branch: "talos/task",
   agentKind: "codex",
   agentTerminalId: null,
   nativeSessionRef: null,
@@ -28,7 +28,7 @@ const task = (): IsolatedTask => ({
   updatedAt: 1,
   outcome: "active",
   checkoutRemovedAt: null,
-  cleanupProvenance: "created-by-vibe",
+  cleanupProvenance: "created-by-talos",
 });
 
 afterAll(() => {

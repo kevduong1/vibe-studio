@@ -13,7 +13,7 @@
 import { create } from "zustand";
 import { claudeUsage, type UsageState } from "../lib/ipc";
 
-const ENABLED_KEY = "vibe-studio:usage-enabled";
+const ENABLED_KEY = "talos:usage-enabled";
 /** Usage windows barely move over minutes (5h / 7d), and the endpoint is
  *  rate-limited, so the background poll is deliberately slow — opening the chip
  *  forces a fresh pull when you actually want current numbers. */

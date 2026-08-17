@@ -104,14 +104,14 @@ export async function listenAgentNotificationActivations(): Promise<UnlistenFn> 
       (ws) => !!ws.terminal.getState().terminals[terminalId],
     );
     if (!runtime || (!global && !local)) {
-      window.dispatchEvent(new CustomEvent("vibe:open-agent-inbox", {
+      window.dispatchEvent(new CustomEvent("talos:open-agent-inbox", {
         detail: { message: "The notification's terminal is no longer available." },
       }));
       return;
     }
     const result = await focusAgentTerminal(terminalId);
     if (!result.ok) {
-      window.dispatchEvent(new CustomEvent("vibe:open-agent-inbox", {
+      window.dispatchEvent(new CustomEvent("talos:open-agent-inbox", {
         detail: { message: result.message },
       }));
     }

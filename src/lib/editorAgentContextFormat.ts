@@ -19,7 +19,7 @@ export function formatAgentEditorContext(context: AgentEditorContext): string {
     const { selection } = context;
     const text = selection.text.slice(0, MAX_SELECTION_CHARS);
     const truncated = selection.text.length > text.length
-      ? `\n\n[Selection truncated by Vibe Studio at ${MAX_SELECTION_CHARS.toLocaleString()} characters.]`
+      ? `\n\n[Selection truncated by Talos at ${MAX_SELECTION_CHARS.toLocaleString()} characters.]`
       : "";
     return `Use this selected editor context from ${selection.path}:${selection.fromLine}-${selection.toLine}:\n\n${text}${truncated}`;
   }

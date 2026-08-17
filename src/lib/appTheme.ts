@@ -155,7 +155,7 @@ export const APP_THEME_GROUPS: ReadonlyArray<{
 ];
 
 const DEFAULT_THEME: AppThemeId = "midnight";
-const STORAGE_KEY = "vibe-studio:theme";
+const STORAGE_KEY = "talos:theme";
 
 export function normalizeAppTheme(value: unknown): AppThemeId {
   return APP_THEMES.some((theme) => theme.id === value)

@@ -248,7 +248,7 @@ export default function TerminalPanel() {
           }}>Copy Last 50 Lines</button>
           <button onClick={() => {
             const tail = getSession(tabMenu.id)?.readTail(12, 4096).join("\n") ?? "Terminal no longer available";
-            window.dispatchEvent(new CustomEvent("vibe:open-agent-inbox", { detail: { message: tail } }));
+            window.dispatchEvent(new CustomEvent("talos:open-agent-inbox", { detail: { message: tail } }));
             setTabMenu(null);
           }}>Open Last 12 Lines</button>
           <div className="ctx-menu-sep" />

@@ -87,7 +87,7 @@ export default function AgentLaunchDialog({
       });
     }
     if (draft.folderChoice === "new-worktree") {
-      window.dispatchEvent(new CustomEvent("vibe:new-worktree-agent", {
+      window.dispatchEvent(new CustomEvent("talos:new-worktree-agent", {
         detail: { workspacePath: request.workspacePath, profile: draft },
       }));
       onClose();

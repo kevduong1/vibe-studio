@@ -382,7 +382,7 @@
 
 /* ----- CodeMirror common tweaks ---------------------------------------------- */
 
-/* oneDark supplies syntax colors, while Vibe owns the surrounding surface.
+/* oneDark supplies syntax colors, while Talos owns the surrounding surface.
    These two-class selectors intentionally outrank the generated oneDark root
    class so split diffs and ordinary editors sit on the same canvas. */
 .editor-host .cm-editor,

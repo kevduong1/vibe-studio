@@ -261,7 +261,7 @@ function AgentTabMenu({
       }}>Copy Last 50 Lines</button>
       <button onClick={() => {
         const tail = getSession(terminalId)?.readTail(12, 4096).join("\n") ?? "Terminal no longer available";
-        window.dispatchEvent(new CustomEvent("vibe:open-agent-inbox", { detail: { message: tail } }));
+        window.dispatchEvent(new CustomEvent("talos:open-agent-inbox", { detail: { message: tail } }));
         onClose();
       }}>Open Last 12 Lines</button>
       <div className="ctx-menu-sep" />

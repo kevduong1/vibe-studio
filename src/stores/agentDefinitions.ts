@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { AgentKind } from "../lib/agentState";
 
-const STORAGE_KEY = "vibe-studio:agent-definitions";
+const STORAGE_KEY = "talos:agent-definitions";
 
 export interface AgentDefinition {
   id: string;

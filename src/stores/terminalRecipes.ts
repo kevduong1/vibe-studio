@@ -5,7 +5,7 @@ import { validTerminalRecipe, type TerminalRecipe } from "./terminalRecipeModel"
 
 export type { TerminalRecipe } from "./terminalRecipeModel";
 
-const STORAGE_KEY = "vibe-studio:terminal-recipes";
+const STORAGE_KEY = "talos:terminal-recipes";
 
 type RecipeMap = Record<string, TerminalRecipe[]>;
 

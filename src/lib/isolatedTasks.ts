@@ -67,7 +67,7 @@ export async function loadWorktreeProjectConfig(
   parentPath: string,
 ): Promise<WorktreeProjectConfig> {
   try {
-    const file = await fsReadFile(`${parentPath}/.vibe/worktrees.json`);
+    const file = await fsReadFile(`${parentPath}/.talos/worktrees.json`);
     if (file.binary || file.truncated) throw new Error("configuration must be a small text file");
     const raw = JSON.parse(file.text) as Record<string, unknown>;
     return {
@@ -92,7 +92,7 @@ export async function loadWorktreeProjectConfig(
     // A missing config is the normal zero-configuration path. Malformed
     // existing JSON is surfaced because silently skipping setup is unsafe.
     if (/No such file|not found|os error 2/i.test(String(error))) return DEFAULT_CONFIG;
-    throw new Error(`Invalid .vibe/worktrees.json: ${String(error)}`);
+    throw new Error(`Invalid .talos/worktrees.json: ${String(error)}`);
   }
 }
 
@@ -108,7 +108,7 @@ export const uniqueTaskSuffix = (): string =>
   `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
 
 export const defaultWorktreePath = (parentPath: string, taskName: string): string => {
-  const root = getWorktreeRoot() ?? `${dirname(parentPath)}/.vibe-worktrees`;
+  const root = getWorktreeRoot() ?? `${dirname(parentPath)}/.talos-worktrees`;
   return `${root}/${basename(parentPath)}/${slugifyTaskName(taskName)}`;
 };
 
@@ -182,7 +182,7 @@ async function createIsolatedTaskUnlocked(input: {
     updatedAt: now,
     outcome: "active",
     checkoutRemovedAt: null,
-    cleanupProvenance: "created-by-vibe",
+    cleanupProvenance: "created-by-talos",
   };
   useIsolatedTasksStore.getState().addTask(task);
   if (input.cancelled?.()) {
@@ -490,13 +490,13 @@ export function removeIsolatedTaskWorktree(task: IsolatedTask): Promise<boolean>
 }
 
 export async function discardIsolatedTask(task: IsolatedTask): Promise<boolean> {
-  if (task.cleanupProvenance !== "created-by-vibe") {
-    throw new Error("Vibe Studio did not create this checkout, so it will not remove it automatically.");
+  if (task.cleanupProvenance !== "created-by-talos") {
+    throw new Error("Talos did not create this checkout, so it will not remove it automatically.");
   }
   return removeIsolatedTaskWorktree(task);
 }
 
-/** Permanently delete Vibe's metadata only; the checkout and branch remain. */
+/** Permanently delete Talos metadata only; the checkout and branch remain. */
 export function deleteIsolatedTaskRecord(task: IsolatedTask): void {
   if (worktreePathOperationPending(task.worktreePath)) {
     throw new Error(

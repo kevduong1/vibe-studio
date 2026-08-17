@@ -798,7 +798,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <section className="settings-section">
             <h3>Local Agent Control</h3>
             <p className="settings-hint">
-              The bundled vibe-agent CLI supports semantic snapshots, ordered events, isolated starts, generation-pinned prompts, focus, waits, cancellation, and short-lived project capabilities.
+              The bundled talos-agent CLI supports semantic snapshots, ordered events, isolated starts, generation-pinned prompts, focus, waits, cancellation, and short-lived project capabilities.
             </p>
             <AgentControlInfo />
           </section>

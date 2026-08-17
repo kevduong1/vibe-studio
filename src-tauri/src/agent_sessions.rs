@@ -143,8 +143,8 @@ mod tests {
     fn sql_values_are_escaped() {
         assert_eq!(sql_escape("/tmp/o'brien"), "/tmp/o''brien");
         assert_eq!(
-            branch_clause(Some("vibe/o'brien")),
-            " AND git_branch = 'vibe/o''brien'"
+            branch_clause(Some("talos/o'brien")),
+            " AND git_branch = 'talos/o''brien'"
         );
     }
 

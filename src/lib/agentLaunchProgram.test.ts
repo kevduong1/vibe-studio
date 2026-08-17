@@ -20,7 +20,7 @@ describe("agentLaunchProgram", () => {
     expect(combineAgentPreludes(
       isolatedTaskAgentPrelude("task-id", 4100),
       "export TOKEN='value'",
-    )).toBe("export VIBE_TASK_ID='task-id' PORT=4100 && export TOKEN='value'");
+    )).toBe("export TALOS_TASK_ID='task-id' PORT=4100 && export TOKEN='value'");
   });
 
   it("quotes shell arguments containing apostrophes", () => {

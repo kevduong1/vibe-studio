@@ -22,7 +22,7 @@ import {
   prunePaneState,
 } from "./terminal";
 
-const STORAGE_KEY = "vibe-studio:agent-terminals";
+const STORAGE_KEY = "talos:agent-terminals";
 
 export interface AgentTerminal {
   /** Doubles as the PTY id (the backend session map is empty at boot, so

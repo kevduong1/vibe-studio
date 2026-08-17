@@ -1,6 +1,6 @@
 # Attention inbox and owned review checks
 
-This document defines Vibe Studio's session-only agent task, review, inbox,
+This document defines Talos' session-only agent task, review, inbox,
 and check-pipeline behavior. Semantic occupancy/lifecycle remains defined by
 [`agent-runtime.md`](agent-runtime.md).
 
@@ -48,7 +48,7 @@ prior evidence.
 
 Shared working trees remain supported. Their scope is **all repository changes
 since the base HEAD**, including committed `base..HEAD` changes plus staged,
-working-tree, and untracked changes. Vibe Studio never claims per-agent file
+working-tree, and untracked changes. Talos never claims per-agent file
 attribution there. Isolated agents additionally own a stable task/worktree and
 use the lifecycle in [`isolated-agent-tasks.md`](isolated-agent-tasks.md).
 

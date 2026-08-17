@@ -31,7 +31,7 @@ export const PROJECT_COLOR_NAMES = [
 
 const PALETTE_SIZE = PROJECT_COLOR_NAMES.length;
 
-const STORAGE_KEY = "vibe-studio:project-colors";
+const STORAGE_KEY = "talos:project-colors";
 /** Growth bound: oldest assignments are dropped past this (colors for repos
     not touched in ages may eventually rotate — acceptable). */
 const MAX_ASSIGNMENTS = 64;

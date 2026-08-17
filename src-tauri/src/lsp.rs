@@ -46,7 +46,7 @@ const STDERR_TAIL_CAP: usize = 4096;
 /// to stdout under `zsh -l`, and zsh sources `~/.zlogout` AFTER the `-c`
 /// command, so neither "stdout = PATH" nor "everything after one marker"
 /// is reliable. The value sits between the LAST pair of markers.
-const PATH_MARKER: &str = "__VIBE_PATH__";
+const PATH_MARKER: &str = "__TALOS_PATH__";
 /// How long the login-shell PATH probe may run before it is killed — a hung
 /// dotfile must not park a blocking-pool thread (and the frontend's resolve
 /// await) forever.
@@ -111,7 +111,7 @@ fn is_executable(path: &std::path::Path) -> bool {
 fn login_shell_path() -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut child = Command::new(shell)
-        .args(["-lc", r#"printf '\n__VIBE_PATH__%s__VIBE_PATH__' "$PATH""#])
+        .args(["-lc", r#"printf '\n__TALOS_PATH__%s__TALOS_PATH__' "$PATH""#])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

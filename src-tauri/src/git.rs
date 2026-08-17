@@ -616,7 +616,7 @@ fn private_checkpoint_directory() -> Result<PrivateTempDirectory, String> {
     for _ in 0..1000 {
         let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "vibe-checkpoint-{}-{stamp}-{sequence}",
+            "talos-checkpoint-{}-{stamp}-{sequence}",
             std::process::id()
         ));
         let mut builder = std::fs::DirBuilder::new();
@@ -1291,7 +1291,7 @@ fn review_snapshot_once(
 
     let index = repo.index().map_err(|e| e.to_string())?;
     let mut hasher = Sha256::new();
-    hash_tag(&mut hasher, b"vibe-review-v1");
+    hash_tag(&mut hasher, b"talos-review-v1");
     hash_tag(&mut hasher, head.as_deref().unwrap_or("unborn").as_bytes());
     for ((path, source), ()) in &sources {
         hash_tag(&mut hasher, source.as_bytes());
@@ -1306,7 +1306,7 @@ fn review_snapshot_once(
     let mut file_fingerprints = BTreeMap::new();
     for path in &changed {
         let mut file_hasher = Sha256::new();
-        hash_tag(&mut file_hasher, b"vibe-review-file-v1");
+        hash_tag(&mut file_hasher, b"talos-review-file-v1");
         hash_tag(&mut file_hasher, path.as_bytes());
         if let Some(entry) = head_tree
             .as_ref()
@@ -2561,7 +2561,7 @@ mod tests {
             .as_nanos();
         let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "vibe-review-{}-{stamp}-{sequence}",
+            "talos-review-{}-{stamp}-{sequence}",
             std::process::id(),
         ));
         let repo = Repository::init(&path).unwrap();
@@ -2575,7 +2575,7 @@ mod tests {
         index.write().unwrap();
         let tree_oid = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_oid).unwrap();
-        let signature = git2::Signature::now("Vibe Test", "vibe@example.test").unwrap();
+        let signature = git2::Signature::now("Talos Test", "talos@example.test").unwrap();
         let parent = repo.head().ok().and_then(|head| head.peel_to_commit().ok());
         let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
         repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &parents).unwrap()
@@ -2754,7 +2754,7 @@ mod tests {
                 "worktree",
                 "add",
                 "-b",
-                "vibe/test-task",
+                "talos/test-task",
                 &checkout_text,
                 "HEAD",
             ],
@@ -2762,7 +2762,7 @@ mod tests {
         assert!(created.ok, "{}", created.output);
         let listed = worktree_list(path.to_str().unwrap()).unwrap();
         assert_eq!(listed.len(), 2);
-        assert_eq!(listed[1].branch.as_deref(), Some("vibe/test-task"));
+        assert_eq!(listed[1].branch.as_deref(), Some("talos/test-task"));
 
         std::fs::write(checkout.join("tracked.txt"), b"dirty\n").unwrap();
         let refused = remove_worktree(path.to_str().unwrap(), &checkout_text, false);
@@ -2775,7 +2775,7 @@ mod tests {
         remove_worktree(path.to_str().unwrap(), &checkout_text, true).unwrap();
         let repository = open_repo(path.to_str().unwrap()).unwrap();
         assert!(repository
-            .find_branch("vibe/test-task", BranchType::Local)
+            .find_branch("talos/test-task", BranchType::Local)
             .is_ok());
         drop(repository);
         std::fs::remove_dir_all(path).unwrap();
@@ -2839,8 +2839,8 @@ mod tests {
         let (parent_path, parent_repo) = temp_repo();
         commit_file(&parent_repo, Path::new("base.txt"), b"base\n", "base");
         let mut config = parent_repo.config().unwrap();
-        config.set_str("user.name", "Vibe Test").unwrap();
-        config.set_str("user.email", "vibe@example.test").unwrap();
+        config.set_str("user.name", "Talos Test").unwrap();
+        config.set_str("user.email", "talos@example.test").unwrap();
         drop(config);
         drop(parent_repo);
 
@@ -2852,7 +2852,7 @@ mod tests {
                 "worktree",
                 "add",
                 "-b",
-                "vibe/merge-test",
+                "talos/merge-test",
                 &checkout_text,
                 "HEAD",
             ],

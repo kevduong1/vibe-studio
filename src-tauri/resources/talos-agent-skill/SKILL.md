@@ -1,29 +1,29 @@
 ---
-name: vibe-agent-control
-description: Control live Vibe Studio agent tasks through its authenticated local CLI.
+name: talos-agent-control
+description: Control live Talos agent tasks through its authenticated local CLI.
 ---
 
-# Vibe Studio agent control
+# Talos agent control
 
-Use the bundled `vibe-agent` CLI. Its exact executable path is shown in Vibe
-Studio Settings and it is the sibling `../vibe-agent` of this skill directory;
+Use the bundled `talos-agent` CLI. Its exact executable path is shown in Talos
+Settings and it is the sibling `../talos-agent` of this skill directory;
 the examples below assume that path is on `PATH`. It talks only to the running
 user's mode-0600 Unix socket. Never read, print, copy, or inject
 `agent-control.token` into a repository process. For repository-scoped
 automation, ask the user/app for a short-lived capability and pass it with
-`--token` or `VIBE_STUDIO_CAPABILITY`.
+`--token` or `TALOS_CAPABILITY`.
 
 Core commands:
 
 ```sh
-vibe-agent list
-vibe-agent events --after-seq 42 --timeout-ms 30000
-vibe-agent start /absolute/project "implement the approved step" --kind codex --name step-name
-vibe-agent prompt TERMINAL_ID "run the focused checks" --mode queue --wait --timeout-ms 120000
-vibe-agent focus TERMINAL_ID
-vibe-agent wait TERMINAL_ID idle blocked --generation 3 --request-id my-wait
-vibe-agent cancel my-wait
-vibe-agent capability /absolute/project --ttl-seconds 900
+talos-agent list
+talos-agent events --after-seq 42 --timeout-ms 30000
+talos-agent start /absolute/project "implement the approved step" --kind codex --name step-name
+talos-agent prompt TERMINAL_ID "run the focused checks" --mode queue --wait --timeout-ms 120000
+talos-agent focus TERMINAL_ID
+talos-agent wait TERMINAL_ID idle blocked --generation 3 --request-id my-wait
+talos-agent cancel my-wait
+talos-agent capability /absolute/project --ttl-seconds 900
 ```
 
 `start` creates an isolated worktree by default; pass `--shared` only when the

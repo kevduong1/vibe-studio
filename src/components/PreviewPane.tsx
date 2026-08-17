@@ -71,15 +71,15 @@ const handlePreviewExternal = ({ id, url }: { id: string; url: string }) => {
 };
 
 type PreviewExternalGlobal = typeof globalThis & {
-  __vibeStudioPreviewExternalListener?: Promise<() => void>;
+  __talosPreviewExternalListener?: Promise<() => void>;
 };
 const previewExternalGlobal = globalThis as PreviewExternalGlobal;
-if (!previewExternalGlobal.__vibeStudioPreviewExternalListener) {
+if (!previewExternalGlobal.__talosPreviewExternalListener) {
   const listener = onPreviewExternal(handlePreviewExternal);
-  previewExternalGlobal.__vibeStudioPreviewExternalListener = listener;
+  previewExternalGlobal.__talosPreviewExternalListener = listener;
   void listener.catch((error) => {
-    if (previewExternalGlobal.__vibeStudioPreviewExternalListener === listener) {
-      delete previewExternalGlobal.__vibeStudioPreviewExternalListener;
+    if (previewExternalGlobal.__talosPreviewExternalListener === listener) {
+      delete previewExternalGlobal.__talosPreviewExternalListener;
     }
     console.error("Failed to listen for preview external URLs", error);
   });

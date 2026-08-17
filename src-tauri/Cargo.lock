@@ -3212,6 +3212,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "talos"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "block2",
+ "git2",
+ "ignore",
+ "libc",
+ "notify",
+ "objc2",
+ "objc2-foundation",
+ "objc2-user-notifications",
+ "parking_lot",
+ "portable-pty",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "url",
+]
+
+[[package]]
 name = "tao"
 version = "0.35.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4021,31 +4046,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vibe-studio"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "block2",
- "git2",
- "ignore",
- "libc",
- "notify",
- "objc2",
- "objc2-foundation",
- "objc2-user-notifications",
- "parking_lot",
- "portable-pty",
- "regex",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "url",
-]
 
 [[package]]
 name = "vswhom"

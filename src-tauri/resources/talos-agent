@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authenticated CLI for Vibe Studio's per-user agent control socket."""
+"""Authenticated CLI for Talos' per-user agent control socket."""
 
 import argparse
 import json
@@ -11,11 +11,11 @@ from pathlib import Path
 
 
 def control_dir() -> Path:
-    override = os.environ.get("VIBE_STUDIO_CONTROL_DIR")
+    override = os.environ.get("TALOS_CONTROL_DIR")
     if override:
         return Path(override)
     if sys.platform == "darwin":
-        identifier = "dev.kevinduong.vibe-studio"
+        identifier = "dev.kevinduong.talos"
         for parent in Path(__file__).resolve().parents:
             info = parent / "Info.plist"
             if info.is_file():
@@ -43,11 +43,11 @@ def control_dir() -> Path:
                 except (OSError, json.JSONDecodeError):
                     pass
         return Path.home() / f"Library/Application Support/{identifier}"
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "dev.kevinduong.vibe-studio"
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "dev.kevinduong.talos"
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="vibe-agent")
+    root = argparse.ArgumentParser(prog="talos-agent")
     root.add_argument("--socket", dest="socket_path")
     root.add_argument("--token-file")
     root.add_argument("--token", help="Use a short-lived project capability instead of the global token file")
@@ -110,7 +110,7 @@ def main() -> int:
     directory = control_dir()
     socket_path = Path(args.socket_path) if args.socket_path else directory / "agent-control.sock"
     token_file = Path(args.token_file) if args.token_file else directory / "agent-control.token"
-    token = args.token or os.environ.get("VIBE_STUDIO_CAPABILITY")
+    token = args.token or os.environ.get("TALOS_CAPABILITY")
     if not token:
         token = token_file.read_text(encoding="utf-8").strip()
     request = request_for(args)

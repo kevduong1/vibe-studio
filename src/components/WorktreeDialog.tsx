@@ -23,7 +23,7 @@ export type WorktreeDialogMode = "create" | "create-agent" | "open";
  * the Worktrees sidebar. App owns the overlay so switching workspaces during
  * creation cannot hide it inside an inactive workspace tree. */
 export const requestNewIsolatedTask = (workspacePath: string): void => {
-  window.dispatchEvent(new CustomEvent("vibe:new-isolated-task", {
+  window.dispatchEvent(new CustomEvent("talos:new-isolated-task", {
     detail: { workspacePath },
   }));
 };
@@ -79,7 +79,7 @@ export default function WorktreeDialog({
   const updateName = (value: string) => {
     setName(value);
     const slug = slugifyTaskName(value);
-    if (!branchEdited) setBranch(`vibe/${slug}`);
+    if (!branchEdited) setBranch(`talos/${slug}`);
     if (!pathEdited) setPath(defaultWorktreePath(parent.path, slug));
   };
 
@@ -193,7 +193,7 @@ export default function WorktreeDialog({
               Branch
               <input
                 value={branch}
-                placeholder="vibe/task-name"
+                placeholder="talos/task-name"
                 onChange={(event) => {
                   setBranchEdited(true);
                   setBranch(event.target.value);
@@ -230,7 +230,7 @@ export default function WorktreeDialog({
               {mode === "create-agent" && (
                 <>Creates and opens a linked worktree, then launches the selected agent. </>
               )}
-              Optional setup comes from <code>.vibe/worktrees.json</code>. Each task receives a distinct <code>PORT</code>.
+              Optional setup comes from <code>.talos/worktrees.json</code>. Each task receives a distinct <code>PORT</code>.
             </div>
           </div>
         )}

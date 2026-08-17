@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import type { AgentKind } from "../lib/agentState";
 
-const STORAGE_KEY = "vibe-studio:isolated-tasks";
-const ROOT_KEY = "vibe-studio:worktree-root";
+const STORAGE_KEY = "talos:isolated-tasks";
+const ROOT_KEY = "talos:worktree-root";
 
 export type IsolatedTaskOutcome =
   | "active"
@@ -45,8 +45,8 @@ export interface IsolatedTask {
   outcome: IsolatedTaskOutcome;
   /** Checkout cleanup is separate from task/workspace state. */
   checkoutRemovedAt: number | null;
-  /** Records that Vibe Studio created the checkout and may offer cleanup. */
-  cleanupProvenance: "created-by-vibe" | "opened-existing";
+  /** Records that Talos created the checkout and may offer cleanup. */
+  cleanupProvenance: "created-by-talos" | "opened-existing";
 }
 
 interface PersistedState {
@@ -151,8 +151,8 @@ const sanitizeTask = (id: string, value: unknown): IsolatedTask | null => {
       typeof task.checkoutRemovedAt === "number" && Number.isFinite(task.checkoutRemovedAt)
         ? task.checkoutRemovedAt
         : null,
-    cleanupProvenance: task.cleanupProvenance === "created-by-vibe"
-      ? "created-by-vibe"
+    cleanupProvenance: task.cleanupProvenance === "created-by-talos"
+      ? "created-by-talos"
       : "opened-existing",
   };
 };

@@ -9,7 +9,7 @@ export const quoteShellArgument = (value: string): string =>
   `'${value.replaceAll("'", `'\\''`)}'`;
 
 export const isolatedTaskAgentPrelude = (taskId: string, previewPort: number): string =>
-  `export VIBE_TASK_ID=${quoteShellArgument(taskId)} PORT=${previewPort}`;
+  `export TALOS_TASK_ID=${quoteShellArgument(taskId)} PORT=${previewPort}`;
 
 export const combineAgentPreludes = (
   ...preludes: Array<string | null | undefined>

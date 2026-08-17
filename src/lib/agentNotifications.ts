@@ -40,7 +40,7 @@ import { projectDisplayName } from "./projectNames";
 // Attention sound (global setting; the per-terminal bit is just on/off)
 // ---------------------------------------------------------------------------
 
-const SOUND_KEY = "vibe-studio:attention-sound";
+const SOUND_KEY = "talos:attention-sound";
 
 /** The standard macOS alert sounds (/System/Library/Sounds). */
 export const SYSTEM_SOUNDS = [
@@ -113,7 +113,7 @@ export async function playAttentionSound(): Promise<void> {
 // Banner visibility (global setting, settings modal)
 // ---------------------------------------------------------------------------
 
-const BANNER_KEY = "vibe-studio:banner-mode";
+const BANNER_KEY = "talos:banner-mode";
 
 /** "always" presents banners even while the app is frontmost (notify.rs'
  *  willPresent delegate answers with banner+list), "background" keeps the
@@ -196,7 +196,7 @@ export async function setTerminalNotifications(
   } else if (state === "denied" && !warnedDenied) {
     warnedDenied = true;
     await message(
-      "Banners are blocked for Vibe Studio (System Settings → Notifications). The attention sound will still play.",
+      "Banners are blocked for Talos (System Settings → Notifications). The attention sound will still play.",
       { title: "Notifications", kind: "warning" },
     );
   }

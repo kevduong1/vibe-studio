@@ -59,10 +59,10 @@ const RULER_RECOMPUTE_MS = 250;
 // Shared theme
 // ---------------------------------------------------------------------------
 
-/** oneDark syntax colors blended into Vibe's editor chrome and surfaces. */
+/** oneDark syntax colors blended into Talos editor chrome and surfaces. */
 export const editorTheme: CmExtension = [
   // CodeMirror mounts equal-precedence style modules in reverse extension
-  // order. Keep Vibe's theme before oneDark so these surface/chrome rules are
+  // order. Keep the Talos theme before oneDark so these surface/chrome rules are
   // emitted later and win, while oneDark continues to supply syntax colors.
   EditorView.theme(
     {

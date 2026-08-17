@@ -114,7 +114,7 @@ export async function handleAgentControlRequest(
       name,
       parentPath: request.workspacePath,
       path: `${defaultWorktreePath(request.workspacePath, name)}-${suffix}`,
-      branch: `vibe/${slugifyTaskName(name)}-${suffix}`,
+      branch: `talos/${slugifyTaskName(name)}-${suffix}`,
       agentKind: kind,
       agentCommand: built.command,
       agentPrelude: built.prelude,

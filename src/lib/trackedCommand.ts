@@ -2,5 +2,5 @@
  * keep trailing comments and heredoc delimiters from swallowing the marker. */
 export function trackedCommandProgram(command: string, runId: string, nonce: string): string {
   const markerRun = encodeURIComponent(runId);
-  return `(\n${command}\n)\n__vibe_status=$?\nprintf '\\033]6973;vibe;%s;%s;%s\\007' '${markerRun}' '${nonce}' "$__vibe_status"`;
+  return `(\n${command}\n)\n__talos_status=$?\nprintf '\\033]6973;talos;%s;%s;%s\\007' '${markerRun}' '${nonce}' "$__talos_status"`;
 }

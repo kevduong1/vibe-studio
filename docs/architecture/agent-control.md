@@ -1,6 +1,6 @@
 # Local agent control plane
 
-Vibe Studio exposes a local, authenticated automation surface for semantic
+Talos exposes a local, authenticated automation surface for semantic
 agent state and generation-safe actions. It is intentionally narrower than PTY
 control: callers can list, observe, focus, start, prompt, and wait for agents,
 but cannot read terminal text, process arguments, environment, or transcripts.
@@ -12,7 +12,7 @@ per-user application data directory. The directory is mode 0700; the Unix
 socket and token file are mode 0600. A fresh 256-bit token is generated at app
 start. The frontend may display the two paths but never the token value.
 
-The global token is for same-user tools such as the bundled `vibe-agent` CLI.
+The global token is for same-user tools such as the bundled `talos-agent` CLI.
 Repository-scoped automation should receive only a random, short-lived
 capability (1–3600 seconds) bound initially to one exact workspace path. When
 that capability successfully starts an isolated task, the exact returned
@@ -99,25 +99,25 @@ fallback is a flattened single line.
 
 ## Bundled client and skill
 
-The app bundle includes `resources/vibe-agent` and
-`resources/vibe-agent-skill/SKILL.md`. The CLI commands are:
+The app bundle includes `resources/talos-agent` and
+`resources/talos-agent-skill/SKILL.md`. The CLI commands are:
 
 ```sh
-vibe-agent list
-vibe-agent events --after-seq 42 --timeout-ms 30000
-vibe-agent start /absolute/project "implement the approved step" --kind codex
-vibe-agent prompt TERMINAL_ID "run checks" --generation 3 --wait
-vibe-agent focus TERMINAL_ID
-vibe-agent wait TERMINAL_ID idle blocked --generation 3 --request-id wait-1
-vibe-agent cancel wait-1
-vibe-agent capability /absolute/project --ttl-seconds 900
+talos-agent list
+talos-agent events --after-seq 42 --timeout-ms 30000
+talos-agent start /absolute/project "implement the approved step" --kind codex
+talos-agent prompt TERMINAL_ID "run checks" --generation 3 --wait
+talos-agent focus TERMINAL_ID
+talos-agent wait TERMINAL_ID idle blocked --generation 3 --request-id wait-1
+talos-agent cancel wait-1
+talos-agent capability /absolute/project --ttl-seconds 900
 ```
 
 Settings shows the exact bundled CLI and skill paths (and can copy the CLI
 path); the bundle does not mutate the user's `PATH`. The CLI locates the normal
 app-data socket/token by default and accepts
 `--socket`, `--token-file`, or a project capability through `--token` or
-`VIBE_STUDIO_CAPABILITY`. Packaged copies discover app data through their
+`TALOS_CAPABILITY`. Packaged copies discover app data through their
 nearest `Info.plist`; the unbundled `tauri dev` copy reads the nearest Tauri
 development config so it cannot accidentally connect to the release socket.
 It prints structured JSON and returns nonzero on API errors.

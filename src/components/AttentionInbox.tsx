@@ -421,8 +421,8 @@ export default function AttentionInbox() {
       setInitialView(actionable.length ? "attention" : "all");
       setOpen(true);
     };
-    window.addEventListener("vibe:open-agent-inbox", listener);
-    return () => window.removeEventListener("vibe:open-agent-inbox", listener);
+    window.addEventListener("talos:open-agent-inbox", listener);
+    return () => window.removeEventListener("talos:open-agent-inbox", listener);
   }, [actionable.length]);
 
   useEffect(() => {

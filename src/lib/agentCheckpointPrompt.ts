@@ -7,7 +7,7 @@ export async function checkpointBeforeUserSubmit(terminalId: string): Promise<vo
     await checkpointAgentUserSubmit(terminalId);
   } catch (error) {
     await message(
-      `The prompt was not sent because Vibe Studio could not create its filesystem checkpoint.\n\n${String(error)}`,
+      `The prompt was not sent because Talos could not create its filesystem checkpoint.\n\n${String(error)}`,
       { title: "Checkpoint Failed", kind: "error" },
     );
     throw error;

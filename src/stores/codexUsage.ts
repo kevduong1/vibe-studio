@@ -4,7 +4,7 @@
 import { create } from "zustand";
 import { codexUsage, type CodexUsageState } from "../lib/ipc";
 
-const ENABLED_KEY = "vibe-studio:codex-usage-enabled";
+const ENABLED_KEY = "talos:codex-usage-enabled";
 const POLL_MS = 5 * 60 * 1000;
 const MIN_AUTO_GAP_MS = 60 * 1000;
 const ERROR_AFTER = 3;

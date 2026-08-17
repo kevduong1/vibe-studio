@@ -12,7 +12,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
     zooming can't accumulate float drift. */
 const LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
-const STORAGE_KEY = "vibe-studio:zoom";
+const STORAGE_KEY = "talos:zoom";
 
 const listeners = new Set<() => void>();
 

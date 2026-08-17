@@ -53,7 +53,7 @@ export const STATUS_KIND: Record<ServerStatus, "ok" | "busy" | "bad" | "idle"> =
   disabled: "idle",
 };
 
-const STORAGE_KEY = "vibe-studio:lsp";
+const STORAGE_KEY = "talos:lsp";
 
 interface PersistedLsp {
   version: 1;

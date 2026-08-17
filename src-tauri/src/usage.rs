@@ -118,7 +118,7 @@ pub enum CodexUsageState {
 }
 
 /// Ask the installed Codex CLI for its current account rate limits. The CLI's
-/// app-server owns credential lookup and refresh; minimal-ide never reads or
+/// app-server owns credential lookup and refresh; Talos never reads or
 /// forwards the tokens itself.
 #[tauri::command]
 pub async fn codex_usage() -> Result<CodexUsageState, String> {
@@ -175,7 +175,7 @@ fn codex_usage_impl() -> CodexUsageState {
 
     let deadline = Instant::now() + CODEX_TIMEOUT;
     let initialize =
-        "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"minimal-ide\",\"version\":\"0.1.0\"}}}\n";
+        "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"talos\",\"version\":\"0.1.0\"}}}\n";
     if let Err(e) = stdin
         .write_all(initialize.as_bytes())
         .and_then(|_| stdin.flush())

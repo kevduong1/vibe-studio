@@ -116,7 +116,7 @@ function ProjectTabMenu({
               Archive Task
             </button>
           )}
-          {task.cleanupProvenance === "created-by-vibe" && (
+          {task.cleanupProvenance === "created-by-talos" && (
             <button
               className="danger"
               onClick={() => void runTaskAction("Remove Worktree", async () => {
@@ -569,7 +569,7 @@ export default function Titlebar() {
       </div>
 
       {workspaces.length === 0 && (
-        <div className="titlebar-center">Vibe Studio</div>
+        <div className="titlebar-center">Talos</div>
       )}
 
       <div className="titlebar-right">

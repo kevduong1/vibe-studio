@@ -669,5 +669,5 @@ subscribeLspSettings(() => {
 // Dev seam — manual verification from the webview console, and a preview of
 // the future MCP integration surface.
 if (import.meta.env.DEV) {
-  (window as unknown as Record<string, unknown>).__vibeLsp = { getWorkspaceLsp };
+  (window as unknown as Record<string, unknown>).__talosLsp = { getWorkspaceLsp };
 }

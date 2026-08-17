@@ -1,6 +1,6 @@
 # Isolated agent tasks
 
-Vibe Studio can create agent-owned Git worktrees with **New Task** in the
+Talos can create agent-owned Git worktrees with **New Task** in the
 Worktrees sidebar or titlebar **+** menu.
 The checkout is an ordinary workspace, while `isolatedTasks.ts` retains the
 task identity and cleanup provenance across workspace close and app restart.
@@ -20,7 +20,7 @@ persisted, but semantic lifecycle, terminal text, prompt queues, review comment
 drafts, and child-process rows are session-only. Archive closes the workspace
 and retains the checkout and metadata. **Remove Worktree** removes the checkout
 and retains lightweight metadata under **Removed tasks**. **Delete Task Record**
-permanently removes only Vibe's metadata and review-comment drafts; the checkout
+permanently removes only Talos metadata and review-comment drafts; the checkout
 and branch remain, and parent-plan child references are pruned. Deletion is
 refused while any terminal bound to the task is live, because its shell may
 still own the task's reserved preview port. Closing a
@@ -29,17 +29,17 @@ workspace alone changes neither the task outcome nor the checkout.
 Archive exposes separate **Restore Code**, **Restore Conversation**, **Fork**,
 and **Compare Changes** actions. For Codex, Rust queries the newest local Codex
 state database read-only and returns only opaque IDs/timestamps whose exact cwd,
-branch, launch boundary, terminal, and live occupant generation match. Vibe
-Studio stores a reference only when exactly one candidate exists. Restore validates exact cwd and unarchived state,
+branch, launch boundary, terminal, and live occupant generation match. Talos
+stores a reference only when exactly one candidate exists. Restore validates exact cwd and unarchived state,
 asks first, then launches `codex --yolo resume <id>` in a terminal shell. An
 invalid, absent, or ambiguous reference opens a fresh shell with an explanation;
 the app never scrapes output, guesses, or uses `--last`.
 
 ## Creation and setup
 
-The default checkout root is `.vibe-worktrees` beside the parent repository.
+The default checkout root is `.talos-worktrees` beside the parent repository.
 The user can choose and persist another root from the creation dialog. A
-repository may provide `.vibe/worktrees.json`:
+repository may provide `.talos/worktrees.json`:
 
 ```json
 {
@@ -52,10 +52,10 @@ repository may provide `.vibe/worktrees.json`:
 `includeIgnored` is an explicit repository-relative allowlist. Absolute paths,
 `..`, and special files are rejected. Setup completes before the review
 baseline and agent launch, so dependency installation is not attributed to the
-agent. Active tasks receive a distinct `PORT` and `VIBE_TASK_ID` in their agent
+agent. Active tasks receive a distinct `PORT` and `TALOS_TASK_ID` in their agent
 shell. Control-plane cancellation is checked before Git creation and again
 before workspace opening and agent launch. If cancellation arrives while Git is
-creating the checkout, Vibe retains a recoverable task record and checkout but
+creating the checkout, Talos retains a recoverable task record and checkout but
 does not launch the agent.
 
 ## Cleanup and merge safety
@@ -71,7 +71,7 @@ rebinds every global terminal grouping whose last-workspace navigation target
 was deleted, preferring that grouping's active surviving terminal project, then
 the current workspace, then no target. A grouping can therefore never try to
 reopen a checkout removed through this flow. No task outcome deletes a branch,
-and only `created-by-vibe` provenance may offer
+and only `created-by-talos` provenance may offer
 automatic checkout removal. The Worktrees sidebar may also explicitly remove
 any linked checkout after confirmation, regardless of where it was created;
 listing the checkout alone still grants no automatic cleanup ownership.
@@ -105,7 +105,7 @@ worktree removal, and permanent task-record deletion remain separate operations.
 ## Repository worktree view
 
 The activity-bar Worktrees sidebar is repository-scoped, not a census of only
-Vibe-created tasks. On mount, manual refresh, and Git-metadata watcher events,
+Talos-created tasks. On mount, manual refresh, and Git-metadata watcher events,
 it calls `git_worktree_list` for the current workspace. Git remains the source
 of truth for the live set: the main checkout and every linked worktree appear
 even when they were created in another tool. Rows expose the checkout path,
@@ -150,7 +150,7 @@ cannot hide the dialog before its close transition completes.
 
 ## Review and prompt ownership
 
-The Worktrees sidebar's Vibe-task rows are the combined evidence surface:
+The Worktrees sidebar's Talos-task rows are the combined evidence surface:
 whole-task and latest-turn path counts, conflicts, check state, LSP diagnostics,
 commits, preview servers, agent state, and privacy-bounded child-agent
 processes. Each live task card scopes its accent to its persisted worktree
@@ -176,7 +176,7 @@ allowed only when the same terminal and occupant generation still own the task
 and the agent is idle or screen-classified as waiting on a question. Permission,
 authentication, unknown, replaced, and exited occupants reject the write.
 
-If checkpoint creation fails, Vibe Studio withholds that Enter and shows the
+If checkpoint creation fails, Talos withholds that Enter and shows the
 error. The already-typed prompt remains at the agent input so the user can fix
 the problem and retry; the app never silently submits an uncheckpointed turn.
 Programmatic queue/steer paths prepare the Git snapshot without publishing it,

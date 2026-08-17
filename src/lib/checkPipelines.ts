@@ -54,7 +54,7 @@ const autoRunAuthorized = (
 
 const trustRecord = (): Record<string, true> => {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem("vibe-studio:auto-check-trust") ?? "{}");
+    const value: unknown = JSON.parse(localStorage.getItem("talos:auto-check-trust") ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(
       Object.entries(value).filter((entry): entry is [string, true] => entry[1] === true),
@@ -72,7 +72,7 @@ export const setAutoCheckTrusted = (workspacePath: string, trusted: boolean): vo
   const value = trustRecord();
   if (trusted) value[workspacePath] = true;
   else delete value[workspacePath];
-  localStorage.setItem("vibe-studio:auto-check-trust", JSON.stringify(value));
+  localStorage.setItem("talos:auto-check-trust", JSON.stringify(value));
 };
 
 function patchNode(run: CheckRun, label: string, patch: Partial<CheckNodeRun>): CheckRun {
