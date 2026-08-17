@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentDefinitionDetectionConflict,
+  agentExecutableBasename,
   BUILTIN_AGENT_DEFINITIONS,
   BUILTIN_LAUNCH_PROFILES,
+  buildAgentDetectionRegistry,
   definitionForProfile,
   invalidEnvironmentLines,
   launchCommand,
@@ -60,5 +63,45 @@ describe("agent launch profiles", () => {
     expect(command).toContain("'--permission-mode' 'plan'");
     expect(command).not.toContain("reasoning");
     expect(command).not.toContain("sandbox");
+  });
+
+  it("registers custom executable basenames under their screen profile", () => {
+    const custom = {
+      ...BUILTIN_AGENT_DEFINITIONS[1],
+      id: "custom.acme",
+      executable: "/Applications/Agent Tools/acme-codex",
+      builtin: false,
+    };
+    expect(agentExecutableBasename(custom.executable)).toBe("acme-codex");
+    const registry = buildAgentDetectionRegistry([custom]);
+    expect(registry.kindByExecutable.get("acme-codex")).toBe("codex");
+    expect(registry.executableNames).toEqual(expect.arrayContaining(["claude", "codex", "acme-codex"]));
+  });
+
+  it("fails closed for ambiguous custom names without disabling canonical names", () => {
+    const codexAsClaude = {
+      ...BUILTIN_AGENT_DEFINITIONS[0],
+      id: "custom.bad-codex",
+      executable: "codex",
+      builtin: false,
+    };
+    const sharedClaude = {
+      ...BUILTIN_AGENT_DEFINITIONS[0],
+      id: "custom.shared-claude",
+      executable: "shared-agent",
+      builtin: false,
+    };
+    const sharedCodex = {
+      ...BUILTIN_AGENT_DEFINITIONS[1],
+      id: "custom.shared-codex",
+      executable: "/opt/tools/shared-agent",
+      builtin: false,
+    };
+    const registry = buildAgentDetectionRegistry([codexAsClaude, sharedClaude, sharedCodex]);
+    expect(registry.conflicts).toEqual(["codex", "shared-agent"]);
+    expect(registry.kindByExecutable.get("codex")).toBe("codex");
+    expect(registry.kindByExecutable.has("shared-agent")).toBe(false);
+    expect(agentDefinitionDetectionConflict(codexAsClaude, [codexAsClaude])).toContain("both Claude and Codex");
+    expect(agentDefinitionDetectionConflict(BUILTIN_AGENT_DEFINITIONS[1], [codexAsClaude])).toBeNull();
   });
 });

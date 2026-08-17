@@ -204,6 +204,20 @@ describe("agent runtime transitions", () => {
     ]);
   });
 
+  it("queries every semantic terminal for both built-in agent kinds", async () => {
+    register("a");
+    mockAgentProcessSnapshot.mockResolvedValue([{ terminalId: "a", processes: [] }]);
+
+    await pollAgentProcesses();
+
+    expect(mockAgentProcessSnapshot).toHaveBeenCalledWith([
+      expect.objectContaining({
+        terminalId: "a",
+        executableNames: expect.arrayContaining(["claude", "codex"]),
+      }),
+    ]);
+  });
+
   it("exposes additional matching processes as generation-owned read-only subagents", () => {
     register("a");
     applyAgentProcessSnapshot("a", [
@@ -234,11 +248,85 @@ describe("agent runtime transitions", () => {
       { pid: 22, parentPid: 1, parentAgentPid: null, rootAgentPid: 22, executable: "codex", foreground: true },
     ], 0);
     expect(state("shell")).toMatchObject({
+      requestedKind: null,
       kind: "codex",
       occupancy: "present",
       occupantPid: 22,
       generation: 1,
     });
+  });
+
+  it("detects Codex inside a dedicated Claude tab and restores the tab default on exit", () => {
+    register("a");
+    applyAgentProcessSnapshot("a", [
+      { pid: 31, parentPid: 1, parentAgentPid: null, rootAgentPid: 31, executable: "codex", foreground: true },
+    ], 0);
+    expect(state("a")).toMatchObject({
+      requestedKind: "claude",
+      kind: "codex",
+      occupancy: "present",
+      occupantPid: 31,
+      generation: 1,
+    });
+
+    applyAgentProcessSnapshot("a", [], 1);
+    expect(state("a")).toMatchObject({
+      requestedKind: "claude",
+      kind: "claude",
+      occupancy: "absent",
+      occupantPid: undefined,
+      generation: 1,
+    });
+  });
+
+  it("detects Claude inside a dedicated Codex tab", () => {
+    ids.add("codex-tab");
+    registerAgentRuntime({
+      terminalId: "codex-tab",
+      workspacePath: "/repo/a",
+      scope: "global",
+      kind: "codex",
+    });
+    applyAgentProcessSnapshot("codex-tab", [
+      { pid: 35, parentPid: 1, parentAgentPid: null, rootAgentPid: 35, executable: "claude", foreground: true },
+    ], 0);
+    expect(state("codex-tab")).toMatchObject({
+      requestedKind: "codex",
+      kind: "claude",
+      occupancy: "present",
+      occupantPid: 35,
+      generation: 1,
+    });
+  });
+
+  it("treats a same-PID kind change as a replacement generation", () => {
+    register("a");
+    applyAgentProcessSnapshot("a", [
+      { pid: 41, parentPid: 1, parentAgentPid: null, rootAgentPid: 41, executable: "claude", foreground: true },
+    ], 0);
+    screen("a", "working", false, { matchedRule: "claude.work" });
+    applyAgentProcessSnapshot("a", [
+      { pid: 41, parentPid: 1, parentAgentPid: null, rootAgentPid: 41, executable: "codex", foreground: true },
+    ], 1);
+    expect(state("a")).toMatchObject({
+      kind: "codex",
+      occupantPid: 41,
+      generation: 2,
+      lifecycle: "unknown",
+      matchedRule: undefined,
+    });
+  });
+
+  it("detects a custom executable using its registered profile", () => {
+    register("a");
+    applyAgentProcessSnapshot("a", [
+      { pid: 51, parentPid: 1, parentAgentPid: null, rootAgentPid: 51, executable: "acme-agent", foreground: true },
+    ], 0, {
+      executableNames: ["acme-agent"],
+      kindByExecutable: new Map([["acme-agent", "codex"]]),
+      conflicts: [],
+    });
+    expect(state("a")).toMatchObject({ kind: "codex", occupantPid: 51, generation: 1 });
   });
 
   it("uses unknown rather than false absence on process-query failure", () => {
@@ -251,6 +339,14 @@ describe("agent runtime transitions", () => {
       generation: 1,
     });
     expect(displayAgentState(state("a"))).toBe("unknown");
+  });
+
+  it("keeps proven absence absent during a process-query failure", () => {
+    register("a");
+    const changedAt = state("a").changedAt;
+    markAgentProcessQueryFailed(["a"]);
+    expect(state("a")).toMatchObject({ occupancy: "absent", changedAt });
+    expect(selectTerminalRollup(useAgentRuntimeStore.getState(), ["a"])).toBeNull();
   });
 
   it("restores the same PID after a query failure without replacing its generation", () => {

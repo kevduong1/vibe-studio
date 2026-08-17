@@ -3,6 +3,7 @@ import { lspResolve } from "../lib/ipc";
 import { openGlobalTerminal } from "../lib/agentSessions";
 import { openWorkspaceTerminal } from "../lib/workspaceSessions";
 import {
+  agentDefinitionDetectionConflict,
   allLaunchProfiles,
   definitionForProfile,
   invalidEnvironmentLines,
@@ -40,6 +41,9 @@ export default function AgentLaunchDialog({
   );
   const launched = useRef(false);
   const definition = draft ? definitionForProfile(draft) : null;
+  const detectionConflict = definition
+    ? agentDefinitionDetectionConflict(definition)
+    : null;
   const built = definition && draft ? launchCommand(definition, draft) : null;
   const invalidEnvironment = invalidEnvironmentLines(environmentText);
 
@@ -57,6 +61,10 @@ export default function AgentLaunchDialog({
       setHealth("missing");
       return;
     }
+    if (detectionConflict) {
+      setHealth("missing");
+      return;
+    }
     let cancelled = false;
     setHealth("checking");
     void lspResolve(definition.executable, [], false).then(
@@ -64,7 +72,7 @@ export default function AgentLaunchDialog({
       () => !cancelled && setHealth("missing"),
     );
     return () => { cancelled = true; };
-  }, [definition?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [definition?.id, detectionConflict]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!draft) return null;
 
@@ -74,6 +82,7 @@ export default function AgentLaunchDialog({
       launched.current ||
       !definition ||
       !built ||
+      detectionConflict ||
       health !== "available" ||
       invalidEnvironment.length > 0
     ) return;
@@ -121,7 +130,9 @@ export default function AgentLaunchDialog({
           <div className="agent-launch-error">This profile’s agent definition is missing. Select or repair the profile; it will not be changed to another agent.</div>
         ) : (
           <>
-            <div className={`agent-launch-health ${health}`}>{definition.name} · {health}</div>
+            <div className={`agent-launch-health ${health}`}>
+              {definition.name} · {detectionConflict ?? health}
+            </div>
             <div className="agent-launch-grid">
               {definition.capabilities.models && <label>Model<input value={draft.model ?? ""} placeholder="Agent default" onChange={(event) => patch({ model: event.target.value || null })} /></label>}
               {definition.capabilities.reasoning && <label>Reasoning<input value={draft.reasoning ?? ""} placeholder="Agent default" onChange={(event) => patch({ reasoning: event.target.value || null })} /></label>}
@@ -153,7 +164,7 @@ export default function AgentLaunchDialog({
         )}
         <div className="agent-launch-actions">
           <button onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={!definition || health !== "available" || invalidEnvironment.length > 0} onClick={launch}>Launch</button>
+          <button className="primary" disabled={!definition || Boolean(detectionConflict) || health !== "available" || invalidEnvironment.length > 0} onClick={launch}>Launch</button>
         </div>
       </div>
     </div>

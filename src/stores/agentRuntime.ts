@@ -4,7 +4,11 @@ import {
   type AgentProcessInfo,
   type AgentProcessTarget,
 } from "../lib/ipc";
-import { AGENT_PROFILES, type ScreenClassification } from "../lib/agentProfiles";
+import type { ScreenClassification } from "../lib/agentProfiles";
+import {
+  buildAgentDetectionRegistry,
+  type AgentDetectionRegistry,
+} from "./agentDefinitions";
 import {
   displayAgentState,
   rollupAgentStates,
@@ -68,9 +72,6 @@ export interface AgentSemanticTransition {
 }
 
 const fallbacks = new Map<string, FallbackSignal>();
-/** Plain-shell tabs participate in process discovery without claiming a
- * requested agent identity until an exact executable match is present. */
-const discoveryTerminals = new Set<string>();
 /**
  * Whether a work stretch has been observed for this occupant since it last
  * settled. Unseen **Done** is derived from this, not from the immediately
@@ -310,6 +311,7 @@ export function registerAgentRuntime(meta: {
   const { discovery, ...runtimeMeta } = meta;
   replaceState(meta.terminalId, {
     ...runtimeMeta,
+    requestedKind: discovery ? null : meta.kind,
     occupancy: "absent",
     generation: 0,
     lifecycle: "unknown",
@@ -317,13 +319,11 @@ export function registerAgentRuntime(meta: {
     changedAt: Date.now(),
   });
   setFallback(meta.terminalId, { busy: false, attention: false }, false);
-  if (discovery) discoveryTerminals.add(meta.terminalId);
   ensureMonitor();
 }
 
 export function unregisterAgentRuntime(terminalId: string): void {
   fallbacks.delete(terminalId);
-  discoveryTerminals.delete(terminalId);
   forgetTerminal(terminalId);
   replaceSubagents(terminalId, undefined, []);
   replaceState(terminalId, undefined);
@@ -339,6 +339,7 @@ export function markAgentLaunching(terminalId: string): void {
   replaceState(
     terminalId,
     changed(current, {
+      kind: current.requestedKind ?? current.kind,
       occupancy: "starting",
       occupantPid: undefined,
       lifecycle: "unknown",
@@ -590,6 +591,7 @@ export function applyAgentProcessResult(
   terminalId: string,
   pid: number | undefined,
   queryGeneration: number,
+  detectedKind?: AgentKind,
 ): void {
   const current = useAgentRuntimeStore.getState().states[terminalId];
   if (
@@ -613,6 +615,7 @@ export function applyAgentProcessResult(
     replaceState(
       terminalId,
       changed(current, {
+        kind: current.requestedKind ?? current.kind,
         occupancy: "absent",
         occupantPid: undefined,
         lifecycle: "unknown",
@@ -628,7 +631,8 @@ export function applyAgentProcessResult(
   // but retains the last-known PID. Seeing that same PID again restores the
   // existing occupant; it must not mint a new generation (which would
   // invalidate generation-owned prompts, task evidence, and notifications).
-  if (current.occupantPid === pid) {
+  const occupantKind = detectedKind ?? current.kind;
+  if (current.occupantPid === pid && current.kind === occupantKind) {
     if (current.occupancy !== "present") {
       replaceState(terminalId, masked(current, "present"));
     }
@@ -649,6 +653,7 @@ export function applyAgentProcessResult(
   completionSeen.delete(terminalId);
   const next: AgentRuntimeState = {
     ...current,
+    kind: occupantKind,
     occupancy: "present",
     occupantPid: pid,
     generation: current.generation + 1,
@@ -672,6 +677,7 @@ export function applyAgentProcessSnapshot(
   terminalId: string,
   processes: AgentProcessInfo[],
   queryGeneration: number,
+  registry: AgentDetectionRegistry = buildAgentDetectionRegistry(),
 ): void {
   const current = useAgentRuntimeStore.getState().states[terminalId];
   if (
@@ -679,12 +685,8 @@ export function applyAgentProcessSnapshot(
     current.generation !== queryGeneration ||
     current.occupancy === "exited"
   ) return;
-  const discovery = discoveryTerminals.has(terminalId);
-  const candidateNames = discovery
-    ? ([...AGENT_PROFILES.claude.executableNames, ...AGENT_PROFILES.codex.executableNames] as string[])
-    : [...AGENT_PROFILES[current.kind].executableNames];
   const matches = processes
-    .filter((process) => candidateNames.includes(process.executable))
+    .filter((process) => registry.kindByExecutable.has(process.executable))
     .sort((a, b) => Number(b.foreground) - Number(a.foreground) || a.pid - b.pid);
   const roots = matches.filter((process) => process.parentAgentPid == null);
   const primary = roots.sort((a, b) => {
@@ -693,18 +695,16 @@ export function applyAgentProcessSnapshot(
     return Number(bForeground) - Number(aForeground) || a.pid - b.pid;
   })[0];
   const discoveredKind = primary
-    ? (AGENT_PROFILES.codex.executableNames.includes(primary.executable) ? "codex" : "claude")
-    : current.kind;
-  if (discovery && primary && current.kind !== discoveredKind) {
-    replaceState(terminalId, changed(current, { kind: discoveredKind }));
-  }
-  applyAgentProcessResult(terminalId, primary?.pid, queryGeneration);
+    ? registry.kindByExecutable.get(primary.executable)
+    : undefined;
+  applyAgentProcessResult(terminalId, primary?.pid, queryGeneration, discoveredKind);
   replaceSubagents(
     terminalId,
     primary?.pid,
     matches.filter((process) =>
       process.rootAgentPid === primary?.pid &&
-      AGENT_PROFILES[discoveredKind].executableNames.includes(process.executable),
+      discoveredKind !== undefined &&
+      registry.kindByExecutable.get(process.executable) === discoveredKind,
     ),
   );
 }
@@ -712,11 +712,7 @@ export function applyAgentProcessSnapshot(
 export function markAgentProcessQueryFailed(terminalIds: readonly string[]): void {
   for (const id of terminalIds) {
     const current = useAgentRuntimeStore.getState().states[id];
-    if (!current || current.occupancy === "exited") continue;
-    // A launch in progress has no occupant to mask and owns a grace window
-    // the mask would spend: leave it starting so the next clean no-match
-    // snapshot still has to wait the launch out before declaring absence.
-    if (current.occupancy === "starting") continue;
+    if (!current || current.occupancy !== "present") continue;
     // Keep last-known identity and lifecycle metadata while authority is
     // unavailable. occupancy=unknown suppresses their presentation, and a
     // later successful snapshot can prove whether this is the same occupant
@@ -732,14 +728,10 @@ export async function pollAgentProcesses(): Promise<void> {
     .filter((state) => state.occupancy !== "exited");
   if (states.length === 0) return;
   polling = true;
+  const registry = buildAgentDetectionRegistry();
   const targets: AgentProcessTarget[] = states.map((state) => ({
     terminalId: state.terminalId,
-    executableNames: discoveryTerminals.has(state.terminalId)
-      ? [...new Set([
-          ...AGENT_PROFILES.claude.executableNames,
-          ...AGENT_PROFILES.codex.executableNames,
-        ])]
-      : [...AGENT_PROFILES[state.kind].executableNames],
+    executableNames: registry.executableNames,
   }));
   const generations = new Map(states.map((state) => [state.terminalId, state.generation]));
   try {
@@ -751,6 +743,7 @@ export async function pollAgentProcesses(): Promise<void> {
         state.terminalId,
         snapshot?.processes ?? [],
         generations.get(state.terminalId)!,
+        registry,
       );
     }
   } catch {

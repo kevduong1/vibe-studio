@@ -19,6 +19,11 @@ export interface AgentRuntimeState {
   terminalId: string;
   workspacePath: string;
   scope: "global" | "workspace";
+  /** Stable launch/default identity for a dedicated tab; plain shells have
+   * no requested identity and discover whichever supported agent is live. */
+  requestedKind: AgentKind | null;
+  /** The detected occupant kind while process authority is present (or
+   * temporarily masked), otherwise the dedicated tab's requested fallback. */
   kind: AgentKind;
   occupancy: AgentOccupancy;
   occupantPid?: number;
@@ -133,6 +138,9 @@ export const agentStateTooltip = (state: AgentRuntimeState): string => {
   const lines = [
     `${state.kind === "claude" ? "Claude" : "Codex"} — ${displayLabel(display)}`,
   ];
+  if (state.requestedKind && state.requestedKind !== state.kind) {
+    lines.push(`Tab default: ${state.requestedKind === "claude" ? "Claude" : "Codex"}`);
+  }
   if (state.reason) lines.push(`Reason: ${reasonLabel(state.reason)}`);
   if (state.authority) lines.push(`Authority: ${state.authority}`);
   lines.push(`Changed: ${new Date(state.changedAt).toLocaleString()}`);

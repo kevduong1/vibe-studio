@@ -7,10 +7,13 @@ discovered in plain shell tabs in both terminal docks.
 ## Scope
 
 Vibe Studio distinguishes the requested tab kind from the process currently
-inside it. A tab created for Claude may contain Claude, may be starting Claude,
-or may have returned to an ordinary shell after Claude exits. Plain shell tabs
-opt into process discovery and acquire a dynamic Claude/Codex identity only
-while an exact supported executable is their PTY descendant.
+inside it. A tab created for Claude may contain Claude or Codex, may be starting
+Claude, or may have returned to an ordinary shell after either agent exits.
+Its saved icon remains Claude because that is its launch/default identity;
+semantic classification and generation ownership follow the detected process.
+Plain shell tabs have no requested identity and acquire a dynamic
+Claude/Codex identity only while an exact supported executable is their PTY
+descendant.
 
 Runtime state is ephemeral. Global tab metadata and layouts persist, but PTYs
 and semantic state do not. After an app restart, restored agent tabs open as
@@ -21,11 +24,16 @@ fresh shells and correctly show **No Agent** until an agent is launched.
 `src/lib/agentState.ts` defines the public model:
 
 - `occupancy`: `absent | starting | present | exited | unknown`
+- `requestedKind`: the dedicated tab's stable launch identity, or `null` for a
+  discovery-only shell
+- `kind`: the detected occupant profile while present/masked, otherwise the
+  requested fallback for a dedicated tab
 - `lifecycle`: `working | blocked | idle | unknown`
 - `seen`: whether the current blocked/completed state has been viewed
 - `authority`: `screen | osc | activity`
 - optional structured `reason` and diagnostic `matchedRule`
-- `generation`: incremented when an agent process appears or its PID changes
+- `generation`: incremented when an agent appears or its PID/detected kind
+  changes
 
 Presentation is derived, never stored. In particular, **Done** means a present
 agent is `lifecycle === "idle"` with `seen === false`; the store (below) only
@@ -57,15 +65,19 @@ IDs. The Rust backend:
 1. Reads each PTY's shell PID and foreground process group.
 2. Runs one `ps` snapshot.
 3. Groups descendants under the correct shell.
-4. Matches exact executable basenames from the typed Claude/Codex profiles.
+4. Matches exact executable basenames from the typed Claude/Codex profiles and
+   every valid custom definition. All semantic terminals receive the same
+   registry, regardless of their requested tab kind.
 5. Returns only PID, parent/root matching-agent PIDs, executable basename, and
    foreground membership—never arguments or environment.
 
 A successful query with no match means `absent`, unless the terminal is still
 inside its launch grace (below), in which case it stays `starting` — the grace
 already owns that window and a masked `unknown` would only spend it early. A
-query failure on an otherwise-present occupant means `unknown`; it must never
-manufacture a false absence. The runtime retains the last-known PID,
+query failure on an otherwise-present occupant means `unknown`; proven
+`absent`, `starting`, and `exited` states remain unchanged, so an unavailable
+query cannot manufacture an Idle rollup for an empty terminal. The runtime
+retains the last-known PID,
 generation, child-process rows, and lifecycle evidence while the query
 authority is unavailable. This masking/unmasking of `occupancy` is bookkeeping,
 not a semantic change, so it deliberately never restamps `changedAt` — doing so
@@ -73,11 +85,22 @@ would reorder the inbox's waiting age and restart age-based graces for no real
 transition. Rediscovering that same PID restores the existing occupant without
 replacing its generation and immediately reclassifies the bounded screen tail,
 including output parsed during the outage. A process result that was already
-in flight cannot overwrite the stronger fact that the owning PTY exited.
-Unsupported platforms degrade to `unknown`. The process-table parser treats
+in flight cannot overwrite the stronger fact that the owning PTY exited. The
+`ps` child is bounded to two seconds, drained concurrently, and killed/reaped
+on timeout so the frontend poll guard always recovers. Unsupported platforms
+return the same query-failure path and retain last-known occupancy. The
+process-table parser treats
 the complete final `comm` column as the executable path, including spaces.
 Generation checks reject delayed screen results from a previous agent
 occupant.
+
+The detection registry always retains canonical Claude/Codex mappings. A
+custom definition contributes the basename of its configured executable and
+maps it to the definition's screen profile. Duplicate custom names using the
+same profile coalesce. A custom name assigned to both profiles is excluded;
+a custom definition that contradicts a canonical name is rejected while the
+canonical mapping remains active. Integrations and the launch sheet surface
+these conflicts instead of guessing.
 
 Fresh launches call `markAgentLaunching()` before typing `claude` or
 `codex --yolo` into the shell, which gives the tab up to 4 s (measured from the
@@ -279,8 +302,12 @@ replaces agent identity:
 | No Agent | Terminal icon |
 
 Pane badges add textual **Working**, **Needs Input**, or **Done**, so status is
-not color-only. Tooltips contain agent kind, state, reason, authority,
-transition time, and matched rule ID. Workspace tabs, workspace families,
+not color-only. Tooltips contain detected agent kind, requested tab default
+when it differs, state, reason, authority, transition time, and matched rule
+ID. Codex's default OSC title activity frame continues to feed generic
+activity detection, but presentation removes its braille frame and suppresses
+a redundant project-only remainder; any nonredundant metadata remains visible.
+Workspace tabs, workspace families,
 global grouping tabs, and the hidden-panel indicator roll up with priority:
 
 `blocked > done > working (includes starting) > idle (includes unknown)`
