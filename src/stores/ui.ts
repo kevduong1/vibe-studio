@@ -1,7 +1,14 @@
 import { create } from "zustand";
 import { useWorkspacesStore } from "./workspaces";
 
-export type SidebarTab = "explorer" | "search" | "scm" | "memories" | "tasks";
+export type SidebarTab =
+  | "sessions"
+  | "explorer"
+  | "search"
+  | "scm"
+  | "memories"
+  | "tasks";
+export type AgentSessionsView = "all" | "attention";
 /** Bottom-panel sides: per-workspace terminals vs the global terminal
  *  groupings (which grouping is in front lives in stores/agentTerminals). */
 export type PanelGroup = "terminal" | "agent";
@@ -10,6 +17,10 @@ interface UiState {
   sidebarTab: SidebarTab;
   sidebarVisible: boolean;
   sidebarWidth: number;
+  /** Session-only controls for the global Agent Sessions sidebar. Keeping
+      them above the component preserves the view across activity-tab swaps. */
+  agentSessionsView: AgentSessionsView;
+  agentSessionsQuietExpanded: boolean;
   panelVisible: boolean;
   panelHeight: number;
   panelGroup: PanelGroup;
@@ -34,6 +45,11 @@ interface UiState {
   nativeOverlayDepth: number;
 
   setSidebarTab: (tab: SidebarTab) => void;
+  /** Reveal the global sessions view without the activity-button toggle
+      behavior. Used by shortcuts and other global entry points. */
+  showAgentSessions: () => void;
+  setAgentSessionsView: (view: AgentSessionsView) => void;
+  toggleAgentSessionsQuiet: () => void;
   /** ⌘⇧F: reveal the sidebar on the search tab and focus the query input.
       (setSidebarTab would TOGGLE the sidebar closed when already there.) */
   showSearch: () => void;
@@ -66,6 +82,8 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarTab: "scm",
   sidebarVisible: true,
   sidebarWidth: 320,
+  agentSessionsView: "all",
+  agentSessionsQuietExpanded: true,
   panelVisible: true,
   panelHeight: 280,
   panelGroup: "terminal",
@@ -82,6 +100,13 @@ export const useUiStore = create<UiState>((set) => ({
         ? { sidebarVisible: false }
         : { sidebarTab: tab, sidebarVisible: true },
     ),
+  showAgentSessions: () =>
+    set({ sidebarTab: "sessions", sidebarVisible: true }),
+  setAgentSessionsView: (agentSessionsView) => set({ agentSessionsView }),
+  toggleAgentSessionsQuiet: () =>
+    set((state) => ({
+      agentSessionsQuietExpanded: !state.agentSessionsQuietExpanded,
+    })),
   showSearch: () =>
     set((s) => ({
       sidebarTab: "search",

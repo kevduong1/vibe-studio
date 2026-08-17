@@ -1,4 +1,11 @@
-import { lazy, Suspense, useEffect, useState, type CSSProperties } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useStore } from "zustand";
 import { message, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -26,6 +33,7 @@ import type { AgentLaunchProfile } from "./stores/agentDefinitions";
 import Titlebar from "./components/Titlebar";
 import StatusBar from "./components/StatusBar";
 import FileExplorer from "./components/FileExplorer";
+import AgentSessionsPanel from "./components/AgentSessionsPanel";
 import SearchPanel from "./components/SearchPanel";
 import SourceControl from "./components/SourceControl";
 import MemoriesPanel from "./components/MemoriesPanel";
@@ -45,6 +53,11 @@ import { listenAgentNotificationActivations } from "./lib/agentInbox";
 import { listenNativeAgentSessionCapture } from "./lib/nativeAgentSessions";
 import { listenAgentControlPlane } from "./lib/agentControlPlane";
 import { saveDirtyTabs } from "./lib/editorBuffers";
+import { useAgentRuntimeStore } from "./stores/agentRuntime";
+import {
+  agentAttentionTier,
+  useAgentTasksStore,
+} from "./stores/agentTasks";
 
 const SettingsModal = lazy(() => import("./components/SettingsModal"));
 const AgentLaunchDialog = lazy(() => import("./components/AgentLaunchDialog"));
@@ -57,47 +70,75 @@ function ActivityBar() {
   const sidebarTab = useUiStore((s) => s.sidebarTab);
   const sidebarVisible = useUiStore((s) => s.sidebarVisible);
   const setSidebarTab = useUiStore((s) => s.setSidebarTab);
+  const runtimes = useAgentRuntimeStore((state) => state.states);
+  const tasks = useAgentTasksStore((state) => state.tasks);
+  const actionableCount = useMemo(
+    () => Object.values(runtimes).filter(
+      (runtime) => agentAttentionTier(runtime, tasks[runtime.terminalId]) <= 3,
+    ).length,
+    [runtimes, tasks],
+  );
   const active = (tab: string) => sidebarVisible && sidebarTab === tab;
 
   return (
-    <div className="activity-bar">
+    <nav className="activity-bar" aria-label="Sidebar views">
       <button
+        className={`activity-btn ${active("sessions") ? "active" : ""}`}
+        title="Agent Sessions (⌘⇧I) · Global"
+        aria-label={`Agent Sessions, global${actionableCount ? `, ${actionableCount} need attention` : ""}`}
+        aria-pressed={active("sessions")}
+        onClick={() => setSidebarTab("sessions")}
+      >
+        <IcSparkle />
+        {actionableCount > 0 && (
+          <span className="badge attention" aria-hidden="true">
+            {actionableCount > 99 ? "99+" : actionableCount}
+          </span>
+        )}
+      </button>
+      {ws && <div className="activity-divider" role="separator" aria-orientation="horizontal" />}
+      {ws && <button
         className={`activity-btn ${active("explorer") ? "active" : ""}`}
         title="Explorer"
+        aria-pressed={active("explorer")}
         onClick={() => setSidebarTab("explorer")}
       >
         <IcFile />
-      </button>
-      <button
+      </button>}
+      {ws && <button
         className={`activity-btn ${active("tasks") ? "active" : ""}`}
         title="Git Worktrees"
+        aria-pressed={active("tasks")}
         onClick={() => setSidebarTab("tasks")}
       >
         <IcTree />
-      </button>
-      <button
+      </button>}
+      {ws && <button
         className={`activity-btn ${active("search") ? "active" : ""}`}
         title="Search (⌘⇧F)"
+        aria-pressed={active("search")}
         onClick={() => setSidebarTab("search")}
       >
         <IcSearch />
-      </button>
-      <button
+      </button>}
+      {ws && <button
         className={`activity-btn ${active("scm") ? "active" : ""}`}
         title="Source Control"
+        aria-pressed={active("scm")}
         onClick={() => setSidebarTab("scm")}
       >
         <IcBranch />
-        {ws && <ChangeCountBadge ws={ws} />}
-      </button>
-      <button
+        <ChangeCountBadge ws={ws} />
+      </button>}
+      {ws && <button
         className={`activity-btn ${active("memories") ? "active" : ""}`}
         title="Project Memories (Claude & Codex)"
+        aria-pressed={active("memories")}
         onClick={() => setSidebarTab("memories")}
       >
         <IcBrain />
-      </button>
-    </div>
+      </button>}
+    </nav>
   );
 }
 
@@ -470,6 +511,7 @@ export default function App() {
   }, [togglePanel, toggleSidebar]);
 
   const hasWorkspaces = workspaces.length > 0;
+  const sidebarTab = useUiStore((s) => s.sidebarTab);
   const sidebarVisible = useUiStore((s) => s.sidebarVisible);
   const sidebarWidth = useUiStore((s) => s.sidebarWidth);
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth);
@@ -492,16 +534,20 @@ export default function App() {
     <div className="app" style={accentStyle}>
       <Titlebar />
       <div className="app-main">
-        {hasWorkspaces && <ActivityBar />}
+        <ActivityBar />
         {/* Sidebar spans the full app height; the bottom panel sits beside
             it, under the editor column only. */}
-        {hasWorkspaces && sidebarVisible && (
+        {sidebarVisible && (hasWorkspaces || sidebarTab === "sessions") && (
           <div className="app-sidebar" style={{ width: sidebarWidth }}>
-            {workspaces.map((ws) => (
-              <WorkspaceContext.Provider key={ws.path} value={ws}>
-                <WorkspaceSidebarContent visible={ws.path === activePath} />
-              </WorkspaceContext.Provider>
-            ))}
+            {sidebarTab === "sessions" ? (
+              <AgentSessionsPanel />
+            ) : (
+              workspaces.map((ws) => (
+                <WorkspaceContext.Provider key={ws.path} value={ws}>
+                  <WorkspaceSidebarContent visible={ws.path === activePath} />
+                </WorkspaceContext.Provider>
+              ))
+            )}
             <Resizer
               direction="vertical"
               onDelta={(d) =>

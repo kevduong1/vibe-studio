@@ -81,7 +81,7 @@ retains the last-known PID,
 generation, child-process rows, and lifecycle evidence while the query
 authority is unavailable. This masking/unmasking of `occupancy` is bookkeeping,
 not a semantic change, so it deliberately never restamps `changedAt` — doing so
-would reorder the inbox's waiting age and restart age-based graces for no real
+would reorder Agent Sessions' waiting age and restart age-based graces for no real
 transition. Rediscovering that same PID restores the existing occupant without
 replacing its generation and immediately reclassifies the bounded screen tail,
 including output parsed during the outage. A process result that was already
@@ -324,10 +324,16 @@ the bottom, so a set containing only absent (or no) agents rolls up to `null`,
 never a false `idle`. Chrome treats `null` as no badge — a terminal that never
 held an agent must not present as a quiet one.
 
-The titlebar also owns a global inbox over both docks. It preserves semantic
-ordering, routes to the exact workspace/group/tab/session, and projects review
-state beside (never into) lifecycle state. Task ownership, review evidence,
-checks, and context-peek privacy are specified in
+The activity rail's top, global section opens **Agent Sessions** over both
+docks; workspace-scoped Explorer, Worktrees, Search, Source Control, and
+Memories live below a divider. The view remains available with no workspace
+open, preserves stable live-session sections, routes to the exact
+workspace/group/tab/session, and projects review state beside (never into)
+lifecycle state. An attention filter and badge reuse the strict semantic
+ordering, while active and quiet rows retain stable registration order. The
+titlebar shortcut and ⌘⇧I reveal this view; detailed review/check controls remain
+available through its review action. Task ownership, review evidence, checks,
+and context-peek privacy are specified in
 [`attention-review.md`](attention-review.md).
 
 The frontend synchronizes this same privacy-bounded semantic snapshot into
@@ -358,7 +364,8 @@ Alert edge selection is pure and tested in `src/lib/agentState.test.ts`.
 The retained macOS delegate also handles notification responses. The terminal
 identifier is emitted through a typed activation event after focusing the main
 window; one early click is queued until the frontend listener reports ready.
-Stale identifiers open the inbox with a nonfatal explanation.
+Stale identifiers open the Agent Sessions/review surface with a nonfatal
+explanation.
 
 ## PTY environment boundary
 

@@ -64,12 +64,14 @@ Current limits:
   plans, terminal recipes, and opaque native-session references persist.
 - PTYs still belong to the app process and do not survive application exit.
 
-## Next: attention and review inbox
+## Shipped: Agent Sessions and review
 
 This is the smallest feature that turns semantic state into a workflow.
 
-- [x] Add a global inbox ordered by Needs Input, checks failed, Done/ready for
-  review, Working, then idle.
+- [x] Add a persistent global Agent Sessions activity item above a divider from
+  workspace tools, with attention / active / quiet live-session sections.
+- [x] Keep strict Needs Input, checks failed, and Done/ready-for-review ordering
+  inside Attention while active and quiet sessions retain stable list order.
 - [x] Include both terminal docks and related-workspace families.
 - [x] Show agent, project, current topic, reason, elapsed time, and current
   task/review state without exposing raw terminal output by default.

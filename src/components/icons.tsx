@@ -380,7 +380,7 @@ export const IcBell = (props: IconProps) => (
     <path d="M9.2 13.5a1.3 1.3 0 0 1-2.4 0" />
   </Svg>
 );
-/** Inbox tray — global agent attention and review queue. */
+/** Inbox tray — global Agent Sessions and detailed review. */
 export const IcInbox = (props: IconProps) => (
   <Svg {...props}>
     <path d="M2.5 3.5h11l1 7.5a1.5 1.5 0 0 1-1.5 1.7H3A1.5 1.5 0 0 1 1.5 11z" />

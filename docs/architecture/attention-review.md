@@ -1,6 +1,6 @@
-# Attention inbox and owned review checks
+# Agent sessions and owned review checks
 
-This document defines Talos' session-only agent task, review, inbox,
+This document defines Talos' session-only agent task, review, Agent Sessions,
 and check-pipeline behavior. Semantic occupancy/lifecycle remains defined by
 [`agent-runtime.md`](agent-runtime.md).
 
@@ -22,7 +22,7 @@ acceptance evidence.
 The semantic runtime store can survive a frontend hot reload that recreates the
 session-only task store. On module initialization, every currently detected
 agent generation without a matching task is reconciled as a late-baseline task;
-the inbox shows an initializing message during capture instead of silently
+the review detail shows an initializing message during capture instead of silently
 hiding review and check controls.
 
 Tasks contain workspace/scope, optional persistent isolated-task identity,
@@ -40,7 +40,7 @@ then available for exactly that fingerprint and only records a session-local
 decision. Navigation, review acknowledgement, and acceptance are all
 generation/fingerprint-pinned, so an async refresh cannot acknowledge newer
 evidence. **Needs changes** uses the same compare-and-set rule, including when
-invoked from a stale rendered inbox row. Passing checks are visible evidence but never enable or disable
+invoked from a stale rendered session row. Passing checks are visible evidence but never enable or disable
 Accept. Needs changes and Accept neither send text nor mutate Git. A later
 repository fingerprint turns an accepted decision into `stale`; reviewing the
 new fingerprint enables acceptance again. Occupant generations replace all
@@ -66,11 +66,11 @@ times. Only metadata and the digest enter the store.
 Per-terminal request sequences prevent an older refresh from overwriting newer
 evidence. Concurrent tasks with the same workspace and baseline share an
 in-flight snapshot instead of re-reading the tree. `lastRefreshedAt` is separate
-from `attentionSince`: a no-op refresh (including opening the inbox) does not
+from `attentionSince`: a no-op refresh (including opening review detail) does not
 reset elapsed age or oldest-first ordering.
 
 Evidence refreshes at task creation, repo watcher events, working→idle turn
-completion, inbox/detail opening, check start/completion, and acceptance.
+completion, review-detail opening, check start/completion, and acceptance.
 For prompt-owned user turns, Enter waits for `git_checkpoint_snapshot`: a
 private temporary index writes an unreachable tree without touching the real
 index. The tree and opaque per-path fingerprints are captured under one shared
@@ -106,34 +106,44 @@ logical xterm lines and 4,096 characters. Plaintext exists only in the mounted d
 component, supports refresh/hide, and is never logged, persisted, or copied into
 runtime/task/check stores.
 
-## Inbox and navigation
+## Agent Sessions and navigation
 
-The titlebar inbox aggregates registered agent sessions from both docks.
-Attention contains actionable items; All includes the remainder. Blocked always
-wins. Ordering is Needs Input; conflicts/current failed checks;
+The top, global activity-rail item opens a persistent Agent Sessions sidebar
+that aggregates registered live sessions from both docks, including while no
+workspace is open. The activity rail separates this global item from
+workspace-scoped views with a divider. **All** groups actionable, active, and
+quiet rows; active/quiet rows retain stable registration order so normal
+activity does not move the user's target. **Attention** contains only
+actionable items and uses the strict queue order: Needs Input;
+conflicts/current failed checks;
 Done/Unreviewed/Reviewed/Approval Stale; Working/Starting; then
 Feedback/Clean/Accepted/Idle/Unknown/No Agent. Ties use oldest stable attention
-time, project, terminal title, and terminal ID.
+time, project, terminal title, and terminal ID. The activity icon carries the
+actionable count without collapsing lifecycle and review into one state.
 
 All entry points call `focusAgentTerminal(id)`. Workspace terminals activate
 their open workspace, Project Terminals panel, dock group, and exact tab. Global
 terminals reopen/switch projects as needed, activate the owning global grouping
-and exact tab, then focus and acknowledge. Stale IDs leave the inbox open with
-an explanation. ⌘⌥↓/↑ cycle actionable entries circularly.
+and exact tab, then focus and acknowledge. Merely opening Agent Sessions never
+acknowledges every row. A stale row leaves a nonfatal explanation in the view.
+⌘⌥↓/↑ cycle actionable entries circularly.
 
 Review changes calls `reviewAgentChanges(id)`: it opens or activates the owning
 project, reveals Source Control, and opens the first current worktree/index diff
 when available. Committed changes remain reachable from the commit graph. The
-action records the exact opened fingerprint and closes the inbox so the diff is
-visible. Returning to the inbox exposes an explicit **Mark reviewed** action
-only while that same generation and fingerprint remain current.
+action records the exact opened fingerprint and closes the detailed review
+overlay so the diff is visible. Returning to review detail exposes an explicit
+**Mark reviewed** action only while that same generation and fingerprint remain
+current.
 
-The popover participates in the native-overlay counter so preview webviews hide.
-It has dialog/listbox semantics, roving selection, visible focus, text labels in
-addition to color, Escape/outside dismissal, and ⌘⇧I activation. Each row's
+The sidebar is ordinary persistent navigation and does not participate in the
+native-overlay counter. Its review action opens the existing detailed overlay,
+which does hide preview webviews and keeps dialog/listbox semantics, roving
+selection, visible focus, text labels in addition to color, and Escape/outside
+dismissal. The titlebar shortcut and ⌘⇧I reveal Agent Sessions. Each row's
 accent-derived selection, focus, and state styling uses that terminal's
 path-keyed project color rather than the currently active workspace's color;
-the selected row's detail actions inherit the same project scope.
+the selected review detail inherits the same project scope.
 
 ## Check pipeline execution and trust
 
@@ -174,7 +184,7 @@ inside, the human review state and does not gate acceptance.
 
 Manual clicks are their own authorization. Automatic checks require one-time
 project-scoped local approval and run after every working→idle turn only when
-changes exist. A repository cannot self-enable autorun, and the inbox exposes
+changes exist. A repository cannot self-enable autorun, and review detail exposes
 approval revocation. Malformed persisted trust JSON is treated as empty. Auto failures reuse the
 owner terminal's notification ID, replacing the existing banner.
 

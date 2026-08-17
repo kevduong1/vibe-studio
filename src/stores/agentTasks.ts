@@ -767,23 +767,33 @@ export interface AgentInboxItem {
   topic: string;
 }
 
-export function inboxTier(item: AgentInboxItem): number {
-  const display = displayAgentState(item.runtime);
+/** Attention priority depends only on semantic runtime plus independent
+ * review/check ownership. Session-list chrome can count actionable agents
+ * without fabricating the presentation fields required by AgentInboxItem. */
+export function agentAttentionTier(
+  runtime: AgentRuntimeState,
+  task?: AgentTask,
+): number {
+  const display = displayAgentState(runtime);
   if (display === "blocked") return 1;
   if (display === "working" || display === "starting") return 4;
   const reviewable = display === "idle" || display === "done" || display === "absent";
   if (!reviewable) return 5;
   if (
-    item.task?.latestSnapshot?.conflictedFiles.length ||
-    (item.task && checkStateFor(item.task) === "failed")
+    task?.latestSnapshot?.conflictedFiles.length ||
+    (task && checkStateFor(task) === "failed")
   ) return 2;
   if (
     display === "done" ||
-    item.task?.reviewState === "unreviewed" ||
-    item.task?.reviewState === "reviewed" ||
-    item.task?.reviewState === "stale"
+    task?.reviewState === "unreviewed" ||
+    task?.reviewState === "reviewed" ||
+    task?.reviewState === "stale"
   ) return 3;
   return 5;
+}
+
+export function inboxTier(item: AgentInboxItem): number {
+  return agentAttentionTier(item.runtime, item.task);
 }
 
 export const isInboxActionable = (item: AgentInboxItem): boolean => inboxTier(item) <= 3;

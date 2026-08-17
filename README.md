@@ -89,36 +89,48 @@ A global dock for persistent shells and AI coding agents:
 - Optional per-terminal sound and macOS banners alert once for background
   questions/permissions or unseen completion; clicking a banner returns to
   the exact terminal
-- A global **Agent Inbox** (top-right titlebar or **⌘⇧I**) combines both docks in
-  Needs Input / review / working order, with exact-terminal navigation,
-  bounded context peek, independent review status, and check evidence
+- A global **Agent Sessions** view (the first activity-rail item, the titlebar
+  shortcut, or **⌘⇧I**) combines both docks in attention / active / quiet
+  sections, with exact-terminal navigation, a bounded review-context peek,
+  independent review status, and check evidence
 - Drag & drop tabs into splits; layout persists across restarts
 - Drop a file or image from Finder onto a pane to paste its path — image
   drops work with Claude Code out of the box
 
-### 📥 Agent Inbox & review
+### ✨ Agent Sessions & review
 
-The titlebar inbox turns agent activity into one review queue across global
-and project terminals:
+Agent Sessions turns live agent activity into persistent global navigation
+across global and project terminals. It sits above a divider in the activity
+rail; Explorer, Worktrees, Search, Source Control, and Memories remain
+workspace-specific below it.
 
-- Open it from the top-right titlebar or with **⌘⇧I**. **Attention** shows actionable
-  agents; **All** includes working, idle, accepted, and unavailable sessions.
-- Items are ordered by urgency: **Needs Input**, conflicts or failed checks,
-  completed/unreviewed/stale approvals, active work, then informational states.
-  Older waiting items come first.
-- Every row includes the agent, terminal, project, current topic, structured
-  reason, elapsed time, lifecycle state, and separate review state. Related
-  workspace families and shared-working-tree review scope are called out. Row
+- Open it from the top activity icon, the top-right titlebar shortcut, or with
+  **⌘⇧I**. It remains available with no repository open. **Attention** shows
+  actionable agents; **All** includes active, idle, accepted, and unavailable
+  sessions.
+- Actionable items keep the strict urgency order: **Needs Input**, conflicts or
+  failed checks, then completed/unreviewed/stale approvals. Active and quiet
+  rows keep stable registration order so normal status ticks do not move the
+  session you were about to select.
+- Every row includes agent identity, terminal/topic title, project, elapsed
+  time, textual lifecycle state, and separate review/check evidence. Row
   highlights and accent-colored states match the source project's color, even
-  when another workspace is active.
+  when another workspace is active. Detected child agent processes appear as a
+  bounded count, not as invented conversation history.
 - Opening an item activates the exact project, panel side, dock grouping, tab,
   and terminal. Closed global-terminal projects are reopened when possible.
   **⌘⌥↓** and **⌘⌥↑** cycle through actionable agents.
 - **Peek context** explicitly reads only the last 12 logical terminal lines,
-  capped at 4,096 characters. The text stays in the open popover and is never persisted,
-  logged, or added to task history.
+  capped at 4,096 characters. The text stays in the detailed review overlay
+  and is never persisted, logged, or added to task history.
 - macOS notification clicks use the same exact-terminal routing. A notification
-  for a terminal that has since closed opens the inbox with a nonfatal message.
+  for a terminal that has since closed opens the session/review surface with a
+  nonfatal message.
+
+This first version is intentionally a live-session navigator, not provider
+transcript history: terminal metadata/layout may persist, but PTYs, lifecycle,
+review state, and terminal text remain session-only. Restored global tabs still
+start as fresh shells.
 
 Each dedicated agent launch owns a session-only review task tied to that exact
 terminal occupant. Review state is intentionally independent from terminal
@@ -135,12 +147,12 @@ or was approved.
   frontend. Unborn repositories are supported, while late/manual-launch
   baselines are clearly marked as potentially incomplete review boundaries.
 - **Review changes** opens Source Control and the first current worktree/index
-  diff when one is available. Return to the inbox and explicitly **Mark
+  diff when one is available. Return to detailed review and explicitly **Mark
   reviewed** after inspecting that exact fingerprint; only then does **Accept**
   become available. Async navigation cannot acknowledge a newer generation or
   repository state. Checks are optional evidence and do not gate acceptance. **Needs changes**
   records feedback and returns to the terminal without sending text. If the
-  repository changes after acceptance, the inbox marks that approval stale.
+  repository changes after acceptance, Agent Sessions marks that approval stale.
 - Agents in a normal workspace still use “all repository changes since the
   base commit” scope. For isolated ownership, choose **New Task…** from the
   Worktrees sidebar or titlebar **+** menu.
@@ -221,7 +233,7 @@ Repository checks come from `.vscode/tasks.json`:
   structured runs are kept for the current app session, without raw output.
 - Manual runs are explicitly authorized by the click. **Auto-run on turn
   completion** requires one project-scoped approval before repository commands
-  may run automatically, and that approval can be revoked in the inbox. Queued
+  may run automatically, and that approval can be revoked in review detail. Queued
   follow-ups revalidate the generation, selected root, enablement, and trust
   immediately before running.
 
@@ -327,7 +339,7 @@ Repository checks come from `.vscode/tasks.json`:
 | ⌘ ⇧ T | Reopen the last closed editor tab |
 | F7 / ⇧ F7 | Next / previous diff hunk |
 | ⌘ ⇧ B | Run build task |
-| ⌘ ⇧ I | Open Agent Inbox |
+| ⌘ ⇧ I | Show Agent Sessions |
 | ⌘ ⌥ ↓ / ⌘ ⌥ ↑ | Next / previous actionable agent |
 | ⌘ ` | Toggle terminal panel |
 | ⌘ B | Toggle sidebar |

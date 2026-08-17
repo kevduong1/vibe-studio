@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import { useAgentRuntimeStore } from "../stores/agentRuntime";
 import {
   acceptAgentTask,
   checkStateFor,
@@ -15,17 +14,13 @@ import {
   setAgentTaskAutoRun,
   setAgentTaskPipeline,
   sortInboxItems,
-  useAgentTasksStore,
   type AgentInboxItem,
   type CheckState,
   type ReviewState,
 } from "../stores/agentTasks";
-import { useAgentTerminalsStore } from "../stores/agentTerminals";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { useUiStore } from "../stores/ui";
 import { useProjectColorVar } from "../lib/projectColors";
-import { projectDisplayName } from "../lib/projectNames";
-import { basename } from "../lib/path";
-import { agentPaneTitle } from "../lib/agentPaneTitle";
 import { displayAgentState, displayLabel, reasonLabel } from "../lib/agentState";
 import { focusAgentTerminal, reviewAgentChanges } from "../lib/agentInbox";
 import { getSession } from "../lib/termSessions";
@@ -39,6 +34,7 @@ import {
 import { loadTaskDocument, type TaskDef } from "../lib/tasks";
 import { focusCheckNode } from "../lib/checkPipelines";
 import { IcInbox } from "./icons";
+import { useAgentSessionItems } from "./useAgentSessionItems";
 import "./AttentionInbox.css";
 
 const REVIEW_LABEL: Record<ReviewState, string> = {
@@ -66,45 +62,6 @@ function elapsed(since: number, now: number): string {
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
-}
-
-function useWorkspaceTerminalVersion(enabled: boolean): number {
-  const workspaces = useWorkspacesStore((state) => state.workspaces);
-  const [version, bump] = useState(0);
-  useEffect(() => {
-    if (!enabled) return;
-    const unsubscribes = workspaces.map((ws) => ws.terminal.subscribe(() => bump((value) => value + 1)));
-    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-  }, [enabled, workspaces]);
-  return version;
-}
-
-function useInboxItems(subscribeTerminals: boolean): AgentInboxItem[] {
-  const terminalVersion = useWorkspaceTerminalVersion(subscribeTerminals);
-  const runtimes = useAgentRuntimeStore((state) => state.states);
-  const tasks = useAgentTasksStore((state) => state.tasks);
-  const globals = useAgentTerminalsStore((state) => state.terminals);
-  const globalTopics = useAgentTerminalsStore((state) => state.paneTitle);
-  const workspaces = useWorkspacesStore((state) => state.workspaces);
-  return useMemo(() => sortInboxItems(Object.values(runtimes).map((runtime) => {
-    const global = globals[runtime.terminalId];
-    const ws = workspaces.find((item) => item.path === runtime.workspacePath);
-    const local = ws?.terminal.getState().terminals[runtime.terminalId];
-    const project = projectDisplayName(runtime.workspacePath);
-    const rawTopic = globalTopics[runtime.terminalId] ?? ws?.terminal.getState().paneTitle[runtime.terminalId] ?? "";
-    return {
-      runtime,
-      task: tasks[runtime.terminalId],
-      title: global?.title ?? local?.title ?? runtime.kind,
-      project,
-      topic: agentPaneTitle(runtime.kind, rawTopic, [
-        global?.title,
-        local?.title,
-        project,
-        basename(runtime.workspacePath),
-      ]),
-    };
-  })), [runtimes, tasks, globals, globalTopics, workspaces, terminalVersion]);
 }
 
 function InboxRow({
@@ -244,7 +201,7 @@ function InboxOverlay({
       <div
         className="attention-inbox accent-scope"
         role="dialog"
-        aria-label="Agent attention and review inbox"
+        aria-label="Agent review details"
         tabIndex={-1}
         ref={dialogRef}
         onKeyDown={(event) => {
@@ -272,7 +229,7 @@ function InboxOverlay({
         }}
       >
         <div className="inbox-head">
-          <strong>Agent Inbox</strong>
+          <strong>Agent Review</strong>
           <div className="inbox-view-tabs" role="tablist">
             <button role="tab" aria-selected={view === "attention"} className={view === "attention" ? "active" : ""} onClick={() => setView("attention")}>Attention</button>
             <button role="tab" aria-selected={view === "all"} className={view === "all" ? "active" : ""} onClick={() => setView("all")}>All</button>
@@ -281,7 +238,9 @@ function InboxOverlay({
         {message && <div className="inbox-message" role="status">{message}</div>}
         <div className="inbox-content">
           <div className="inbox-list" role="listbox" aria-label={`${view} agents`}>
-            {visible.length === 0 && <div className="inbox-empty">No agents need attention.</div>}
+            {visible.length === 0 && <div className="inbox-empty">
+              {view === "attention" ? "No agents need attention." : "No agent sessions."}
+            </div>}
             {visible.map((item) => <InboxRow
               key={item.runtime.terminalId}
               item={item}
@@ -411,16 +370,19 @@ function InboxOverlay({
 
 export default function AttentionInbox() {
   const [open, setOpen] = useState(false);
-  const items = useInboxItems(open);
+  const sessionItems = useAgentSessionItems(open);
+  const items = useMemo(() => sortInboxItems(sessionItems), [sessionItems]);
   const actionable = items.filter(isInboxActionable);
+  const sidebarTab = useUiStore((state) => state.sidebarTab);
+  const sidebarVisible = useUiStore((state) => state.sidebarVisible);
+  const showAgentSessions = useUiStore((state) => state.showAgentSessions);
   const [initialView, setInitialView] = useState<"attention" | "all">("all");
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [initialMessage, setInitialMessage] = useState<string | null>(null);
 
-  const openInbox = () => {
-    setInitialMessage(null);
-    setInitialView(actionable.length ? "attention" : "all");
-    setOpen(true);
+  const openSessions = () => {
+    setOpen(false);
+    showAgentSessions();
   };
 
   useEffect(() => {
@@ -439,7 +401,7 @@ export default function AttentionInbox() {
       const mod = event.metaKey || event.ctrlKey;
       if (mod && event.shiftKey && event.key.toLowerCase() === "i") {
         event.preventDefault();
-        openInbox();
+        openSessions();
       } else if (mod && event.altKey && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
         event.preventDefault();
         const id = nextActionableId(items, focusedId, event.key === "ArrowDown" ? 1 : -1);
@@ -453,8 +415,10 @@ export default function AttentionInbox() {
     return () => window.removeEventListener("keydown", onKey);
   }, [items, focusedId, actionable.length]);
 
+  const sessionsVisible = sidebarVisible && sidebarTab === "sessions";
+
   return <div className="attention-inbox-wrap">
-    <button className={`icon-btn attention-inbox-toggle ${open ? "active" : ""}`} title="Agent Inbox (⌘⇧I)" onClick={openInbox} aria-label="Agent Inbox">
+    <button className={`icon-btn attention-inbox-toggle ${sessionsVisible ? "active" : ""}`} title="Agent Sessions (⌘⇧I)" onClick={openSessions} aria-label="Agent Sessions">
       <IcInbox />
       {actionable.length > 0 && <span className="inbox-count">{actionable.length > 99 ? "99+" : actionable.length}</span>}
     </button>

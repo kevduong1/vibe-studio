@@ -99,6 +99,14 @@
   box-shadow: var(--shadow-inset);
 }
 
+.activity-divider {
+  width: 26px;
+  height: 1px;
+  flex-shrink: 0;
+  margin: 3px 0;
+  background: var(--border);
+}
+
 .activity-btn {
   width: 36px;
   height: 36px;
@@ -145,6 +153,10 @@
   font-weight: 600;
   line-height: 14px;
   text-align: center;
+}
+.activity-btn .badge.attention {
+  background: var(--warning);
+  color: var(--bg-input);
 }
 
 /* drag handles */
