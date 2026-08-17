@@ -7,6 +7,8 @@ describe("agent pane titles", () => {
       .toBe("");
     expect(agentPaneTitle("codex", "clean-up-agent-stuff", ["clean-up-agent-stuff"]))
       .toBe("");
+    expect(agentPaneTitle("codex", "Fix titles ⠹ Tasks 1/3"))
+      .toBe("Fix titles | Tasks 1/3");
   });
 
   it("removes configured Codex state, unnamed-thread, and project fields", () => {
@@ -24,6 +26,17 @@ describe("agent pane titles", () => {
         ["minimal-ide"],
       ),
     ).toBe("");
+  });
+
+  it("removes both phases of Codex's activity action-required title", () => {
+    expect(agentPaneTitle("codex", "[ ! ] Action Required | minimal-ide", ["minimal-ide"]))
+      .toBe("");
+    expect(
+      agentPaneTitle(
+        "codex",
+        "[ . ] Action Required | Fix launch titles | Tasks 2/3",
+      ),
+    ).toBe("Fix launch titles | Tasks 2/3");
   });
 
   it("keeps nonredundant Codex metadata and Claude topics", () => {

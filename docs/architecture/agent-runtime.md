@@ -305,10 +305,13 @@ Pane badges in both terminal docks add textual **Working**, **Needs Input**, or
 **Done**, so status is not color-only, and append a cleaned OSC 0/2 topic when
 one is available. Tooltips contain detected agent kind, requested tab default
 when it differs, state, reason, authority, transition time, and matched rule
-ID. Codex's terminal-title activity frame continues to feed generic activity
-detection, but presentation removes its braille frame, configured run-state
-and project duplicates, and the UUID fallback of an unnamed thread; any
-nonredundant thread name, branch, model, or task metadata remains visible.
+ID. Codex's terminal-title `activity` item continues to feed generic activity
+detection, but presentation removes its braille spinner and blinking
+action-required phases, configured run-state and project duplicates, and the
+UUID fallback of an unnamed thread; any nonredundant thread name, branch,
+model, or task metadata normally remains visible. OSC title strings carry no
+field identity, so a user-authored value that is itself an exact filtered
+run-state or UUID is intentionally treated as generated noise.
 Claude's contextual title is retained verbatim. Titles are presentation-only
 and never override process/screen lifecycle authority.
 Workspace tabs, workspace families,

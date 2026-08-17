@@ -25,7 +25,7 @@ behavior still requires manual verification. All agents should also follow
 | `src/lib/agentState.ts` | Pure semantic agent model: occupancy/lifecycle/authority types, derived display state (blocked outranks the starting/launch grace), rollup priority (`rollupAgentStates` skips absent states and returns `null` when nothing is present, distinct from idle), labels/tooltips, and notification-edge selection |
 | `src/lib/agentProfiles.ts` | Independently authored Claude/Codex screen-detection profiles; box-frame/rule-line normalization (`normalizeAgentScreenLines`) and bounded near-tail rules for blocked/working/idle evidence |
 | `src/lib/terminalActivity.ts` | Generic lifecycle fallback for dedicated/discovered agents: sustained normal- or alternate-screen output (runtime occupancy prevents ordinary TUI false positives), BEL/OSC 9/777 notifications, a `completed` turn-boundary signal reported for every stretch regardless of ping-worthiness, and OSC 133/633 shell marks that supply exact stretch boundaries only (never busy ownership for a whole agent session) |
-| `src/lib/agentPaneTitle.ts` | Presentation-only OSC 0/2 cleanup shared by both docks, the inbox, and notification banners: preserves Claude topics and useful Codex metadata while removing Codex activity frames, configured run-state/project duplicates, and unnamed-thread UUIDs |
+| `src/lib/agentPaneTitle.ts` | Presentation-only OSC 0/2 cleanup shared by both docks, the inbox, and notification banners: preserves Claude topics and useful Codex metadata while removing Codex activity spinner/action-required phases, configured run-state/project duplicates, and unnamed-thread UUIDs |
 | `src/lib/termSession.ts` / `trackedCommand.ts` | Framework-free xterm+PTY session (attach/detach reparenting; ONLY `dispose()` kills the PTY); semantic screen inspection/acknowledgement, `XTERM_THEME`, and the multiline nonce-bound check-command wrapper live here |
 | `src/lib/termSessions.ts` | Session registry for ALL dock terminals (`getOrCreateSession`/`getSession`/`disposeSession`) — sessions outlive React unmounts |
 | `src/lib/agentSessions.ts` / `agentLaunchProgram.ts` / `agentCheckpointPrompt.ts` | Global-agent glue on the registry: semantic metadata, close paths, setup-before-baseline plus launch-shell environment, shared raw-Enter checkpoint handling, and intentional `claude`/`codex --yolo` launch defaults; restored layouts intentionally remain fresh shells |
@@ -242,10 +242,11 @@ cd src-tauri && cargo test      # backend unit tests
   `NO_COLOR`, `CODEX_CI`, `CODEX_THREAD_ID`, and Codex-forced pager settings;
   otherwise a dev app launched from an agent silently changes its child CLIs.
   The login shell may set them again intentionally.
-  Codex's title activity frame remains fallback activity evidence, but badge,
-  inbox, and notification presentation strips the redundant braille frame,
-  configured run-state/project fields, and unnamed-thread UUID instead of
-  displaying them as a conversation topic. Both terminal docks consume the
+  Codex's `activity` title remains fallback activity evidence, but badge,
+  inbox, and notification presentation strips its redundant braille spinner
+  and blinking action-required phases, configured run-state/project fields,
+  and unnamed-thread UUID instead of displaying them as a conversation topic.
+  Both terminal docks consume the
   same cleaned OSC topic; titles are presentation metadata, never lifecycle
   authority.
 - Semantic **Done** is derived from a work stretch (a per-generation flag, not

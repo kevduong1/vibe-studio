@@ -81,10 +81,11 @@ A global dock for persistent shells and AI coding agents:
   structured reason. Claude's contextual title works by default (leave
   `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` unset); `claude -n <name>` or `/rename`
   supplies a stable topic. For Codex, a useful `~/.codex/config.toml` setup is
-  `terminal_title = ["spinner", "thread-title", "project"]` under `[tui]`;
-  name the thread to make `thread-title` descriptive. Talos keeps the spinner
-  as fallback activity evidence while hiding spinner/project/unnamed-UUID
-  noise from the displayed topic
+  `terminal_title = ["activity", "thread-title", "task-progress"]` under
+  `[tui]`; `/title` edits the same setting, and naming the thread makes
+  `thread-title` descriptive. Talos keeps `activity` as fallback evidence
+  while hiding its spinner/action-required phases, semantic run-state,
+  redundant project name, and unnamed-thread UUID from the displayed topic
 - Optional per-terminal sound and macOS banners alert once for background
   questions/permissions or unseen completion; clicking a banner returns to
   the exact terminal
