@@ -13,6 +13,7 @@ const runtime = (
   terminalId: "agent",
   workspacePath: "/repo",
   scope: "global",
+  requestedKind: "codex",
   kind: "codex",
   occupancy,
   occupantPid,

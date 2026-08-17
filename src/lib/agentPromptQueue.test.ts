@@ -54,6 +54,7 @@ const runtime = (terminalId: string): AgentRuntimeState => ({
   terminalId,
   workspacePath: "/repo",
   scope: "global",
+  requestedKind: "codex",
   kind: "codex",
   occupancy: "present",
   generation: 3,

@@ -227,5 +227,8 @@ The built-in Codex definition visibly retains `codex --yolo` as its initial
 default. Choosing explicit permission or sandbox controls replaces `--yolo`.
 The launch sheet resolves executables through the login-shell PATH; Integrations
 shows a bounded version probe, health, and capabilities. Custom commands get
-stable IDs. A profile whose definition is missing is disabled rather than
+stable IDs, and their exact executable basenames participate in runtime
+detection under the selected Claude/Codex screen profile. Duplicate names for
+one profile coalesce; conflicting profile assignments are shown as errors and
+cannot launch. A profile whose definition is missing is disabled rather than
 coerced to another agent.

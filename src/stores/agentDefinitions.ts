@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { AgentKind } from "../lib/agentState";
+import { AGENT_PROFILES } from "../lib/agentProfiles";
 
 const STORAGE_KEY = "talos:agent-definitions";
 
@@ -194,6 +195,82 @@ export const allAgentDefinitions = (): AgentDefinition[] => [
   ...BUILTIN_AGENT_DEFINITIONS,
   ...useAgentDefinitionsStore.getState().customDefinitions,
 ];
+
+export interface AgentDetectionRegistry {
+  executableNames: string[];
+  kindByExecutable: ReadonlyMap<string, AgentKind>;
+  /** Basenames mapped to both screen profiles are never guessed. Ambiguous
+   * custom names are excluded; canonical names retain their built-in mapping.
+   * Settings exposes every conflict so the configuration can be repaired. */
+  conflicts: string[];
+}
+
+/** `ps comm` is reduced to its basename by the backend, so definitions must
+ * participate in detection under the same exact, argument-free identity. */
+export const agentExecutableBasename = (executable: string): string | null => {
+  const normalized = executable.trim().replaceAll("\\", "/");
+  const name = normalized.split("/").pop()?.trim() ?? "";
+  return name && name !== "." && name !== ".." ? name : null;
+};
+
+export function buildAgentDetectionRegistry(
+  definitions: readonly AgentDefinition[] = allAgentDefinitions(),
+): AgentDetectionRegistry {
+  const canonical = new Map<string, AgentKind>();
+  const customCandidates = new Map<string, Set<AgentKind>>();
+  const conflicts = new Set<string>();
+  const add = (name: string, kind: AgentKind) => {
+    const kinds = customCandidates.get(name) ?? new Set<AgentKind>();
+    kinds.add(kind);
+    customCandidates.set(name, kinds);
+  };
+  for (const profile of Object.values(AGENT_PROFILES)) {
+    for (const name of profile.executableNames) canonical.set(name, profile.kind);
+  }
+  for (const definition of definitions) {
+    const name = agentExecutableBasename(definition.executable);
+    if (!name) continue;
+    const canonicalKind = canonical.get(name);
+    if (canonicalKind) {
+      if (canonicalKind !== definition.detectionProfile) conflicts.add(name);
+    } else {
+      add(name, definition.detectionProfile);
+    }
+  }
+  const kindByExecutable = new Map<string, AgentKind>(canonical);
+  for (const [name, kinds] of customCandidates) {
+    if (kinds.size === 1) kindByExecutable.set(name, [...kinds][0]);
+    else conflicts.add(name);
+  }
+  return {
+    executableNames: [...kindByExecutable.keys()].sort(),
+    kindByExecutable,
+    conflicts: [...conflicts].sort(),
+  };
+}
+
+export const agentDefinitionDetectionConflict = (
+  definition: AgentDefinition,
+  definitions: readonly AgentDefinition[] = allAgentDefinitions(),
+): string | null => {
+  const name = agentExecutableBasename(definition.executable);
+  if (!name) return "Executable must include a valid basename.";
+  const canonicalKind = Object.values(AGENT_PROFILES).find((profile) =>
+    profile.executableNames.includes(name)
+  )?.kind;
+  const kinds = canonicalKind
+    ? new Set<AgentKind>([canonicalKind, definition.detectionProfile])
+    : new Set<AgentKind>([
+        ...definitions
+          .filter((item) => item.id !== definition.id)
+          .filter((item) => agentExecutableBasename(item.executable) === name)
+          .map((item) => item.detectionProfile),
+        definition.detectionProfile,
+      ]);
+  return kinds.size > 1
+    ? `Executable basename “${name}” is assigned to both Claude and Codex detection.`
+    : null;
+};
 
 export const allLaunchProfiles = (): AgentLaunchProfile[] => [
   ...BUILTIN_LAUNCH_PROFILES,

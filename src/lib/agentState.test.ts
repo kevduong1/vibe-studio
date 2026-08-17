@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentAlertAction,
+  agentStateTooltip,
   displayAgentState,
   rollupAgentStates,
   type AgentRuntimeState,
@@ -13,6 +14,7 @@ const runtime = (
   terminalId: "agent-1",
   workspacePath: "/repo",
   scope: "global",
+  requestedKind: "codex",
   kind: "codex",
   occupancy: "present",
   occupantPid: 7,
@@ -23,6 +25,11 @@ const runtime = (
 });
 
 describe("semantic notification edges", () => {
+  it("explains when the detected occupant differs from the tab default", () => {
+    const state = { ...runtime("idle", true), requestedKind: "claude" as const };
+    expect(agentStateTooltip(state)).toContain("Codex — Idle\nTab default: Claude");
+  });
+
   it("alerts once for background blocked and not on redraw", () => {
     const blocked = runtime("blocked", false);
     expect(agentAlertAction(runtime("working", true), blocked)).toBe("blocked");

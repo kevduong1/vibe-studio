@@ -68,7 +68,9 @@ A global dock for persistent shells and AI coding agents:
 - Semantic **Working / Needs Input / Done / No Agent** state distinguishes a
   live agent from the shell it returns to, with accessible text, icons, and
   priority rollups across the dock, titlebar tabs, and status bar; each leaf
-  terminal tab keeps its Claude/Codex icon beside its state indicator
+  terminal tab keeps its requested Claude/Codex icon beside its state
+  indicator. If the other supported agent is started in that shell, runtime
+  state follows the detected process and the tooltip explains the mismatch
 - Claude or Codex launched manually inside a plain shell is discovered too;
   Settings shows versioned detection-profile and current-match diagnostics
   without retaining terminal text, arguments, prompts, or environment.
@@ -190,7 +192,9 @@ or was approved.
   one-argument-per-line extras, and current/worktree folder choice. Conversation
   restore remains an explicit archived-task action. The initial Codex profile remains
   `codex --yolo`. Integrations reports
-  executable health/version/capabilities and supports stable-ID custom commands.
+  executable health/version/capabilities and supports stable-ID custom commands;
+  each custom executable basename participates in semantic detection under its
+  selected Claude/Codex profile, with conflicting assignments rejected.
 
 Repository checks come from `.vscode/tasks.json`:
 

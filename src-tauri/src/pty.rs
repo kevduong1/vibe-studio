@@ -64,6 +64,73 @@ pub struct PtyState {
     sessions: Mutex<HashMap<String, PtySession>>,
 }
 
+fn finish_output_reader(
+    reader: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+    stream: &str,
+) -> Result<Vec<u8>, String> {
+    reader
+        .map(|handle| {
+            handle
+                .join()
+                .map_err(|_| format!("{stream} reader panicked"))?
+                .map_err(|error| error.to_string())
+        })
+        .unwrap_or_else(|| Ok(Vec::new()))
+}
+
+/// Wait for a child without letting full stdout/stderr pipes deadlock it.
+/// Reader threads drain both streams while the caller enforces the deadline;
+/// timeout kills and reaps the exact child before returning.
+fn child_output_with_timeout(
+    mut child: std::process::Child,
+    timeout: Duration,
+    label: &str,
+) -> Result<std::process::Output, String> {
+    let stdout = child.stdout.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        })
+    });
+    let stderr = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        })
+    });
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Ok(std::process::Output {
+                    status,
+                    stdout: finish_output_reader(stdout, "stdout")?,
+                    stderr: finish_output_reader(stderr, "stderr")?,
+                });
+            }
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = finish_output_reader(stdout, "stdout");
+                let _ = finish_output_reader(stderr, "stderr");
+                return Err(format!("{label} timed out"));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = finish_output_reader(stdout, "stdout");
+                let _ = finish_output_reader(stderr, "stderr");
+                return Err(error.to_string());
+            }
+        }
+    }
+}
+
 /// Bounded health/version probe for a binary already resolved through the
 /// user's login-shell PATH. No shell is involved and no repository input is
 /// passed as an argument.
@@ -74,57 +141,40 @@ pub async fn executable_version(path: String) -> Result<String, String> {
         if !executable.is_absolute() || !executable.is_file() {
             return Err("executable path must be an absolute file".to_string());
         }
-        let mut child = Command::new(executable)
+        let child = Command::new(executable)
             .arg("--version")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| format!("version probe failed: {error}"))?;
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            if child
-                .try_wait()
-                .map_err(|error| error.to_string())?
-                .is_some()
-            {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|error| error.to_string())?;
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let text = if stdout.trim().is_empty() {
-                    stderr.trim()
-                } else {
-                    stdout.trim()
-                };
-                if !output.status.success() {
-                    return Err(if text.is_empty() {
-                        format!("version probe exited with {}", output.status)
-                    } else {
-                        text.lines()
-                            .next()
-                            .unwrap_or("version probe failed")
-                            .chars()
-                            .take(240)
-                            .collect()
-                    });
-                }
-                return Ok(text
-                    .lines()
+        let output = child_output_with_timeout(child, Duration::from_secs(2), "version probe")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let text = if stdout.trim().is_empty() {
+            stderr.trim()
+        } else {
+            stdout.trim()
+        };
+        if !output.status.success() {
+            return Err(if text.is_empty() {
+                format!("version probe exited with {}", output.status)
+            } else {
+                text.lines()
                     .next()
-                    .unwrap_or("Available")
+                    .unwrap_or("version probe failed")
                     .chars()
                     .take(240)
-                    .collect());
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("version probe timed out".to_string());
-            }
-            std::thread::sleep(Duration::from_millis(25));
+                    .collect()
+            });
         }
+        Ok(text
+            .lines()
+            .next()
+            .unwrap_or("Available")
+            .chars()
+            .take(240)
+            .collect())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -283,13 +333,17 @@ pub async fn pty_agent_process_snapshot(
                 .collect()
         };
         let output = tauri::async_runtime::spawn_blocking(|| {
-            std::process::Command::new("ps")
+            let child = std::process::Command::new("ps")
                 .args(["-axo", "pid=,ppid=,pgid=,comm="])
-                .output()
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|error| error.to_string())?;
+            child_output_with_timeout(child, Duration::from_secs(2), "ps")
         })
         .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())??;
         validate_process_command(output.status.success(), &output.status.to_string())?;
         let rows = parse_process_table(&String::from_utf8_lossy(&output.stdout));
         Ok(targets
@@ -752,5 +806,20 @@ mod tests {
     fn command_failure_is_an_error_not_an_empty_snapshot() {
         assert!(validate_process_command(false, "exit status: 1").is_err());
         assert!(validate_process_command(true, "exit status: 0").is_ok());
+    }
+
+    #[test]
+    fn timed_child_is_killed_and_reaped() {
+        let child = Command::new("sleep")
+            .arg("5")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn sleep");
+        let started = Instant::now();
+        let error = child_output_with_timeout(child, Duration::from_millis(20), "test child")
+            .expect_err("sleep should time out");
+        assert_eq!(error, "test child timed out");
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

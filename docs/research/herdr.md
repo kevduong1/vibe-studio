@@ -145,7 +145,8 @@ the initial Codex product decision.
 - [x] Add executable discovery through the user's login-shell environment and
   clear unavailable-agent guidance.
 - [x] Support custom commands and a small preset set without hard-coding every
-  possible agent into core UI.
+  possible agent into core UI; custom executable basenames participate in the
+  selected semantic detection profile and ambiguous assignments fail closed.
 - [x] Persist definition IDs without silently coercing missing definitions to a
   different agent.
 - [x] Add an Integrations settings page with version, capability, and health

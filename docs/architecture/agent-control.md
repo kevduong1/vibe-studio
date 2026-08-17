@@ -30,8 +30,12 @@ listen on TCP or expose remote attachment.
 
 `agentControlPlane.ts` synchronizes the frontend semantic runtime into Rust.
 The snapshot contains stable workspace paths, terminal UUIDs, scope, requested
-or discovered agent kind, occupancy, occupant PID, monotonic generation,
+tab kind (nullable for plain shells), detected/effective agent kind, occupancy,
+occupant PID, monotonic generation,
 lifecycle, seen state, transition time, and bounded reason/authority/rule IDs.
+The existing `kind` field remains the detected kind while an occupant is live;
+the additive `requestedKind` field explains dedicated-tab defaults and
+cross-kind occupants without breaking existing clients.
 Task UUIDs and opaque native-session IDs remain in their owning task records.
 
 Rust assigns a monotonically increasing sequence to upsert and removal events

@@ -49,6 +49,7 @@ import { useActiveWorkspace, type Workspace } from "../stores/workspaces";
 import { useUsageStore } from "../stores/usage";
 import { useCodexUsageStore } from "../stores/codexUsage";
 import {
+  agentDefinitionDetectionConflict,
   allAgentDefinitions,
   useAgentDefinitionsStore,
   type AgentDefinition,
@@ -329,8 +330,13 @@ function BannerModeRow() {
 function AgentIntegrationRow({ definition }: { definition: AgentDefinition }) {
   const [status, setStatus] = useState("Checking…");
   const probeSequence = useRef(0);
+  const detectionConflict = agentDefinitionDetectionConflict(definition);
   const probe = (refresh: boolean) => {
     const sequence = ++probeSequence.current;
+    if (detectionConflict) {
+      setStatus(`Detection conflict — ${detectionConflict}`);
+      return;
+    }
     setStatus("Checking…");
     void lspResolve(definition.executable, [], refresh).then(async (result) => {
       if (sequence !== probeSequence.current) return;
@@ -353,7 +359,7 @@ function AgentIntegrationRow({ definition }: { definition: AgentDefinition }) {
     return () => {
       probeSequence.current += 1;
     };
-  }, [definition.executable]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [definition.executable, detectionConflict]); // eslint-disable-line react-hooks/exhaustive-deps
   const capabilities = Object.entries(definition.capabilities)
     .filter(([, enabled]) => enabled)
     .map(([name]) => name)
@@ -363,7 +369,7 @@ function AgentIntegrationRow({ definition }: { definition: AgentDefinition }) {
       <div className="settings-row-main">
         <span className="settings-row-name">{definition.name}</span>
         <span className="settings-row-status">
-          <span className={`lsp-dot ${status.startsWith("Unavailable") || status.startsWith("Probe failed") ? "crashed" : status === "Checking…" ? "idle" : "ok"}`} />
+          <span className={`lsp-dot ${status.startsWith("Unavailable") || status.startsWith("Probe failed") || status.startsWith("Detection conflict") ? "crashed" : status === "Checking…" ? "idle" : "ok"}`} />
           {status}
         </span>
         <span className="settings-row-status">
@@ -381,19 +387,26 @@ function AgentIntegrations() {
   const [executable, setExecutable] = useState("");
   const [profile, setProfile] = useState<"claude" | "codex">("claude");
   const definitions = allAgentDefinitions();
+  const pendingDefinition: AgentDefinition = {
+    id: "custom.pending",
+    name: name.trim(),
+    executable: executable.trim(),
+    defaultArguments: [],
+    transport: "terminal",
+    detectionProfile: profile,
+    resumeSupport: "none",
+    capabilities: { models: true, reasoning: profile === "codex", permissions: true, sandbox: profile === "codex", subagents: true },
+    builtin: false,
+  };
+  const pendingConflict = executable.trim()
+    ? agentDefinitionDetectionConflict(pendingDefinition, [...definitions, pendingDefinition])
+    : null;
   const add = () => {
-    if (!name.trim() || !executable.trim()) return;
+    if (!name.trim() || !executable.trim() || pendingConflict) return;
     const id = `custom.${crypto.randomUUID()}`;
     useAgentDefinitionsStore.getState().upsertDefinition({
+      ...pendingDefinition,
       id,
-      name: name.trim(),
-      executable: executable.trim(),
-      defaultArguments: [],
-      transport: "terminal",
-      detectionProfile: profile,
-      resumeSupport: "none",
-      capabilities: { models: true, reasoning: profile === "codex", permissions: true, sandbox: profile === "codex", subagents: true },
-      builtin: false,
     });
     useAgentDefinitionsStore.getState().upsertProfile({
       id: `profile.${crypto.randomUUID()}`,
@@ -421,8 +434,9 @@ function AgentIntegrations() {
           <option value="claude">Claude screen profile</option>
           <option value="codex">Codex screen profile</option>
         </select>
-        <button disabled={!name.trim() || !executable.trim()} onClick={add}>Add</button>
+        <button disabled={!name.trim() || !executable.trim() || Boolean(pendingConflict)} onClick={add}>Add</button>
       </div>
+      {pendingConflict && <p className="settings-hint">{pendingConflict}</p>}
       {customDefinitions.length > 0 && (
         <p className="settings-hint">Custom commands keep their definition IDs. Missing definitions disable their profiles instead of silently launching another agent.</p>
       )}
@@ -453,10 +467,14 @@ function AgentDetectionDiagnostics() {
         <div className="settings-row" key={runtime.terminalId}>
           <div className="settings-row-main">
             <span className="settings-row-name">
-              {runtime.kind} · {runtime.terminalId.slice(0, 8)} · generation {runtime.generation}
+              {runtime.requestedKind && runtime.requestedKind !== runtime.kind
+                ? `detected ${runtime.kind} · ${runtime.requestedKind} tab default`
+                : runtime.requestedKind
+                  ? `${runtime.kind} dedicated`
+                  : `${runtime.kind} discovered`} · {runtime.terminalId.slice(0, 8)} · generation {runtime.generation}
             </span>
             <span className="settings-row-status">
-              {runtime.occupancy} / {runtime.lifecycle} · authority {runtime.authority ?? "none"} · rule {runtime.matchedRule ?? "none"}
+              {runtime.occupancy} / {runtime.lifecycle} · pid {runtime.occupantPid ?? "none"} · authority {runtime.authority ?? "none"} · rule {runtime.matchedRule ?? "none"}
             </span>
             <span className="settings-row-status" title={runtime.workspacePath}>
               {runtime.scope} · {runtime.workspacePath}

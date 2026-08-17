@@ -55,10 +55,10 @@ behavior still requires manual verification. All agents should also follow
 | `src/stores/editor.ts` | Per-workspace editor-tab store factory (`Tab = file \| diff \| memory \| preview`): one replaceable clean `transientTabId` shared by file/diff browsing (edit/explicit open pins), drag reorder, relative activation, bounded closed-tab + recent-file stacks, dirty tracking, session-only native preview creation/orientation plus teardown ownership (`pendingPreviewDisposals` survives tab removal until native close succeeds), native Save/Don’t Save/Cancel close helpers, `openFile(path, at?)` + nonce-gated `reveal`, and rename/move retargeting |
 | `src/stores/search.ts` | Per-workspace search store factory (⌘⇧F state: query/toggles/results); 250 ms debounce + sequence-number stale-result guard live in the store closure |
 | `src/stores/terminal.ts` | Per-workspace terminal dock store factory (shell/Claude/Codex tabs, dockTree layout, ephemeral notification toggles, NOT persisted; never touches xterm or IPC) |
-| `src/stores/agentRuntime.ts` | One ephemeral semantic runtime store for both docks: registration, occupancy polling, generation-safe transitions, a per-generation work-stretch flag that drives unseen Done, confirmed output overriding Claude's ambiguous always-painted idle composer, other screen authority yielding to contradicting activity after 15s staleness (blocked excepted), a one-shot post-prompt completion-boundary set that can additionally clear an osc-only (ring-only) blocked prompt, a 1 Hz ambient reconcile on the shared poll tick reading pane visibility live off the DOM (`setAgentPaneVisibility`), acknowledgement, and workspace/group rollup selectors |
+| `src/stores/agentRuntime.ts` | One ephemeral semantic runtime store for both docks: requested-vs-detected identity, definition-aware exact-basename occupancy polling, atomic generation-safe PID/kind transitions, a per-generation work-stretch flag that drives unseen Done, confirmed output overriding Claude's ambiguous always-painted idle composer, other screen authority yielding to contradicting activity after 15s staleness (blocked excepted), a one-shot post-prompt completion-boundary set that can additionally clear an osc-only (ring-only) blocked prompt, a 1 Hz ambient reconcile on the shared poll tick reading pane visibility live off the DOM (`setAgentPaneVisibility`), acknowledgement, and workspace/group rollup selectors |
 | `src/stores/agentTasks.ts` | Session-only generation-owned task/review store: cheap launch HEAD + async stable fingerprints, sequence-guarded/shared refreshes, runtime reconciliation after frontend hot reload, independent human review/check states, and stable inbox attention age |
-| `src/stores/agentTerminals.ts` | GLOBAL terminal-groupings store: any number of named dockTree layouts (`groupings`, one panel tab each; `activeGroupingId`) over ONE shared terminals map, terminal↔project bindings, deletion-aware last-workspace navigation memory, deduped default titles, ephemeral live pane titles (`paneTitle`), per-terminal `notificationsEnabled` opt-in, localStorage persistence (`talos:agent-terminals`, v3), and `groupingDockStore(id)` — the cached per-grouping read-only store facade the generic Dock consumes |
-| `src/stores/agentDefinitions.ts` | Typed built-in/custom agent definitions and launch profiles; visible `codex --yolo` default, stable definition IDs, command assembly, and restore/folder policy metadata |
+| `src/stores/agentTerminals.ts` | GLOBAL terminal-groupings store: any number of named dockTree layouts (`groupings`, one panel tab each; `activeGroupingId`) over ONE shared terminals map, terminal↔project bindings, deletion-aware last-workspace navigation memory, deduped default titles, ephemeral live pane titles (`paneTitle`), per-terminal `notificationsEnabled` opt-in, localStorage persistence (`talos:agent-terminals`, v3; older layouts migrate on load), and `groupingDockStore(id)` — the cached per-grouping read-only store facade the generic Dock consumes |
+| `src/stores/agentDefinitions.ts` | Typed built-in/custom agent definitions and launch profiles; visible `codex --yolo` default, stable definition IDs, exact executable-basename detection registry with fail-closed profile conflicts, command assembly, and restore/folder policy metadata |
 | `src/stores/terminalRecipes.ts` | Persisted, user-owned per-workspace terminal commands; restore execution is disabled per recipe unless explicitly enabled |
 | `src/stores/ui.ts` | Global (workspace-independent) sidebar/panel visibility, sizes, panel group (`terminal`/`agent`, `useEffectivePanelGroup`), panel maximize (`panelMaximized` — cleared by hiding the panel or opening an editor tab), markdown-preview toggle, and persisted word-wrap / one-second Auto Save preferences |
 | `src/App.tsx` | Shell layout (editor and terminal panel are SEPARATE cards in a transparent center column; the editor card hides while the panel is maximized or no editor tab is open), per-workspace `WorkspaceView`s (all mounted; inactive hidden), global workspace/editor/tab/zoom shortcuts, native dirty-buffer Save All / Quit Without Saving / Cancel interception for both window close and Rust-bridged macOS `ExitRequested`, and welcome screen |
@@ -217,14 +217,20 @@ cd src-tauri && cargo test      # backend unit tests
   can come back blank, so a debounced refit reads as flicker.
 - Dedicated Claude/Codex tabs and discovery-enabled plain shell tabs in BOTH
   docks register in the ephemeral `agentRuntime` store; requested terminal
-  kind is launch metadata, never proof of occupancy. macOS
-  `pty_agent_process_snapshot` establishes whether the exact agent executable
-  is a descendant of that PTY shell. Only then may the bounded xterm tail
+  kind is launch metadata, never proof of occupancy. Every semantic terminal
+  is queried against the same unambiguous registry of built-in profile names
+  plus custom-definition executable basenames, so a Claude tab may correctly
+  discover Codex (and vice versa) without changing its saved tab identity.
+  macOS `pty_agent_process_snapshot` establishes whether an exact registered
+  executable is a descendant of that PTY shell. PID or detected-kind changes
+  atomically create a new generation. Only then may the bounded xterm tail
   classifier own lifecycle. Detection rules must match complete app-owned UI
   phrases, never bare domain words that can appear in ordinary agent prose;
-  the newest matching logical line wins. A transient process-table failure
-  changes presentation to Unknown but retains last-known PID/generation and
-  evidence until a successful poll proves replacement or absence.
+  the newest matching logical line wins. The process snapshot is bounded to
+  two seconds and kills/reaps a timed-out `ps`. A transient failure masks only
+  a previously present occupant as Unknown, retaining PID/generation/evidence;
+  proven absent/starting/exited states remain unchanged, so an empty set never
+  acquires a false Idle rollup.
   Structured/working screen evidence normally outranks OSC and activity, but
   confirmed sustained output outranks Claude's always-painted idle composer;
   delayed evidence must match the occupant generation. Read
@@ -235,6 +241,9 @@ cd src-tauri && cargo test      # backend unit tests
   `NO_COLOR`, `CODEX_CI`, `CODEX_THREAD_ID`, and Codex-forced pager settings;
   otherwise a dev app launched from an agent silently changes its child CLIs.
   The login shell may set them again intentionally.
+  Codex's title activity frame remains fallback activity evidence, but badge
+  presentation strips the redundant braille frame/project-only title instead
+  of displaying it as a conversation topic.
 - Semantic **Done** is derived from a work stretch (a per-generation flag, not
   working→idle adjacency) that ended while the pane was unseen — an unanswered
   blocked prompt going quiet, or idle reached fresh after launch with no

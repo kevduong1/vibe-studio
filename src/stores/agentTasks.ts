@@ -683,7 +683,12 @@ export function reconcileDetectedAgentTasks(): void {
   for (const runtime of Object.values(useAgentRuntimeStore.getState().states)) {
     if (runtime.occupancy !== "present") continue;
     const task = useAgentTasksStore.getState().tasks[runtime.terminalId];
-    if (task?.generation === runtime.generation) continue;
+    if (task?.generation === runtime.generation) {
+      if (task.kind !== runtime.kind) {
+        replaceTask({ ...task, kind: runtime.kind, updatedAt: Date.now() });
+      }
+      continue;
+    }
     void createAgentTask({
       terminalId: runtime.terminalId,
       generation: runtime.generation,
@@ -716,6 +721,9 @@ subscribeAgentTransitions(({ previous, current }) => {
         baselineCapturedLate: true,
       });
     } else {
+      if (task.kind !== current.kind) {
+        replaceTask({ ...task, kind: current.kind, updatedAt: Date.now() });
+      }
       void refreshAgentTask(current.terminalId);
     }
   }

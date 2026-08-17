@@ -50,6 +50,7 @@ describe("isolated task merge ownership", () => {
     terminalId: "terminal",
     workspacePath: "/repo/task",
     scope: "global",
+    requestedKind: "codex",
     kind: "codex",
     occupancy: "present",
     generation: 4,

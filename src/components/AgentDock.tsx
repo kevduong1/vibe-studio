@@ -36,6 +36,8 @@ import { getSession } from "../lib/termSessions";
 import { setTerminalNotifications } from "../lib/agentNotifications";
 import { copyText } from "../lib/clipboard";
 import { useProjectColorVar } from "../lib/projectColors";
+import { basename } from "../lib/path";
+import { agentPaneTitle } from "../lib/agentPaneTitle";
 import { Dock, type DockPaneProps } from "./Dock";
 import { ContextMenu } from "./ContextMenu";
 import { AgentSubagents } from "./AgentSubagents";
@@ -70,8 +72,13 @@ function AgentBadge({
   // summary. No title yet (fresh shell, agent not running) = no badge; the
   // tab keeps the stable project name. Clicks fall through to the pane
   // (focus + switch-to-project), so the badge is display-only.
-  const summary = useAgentTerminalsStore((s) => s.paneTitle[terminal.id]);
+  const rawSummary = useAgentTerminalsStore((s) => s.paneTitle[terminal.id]);
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
+  const summary = agentPaneTitle(
+    runtime?.kind ?? (terminal.kind === "shell" ? "claude" : terminal.kind),
+    rawSummary ?? "",
+    [terminal.title, agentTitleBase(terminal.workspacePath), basename(terminal.workspacePath)],
+  );
   const display = displayAgentState(runtime);
   const semantic =
     display === "working" || display === "starting" || display === "blocked" || display === "done"

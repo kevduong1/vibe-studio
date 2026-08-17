@@ -24,6 +24,8 @@ import { useAgentTerminalsStore } from "../stores/agentTerminals";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useProjectColorVar } from "../lib/projectColors";
 import { projectDisplayName } from "../lib/projectNames";
+import { basename } from "../lib/path";
+import { agentPaneTitle } from "../lib/agentPaneTitle";
 import { displayAgentState, displayLabel, reasonLabel } from "../lib/agentState";
 import { focusAgentTerminal, reviewAgentChanges } from "../lib/agentInbox";
 import { getSession } from "../lib/termSessions";
@@ -88,12 +90,19 @@ function useInboxItems(subscribeTerminals: boolean): AgentInboxItem[] {
     const global = globals[runtime.terminalId];
     const ws = workspaces.find((item) => item.path === runtime.workspacePath);
     const local = ws?.terminal.getState().terminals[runtime.terminalId];
+    const project = projectDisplayName(runtime.workspacePath);
+    const rawTopic = globalTopics[runtime.terminalId] ?? ws?.terminal.getState().paneTitle[runtime.terminalId] ?? "";
     return {
       runtime,
       task: tasks[runtime.terminalId],
       title: global?.title ?? local?.title ?? runtime.kind,
-      project: projectDisplayName(runtime.workspacePath),
-      topic: globalTopics[runtime.terminalId] ?? ws?.terminal.getState().paneTitle[runtime.terminalId] ?? "",
+      project,
+      topic: agentPaneTitle(runtime.kind, rawTopic, [
+        global?.title,
+        local?.title,
+        project,
+        basename(runtime.workspacePath),
+      ]),
     };
   })), [runtimes, tasks, globals, globalTopics, workspaces, terminalVersion]);
 }

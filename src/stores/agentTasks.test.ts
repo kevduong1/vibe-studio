@@ -13,6 +13,7 @@ import {
   markAgentTaskReviewOpened,
   nextActionableId,
   promptTurnSettledByScreen,
+  reconcileDetectedAgentTasks,
   reviewStateFor,
   sortInboxItems,
   updateCheckRun,
@@ -21,11 +22,13 @@ import {
   type AgentInboxItem,
   type AgentTask,
 } from "./agentTasks";
+import { useAgentRuntimeStore } from "./agentRuntime";
 
 const runtime = (id: string, lifecycle: AgentRuntimeState["lifecycle"], seen = true, changedAt = 10): AgentRuntimeState => ({
   terminalId: id,
   workspacePath: `/repo/${id}`,
   scope: id.startsWith("g") ? "global" : "workspace",
+  requestedKind: "claude",
   kind: "claude",
   occupancy: "present",
   generation: 1,
@@ -84,6 +87,20 @@ const snapshot = (patch: Partial<GitReviewSnapshot> = {}): GitReviewSnapshot => 
 });
 
 describe("agent review state", () => {
+  it("reconciles a launch-owned task to the detected occupant kind", () => {
+    const detected = { ...runtime("t", "idle"), requestedKind: "claude" as const, kind: "codex" as const };
+    useAgentTasksStore.setState({ tasks: { t: task("clean") } });
+    useAgentRuntimeStore.setState({ states: { t: detected }, subagents: {} });
+    reconcileDetectedAgentTasks();
+    expect(useAgentTasksStore.getState().tasks.t).toMatchObject({
+      generation: 1,
+      kind: "codex",
+      baseline: "ready",
+    });
+    useAgentRuntimeStore.setState({ states: {}, subagents: {} });
+    useAgentTasksStore.setState({ tasks: {} });
+  });
+
   it("settles a fast idle-to-idle prompt only from post-boundary output", () => {
     const pending = { generation: 3, outputSequence: 8 };
     const idle = { lifecycle: "idle", strong: false } as const;
