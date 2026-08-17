@@ -34,6 +34,8 @@ import {
   useAgentRuntimeStore,
 } from "../stores/agentRuntime";
 import { agentAlertAction, reasonLabel } from "./agentState";
+import { agentPaneTitle } from "./agentPaneTitle";
+import { basename } from "./path";
 import { projectDisplayName } from "./projectNames";
 
 // ---------------------------------------------------------------------------
@@ -212,6 +214,7 @@ export async function setTerminalNotifications(
 const terminalPresentation = (terminalId: string) => {
   const globalState = useAgentTerminalsStore.getState();
   const global = globalState.terminals[terminalId];
+  const runtime = useAgentRuntimeStore.getState().states[terminalId];
   if (global) {
     const project = projectDisplayName(global.workspacePath);
     return {
@@ -219,16 +222,25 @@ const terminalPresentation = (terminalId: string) => {
       title: global.title.startsWith(project)
         ? global.title
         : `${global.title} — ${project}`,
-      topic: globalState.paneTitle[terminalId],
+      topic: agentPaneTitle(
+        runtime?.kind ?? (global.kind === "shell" ? "claude" : global.kind),
+        globalState.paneTitle[terminalId] ?? "",
+        [global.title, project, basename(global.workspacePath)],
+      ),
     };
   }
   for (const workspace of useWorkspacesStore.getState().workspaces) {
     const terminal = workspace.terminal.getState().terminals[terminalId];
     if (terminal) {
+      const project = projectDisplayName(workspace.path);
       return {
         enabled: terminal.notificationsEnabled === true,
-        title: `${terminal.title} — ${projectDisplayName(workspace.path)}`,
-        topic: workspace.terminal.getState().paneTitle[terminalId] ?? "",
+        title: `${terminal.title} — ${project}`,
+        topic: agentPaneTitle(
+          runtime?.kind ?? (terminal.kind === "shell" ? "claude" : terminal.kind),
+          workspace.terminal.getState().paneTitle[terminalId] ?? "",
+          [terminal.title, project, basename(workspace.path)],
+        ),
       };
     }
   }

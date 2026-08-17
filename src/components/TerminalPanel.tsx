@@ -9,10 +9,13 @@
  */
 import { memo, useEffect, useRef, useState } from "react";
 import { type WorkspaceTerminal } from "../stores/terminal";
-import { useWorkspace } from "../stores/workspaces";
+import { useTerminal, useWorkspace } from "../stores/workspaces";
 import { getSession } from "../lib/termSessions";
 import { setTerminalNotifications } from "../lib/agentNotifications";
 import { copyText } from "../lib/clipboard";
+import { agentPaneTitle } from "../lib/agentPaneTitle";
+import { basename } from "../lib/path";
+import { projectDisplayName } from "../lib/projectNames";
 import {
   setAgentPaneVisibility,
   useAgentRuntimeStore,
@@ -87,12 +90,18 @@ const TerminalPane = memo(function TerminalPane({
   }, [terminal.id]);
 
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
+  const rawTopic = useTerminal((state) => state.paneTitle[terminal.id]);
   const agentPresent = terminal.kind !== "shell" || runtime?.occupancy === "present";
   const display = displayAgentState(runtime);
-  const summary =
+  const semantic =
     display === "working" || display === "starting" || display === "blocked" || display === "done"
       ? displayLabel(display)
       : "";
+  const topic = agentPaneTitle(
+    runtime?.kind ?? (terminal.kind === "shell" ? "claude" : terminal.kind),
+    rawTopic ?? "",
+    [terminal.title, projectDisplayName(ws.path), basename(ws.path)],
+  );
 
   return (
     <div
@@ -106,9 +115,14 @@ const TerminalPane = memo(function TerminalPane({
       }}
     >
       <div className="dock-pane-host" ref={hostRef} />
-      {agentPresent && summary && (
-        <div className="agent-badge" title={runtime && agentStateTooltip(runtime)}>
-          <span className="agent-badge-state">{summary}</span>
+      {agentPresent && (semantic || topic) && (
+        <div
+          className="agent-badge"
+          title={`${runtime ? agentStateTooltip(runtime) : "No Agent"}${topic ? `\nSummary: ${topic}` : ""}`}
+        >
+          {semantic && <span className="agent-badge-state">{semantic}</span>}
+          {semantic && topic && <span className="agent-badge-separator">·</span>}
+          {topic && <span className="truncate">{topic}</span>}
         </div>
       )}
       {agentPresent && <AgentSubagents terminalId={terminal.id} />}

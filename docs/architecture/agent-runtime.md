@@ -301,12 +301,16 @@ replaces agent identity:
 | Present idle / unknown | Persistent agent icon only |
 | No Agent | Terminal icon |
 
-Pane badges add textual **Working**, **Needs Input**, or **Done**, so status is
-not color-only. Tooltips contain detected agent kind, requested tab default
+Pane badges in both terminal docks add textual **Working**, **Needs Input**, or
+**Done**, so status is not color-only, and append a cleaned OSC 0/2 topic when
+one is available. Tooltips contain detected agent kind, requested tab default
 when it differs, state, reason, authority, transition time, and matched rule
-ID. Codex's default OSC title activity frame continues to feed generic
-activity detection, but presentation removes its braille frame and suppresses
-a redundant project-only remainder; any nonredundant metadata remains visible.
+ID. Codex's terminal-title activity frame continues to feed generic activity
+detection, but presentation removes its braille frame, configured run-state
+and project duplicates, and the UUID fallback of an unnamed thread; any
+nonredundant thread name, branch, model, or task metadata remains visible.
+Claude's contextual title is retained verbatim. Titles are presentation-only
+and never override process/screen lifecycle authority.
 Workspace tabs, workspace families,
 global grouping tabs, and the hidden-panel indicator roll up with priority:
 

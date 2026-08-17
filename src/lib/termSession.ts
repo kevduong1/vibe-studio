@@ -226,10 +226,10 @@ export interface TermSessionOptions {
   discoverAgents?: boolean;
   workspacePath?: string;
   agentScope?: "global" | "workspace";
-  /** OSC 0/2 window-title changes (agent sessions only). Claude Code
-   *  auto-generates topic summaries and emits them as OSC 0 titles for
-   *  recognized terminals — the TERM_PROGRAM masquerade satisfies its
-   *  allowlist. An empty title (Claude Code's exit reset) clears it. */
+  /** OSC 0/2 window-title changes (agent sessions only). Claude Code emits
+   * contextual/named topics for recognized terminals (the TERM_PROGRAM
+   * masquerade satisfies its allowlist), while Codex emits the configured
+   * `[tui].terminal_title` items. An empty exit reset clears the title. */
   onTitle?: (title: string) => void;
   /** Web link activation. Owners route loopback URLs into native Preview. */
   onLink?: (url: string) => void;

@@ -76,8 +76,15 @@ A global dock for persistent shells and AI coding agents:
   without retaining terminal text, arguments, prompts, or environment.
   **Needs Input** requires a complete CLI-owned prompt or error phrase, so
   ordinary agent prose does not claim attention merely for sharing a keyword
-- Live badges combine semantic state with each agent's current topic; tooltips
-  explain the state authority and structured reason
+- Live badges in both terminal docks combine semantic state with each agent's
+  current OSC terminal topic; tooltips explain the state authority and
+  structured reason. Claude's contextual title works by default (leave
+  `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` unset); `claude -n <name>` or `/rename`
+  supplies a stable topic. For Codex, a useful `~/.codex/config.toml` setup is
+  `terminal_title = ["spinner", "thread-title", "project"]` under `[tui]`;
+  name the thread to make `thread-title` descriptive. Talos keeps the spinner
+  as fallback activity evidence while hiding spinner/project/unnamed-UUID
+  noise from the displayed topic
 - Optional per-terminal sound and macOS banners alert once for background
   questions/permissions or unseen completion; clicking a banner returns to
   the exact terminal
