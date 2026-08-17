@@ -27,7 +27,11 @@ import {
   type GlobalTermGrouping,
 } from "../stores/agentTerminals";
 import { useAgentRuntimeStore } from "../stores/agentRuntime";
-import { rollupAgentStates, type AgentRollup } from "../lib/agentState";
+import {
+  rollupAgentStates,
+  ROLLUP_PRIORITY,
+  type AgentRollup,
+} from "../lib/agentState";
 import { closeGlobalGrouping, openGlobalTerminal } from "../lib/agentSessions";
 import {
   paletteColor,
@@ -158,16 +162,16 @@ function GroupingTab({
     if (!workspacePath) continue;
     byWorkspace.set(workspacePath, [...(byWorkspace.get(workspacePath) ?? []), id]);
   }
-  const priority: Record<AgentRollup, number> = { idle: 0, working: 1, done: 2, blocked: 3 };
   const activities: GroupingWorkspaceActivity[] = [...byWorkspace]
     .map(([workspacePath, ids]) => ({
       workspacePath,
       activity: rollupAgentStates(ids.map((id) => runtimeStates[id])),
     }))
     .filter(
-      (item): item is GroupingWorkspaceActivity => item.activity !== "idle",
+      (item): item is GroupingWorkspaceActivity =>
+        item.activity !== null && item.activity !== "idle",
     )
-    .sort((a, b) => priority[b.activity] - priority[a.activity]);
+    .sort((a, b) => ROLLUP_PRIORITY[b.activity] - ROLLUP_PRIORITY[a.activity]);
 
   const commit = (value: string) => {
     // renameGrouping trims and ignores empty — the old name just stays.

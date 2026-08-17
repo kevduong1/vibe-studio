@@ -86,7 +86,13 @@ state; the frontend then publishes it synchronously at the final PTY delivery
 commit point and resets the bounded screen-evidence boundary to the current
 prompt line so older scrollback cannot satisfy the new turn. A prior user Enter keeps later automation
 gated until generation-owned output beyond that boundary reaches a stable
-non-unknown screen state. This explicitly releases fast idle-to-idle turns even
+non-unknown screen state, counted in landed classifications (one per
+debounce-settled screen inspection, not per raw PTY write) — excluding the
+dispatch echo itself: the first landed classification after the boundary
+reset is the CLI echoing the submitted prompt back into its own composer, so
+settlement requires at least one further landing before the turn counts as
+gated open (`promptTurnSettledByScreen`, `DISPATCH_ECHO_LANDINGS`). This
+explicitly releases fast idle-to-idle turns even
 when no debounced Working frame was visible; the queue is awakened independently
 of runtime-store transitions when the stable prompt is semantically unchanged.
 Cancellation or

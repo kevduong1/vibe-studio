@@ -11,6 +11,7 @@ import {
   type AgentAuthority,
   type AgentKind,
   type AgentLifecycle,
+  type AgentOccupancy,
   type AgentReason,
   type AgentRollup,
   type AgentRuntimeState,
@@ -20,10 +21,20 @@ export interface AgentActivitySignal {
   busy: boolean;
   attention: boolean;
   attentionSource?: "notification" | "completion";
+  /**
+   * A confirmed busy stretch ended and the quiet survived: the turn is over
+   * whether or not it also deserves an attention ping. Separating this from
+   * `attention` is what lets a short or already-watched turn still settle to
+   * idle (and, when it ran unseen in the background, to Done).
+   */
+  completed?: boolean;
 }
 
 interface FallbackSignal {
   activity: AgentActivitySignal;
+  /** Last reported watched-ness of the pane, so the ambient staleness sweep
+   *  can settle `seen` without querying the DOM. */
+  watched: boolean;
 }
 
 export interface AgentSubagentProcess {
@@ -60,6 +71,42 @@ const fallbacks = new Map<string, FallbackSignal>();
 /** Plain-shell tabs participate in process discovery without claiming a
  * requested agent identity until an exact executable match is present. */
 const discoveryTerminals = new Set<string>();
+/**
+ * Whether a work stretch has been observed for this occupant since it last
+ * settled. Unseen **Done** is derived from this, not from the immediately
+ * previous lifecycle: the routine path into a completed turn is
+ * working → unknown (one inconclusive screen read) → idle, and a background
+ * blocked prompt that nobody answered must settle back to plain idle rather
+ * than announce a turn that never ran.
+ */
+const workStretches = new Map<string, { generation: number; worked: boolean }>();
+/**
+ * When each terminal's current screen verdict was produced. Screen evidence
+ * outranks OSC and activity while it is fresh; a verdict that stopped being
+ * refreshed (a hung tool call, a spinner frame that never redraws) must not
+ * pin `working` forever against a tracker that observed the turn end.
+ */
+const screenEvidenceAt = new Map<string, number>();
+/** Terminals holding an unconsumed turn boundary observed AFTER the current
+ *  prompt was established. Establishing a prompt drops any earlier boundary,
+ *  which is what separates "the agent rang and then finished its turn" from
+ *  "the agent finished a turn and then rang". */
+const completionSeen = new Set<string>();
+/** Live visibility predicate published by a mounted pane (both docks). The
+ *  ambient sweep must ask the DOM, not a cached snapshot from the last signal:
+ *  a silent screen produces no calls, so the cache can be arbitrarily old. */
+const paneVisibility = new Map<string, () => boolean>();
+/** App-initiated launch time, so the discovery grace is measured from the
+ *  launch itself rather than from a restampable changedAt. */
+const launchedAt = new Map<string, number>();
+/** A just-typed launch gets this long to reach exec before a clean no-match
+ *  snapshot may declare the tab an ordinary shell. */
+const LAUNCH_GRACE_MS = 4000;
+/** Screen evidence older than this yields to contradicting activity evidence
+ *  (blocked excepted — only newer terminal evidence clears a prompt). A
+ *  confirmed busy stretch also overrides `idle` immediately because Claude
+ *  keeps its otherwise-idle composer painted while a turn is running. */
+const SCREEN_STALE_MS = 15_000;
 const listeners = new Set<(transition: AgentSemanticTransition) => void>();
 
 export const useAgentRuntimeStore = create<AgentRuntimeStore>(() => ({
@@ -141,23 +188,115 @@ const changed = (
   return meaningful ? { ...candidate, changedAt: Date.now() } : current;
 };
 
+/**
+ * Occupancy masking during a process-query outage — and the unmasking when
+ * the same occupant is rediscovered — is bookkeeping, not a semantic change.
+ * Restamping `changedAt` there would reorder the inbox's waiting age, break
+ * the merge-owner proof pin, and restart every age-based grace.
+ */
+const masked = (
+  current: AgentRuntimeState,
+  occupancy: AgentOccupancy,
+): AgentRuntimeState =>
+  current.occupancy === occupancy ? current : { ...current, occupancy };
+
+const setFallback = (
+  terminalId: string,
+  activity: AgentActivitySignal,
+  watched = fallbacks.get(terminalId)?.watched ?? false,
+): void => {
+  const previous = fallbacks.get(terminalId)?.activity;
+  // Rising edge only: a signal that merely repeats a still-latched completion
+  // is not a second turn boundary.
+  if (activity.completed && !previous?.completed) completionSeen.add(terminalId);
+  fallbacks.set(terminalId, { activity: { ...activity }, watched });
+};
+
+/**
+ * A turn boundary is evidence exactly once. Leaving it latched would make
+ * every later staleness check see "activity contradicts the screen" forever,
+ * re-applying the same verdict under a weaker authority.
+ */
+const consumeCompletion = (terminalId: string): void => {
+  completionSeen.delete(terminalId);
+  const entry = fallbacks.get(terminalId);
+  if (!entry?.activity.completed) return;
+  fallbacks.set(terminalId, {
+    ...entry,
+    activity: { ...entry.activity, completed: false },
+  });
+};
+
+const noteWatched = (terminalId: string, watched: boolean): void => {
+  const entry = fallbacks.get(terminalId);
+  if (entry) entry.watched = watched;
+};
+
+/**
+ * Whether the user can currently see the pane. A mounted pane publishes a
+ * live predicate; without one (no dock host mounted) the last value a signal
+ * carried is the best available answer.
+ */
+const isWatched = (terminalId: string): boolean =>
+  paneVisibility.get(terminalId)?.() ?? fallbacks.get(terminalId)?.watched ?? false;
+
+/**
+ * Called by the pane hosts in both docks. The predicate reads real
+ * visibility (`offsetParent` plus app focus), which no store-side state can
+ * reproduce. Returns its own unsubscribe; a remount that already replaced the
+ * entry keeps the newer one.
+ */
+export function setAgentPaneVisibility(
+  terminalId: string,
+  predicate: () => boolean,
+): () => void {
+  paneVisibility.set(terminalId, predicate);
+  return () => {
+    if (paneVisibility.get(terminalId) === predicate) {
+      paneVisibility.delete(terminalId);
+    }
+  };
+}
+
+const hasWorked = (current: AgentRuntimeState): boolean => {
+  const entry = workStretches.get(current.terminalId);
+  return entry?.generation === current.generation && entry.worked;
+};
+
+const noteWork = (current: AgentRuntimeState, worked: boolean): void => {
+  workStretches.set(current.terminalId, {
+    generation: current.generation,
+    worked,
+  });
+};
+
+const forgetTerminal = (terminalId: string): void => {
+  workStretches.delete(terminalId);
+  screenEvidenceAt.delete(terminalId);
+  completionSeen.delete(terminalId);
+  launchedAt.delete(terminalId);
+};
+
 let monitorTimer: number | null = null;
 let polling = false;
 
 const ensureMonitor = (): void => {
   if (typeof window === "undefined" || monitorTimer !== null) return;
-  monitorTimer = window.setInterval(() => void pollAgentProcesses(), 1000);
+  monitorTimer = window.setInterval(() => {
+    reconcileAgentEvidence();
+    void pollAgentProcesses();
+  }, 1000);
   void pollAgentProcesses();
 };
 
-const stopMonitorIfEmpty = (): void => {
-  if (
-    monitorTimer !== null &&
-    Object.keys(useAgentRuntimeStore.getState().states).length === 0
-  ) {
-    window.clearInterval(monitorTimer);
-    monitorTimer = null;
-  }
+/** Nothing left to watch: no registered terminals, or every one of them has a
+ *  proven-dead PTY. Registering or launching starts the monitor again. */
+const stopMonitorIfIdle = (): void => {
+  if (monitorTimer === null) return;
+  const states = Object.values(useAgentRuntimeStore.getState().states);
+  if (states.some((state) => state.occupancy !== "exited")) return;
+  window.clearInterval(monitorTimer);
+  monitorTimer = null;
 };
 
 export function registerAgentRuntime(meta: {
@@ -177,9 +316,7 @@ export function registerAgentRuntime(meta: {
     seen: true,
     changedAt: Date.now(),
   });
-  fallbacks.set(meta.terminalId, {
-    activity: { busy: false, attention: false },
-  });
+  setFallback(meta.terminalId, { busy: false, attention: false }, false);
   if (discovery) discoveryTerminals.add(meta.terminalId);
   ensureMonitor();
 }
@@ -187,14 +324,18 @@ export function registerAgentRuntime(meta: {
 export function unregisterAgentRuntime(terminalId: string): void {
   fallbacks.delete(terminalId);
   discoveryTerminals.delete(terminalId);
+  forgetTerminal(terminalId);
   replaceSubagents(terminalId, undefined, []);
   replaceState(terminalId, undefined);
-  stopMonitorIfEmpty();
+  stopMonitorIfIdle();
 }
 
 export function markAgentLaunching(terminalId: string): void {
   const current = useAgentRuntimeStore.getState().states[terminalId];
   if (!current) return;
+  forgetTerminal(terminalId);
+  launchedAt.set(terminalId, Date.now());
+  ensureMonitor();
   replaceState(
     terminalId,
     changed(current, {
@@ -216,7 +357,8 @@ export function markAgentLaunching(terminalId: string): void {
 export function markAgentTerminalExited(terminalId: string): void {
   const current = useAgentRuntimeStore.getState().states[terminalId];
   if (!current) return;
-  fallbacks.set(terminalId, { activity: { busy: false, attention: false } });
+  setFallback(terminalId, { busy: false, attention: false });
+  forgetTerminal(terminalId);
   replaceSubagents(terminalId, undefined, []);
   replaceState(
     terminalId,
@@ -230,6 +372,7 @@ export function markAgentTerminalExited(terminalId: string): void {
       matchedRule: undefined,
     }),
   );
+  stopMonitorIfIdle();
 }
 
 const lifecyclePatch = (
@@ -241,32 +384,85 @@ const lifecyclePatch = (
   matchedRule?: string,
 ): Partial<AgentRuntimeState> => {
   let seen = current.seen;
-  if (lifecycle === "blocked") seen = watched;
-  else if (current.lifecycle === "working" && lifecycle === "idle") seen = watched;
-  else if (watched && lifecycle === "idle") seen = true;
+  if (lifecycle === "blocked") {
+    // The same prompt re-classified — a redraw, or an inconclusive read that
+    // retained it — keeps its acknowledgement, so a hidden pane's repaint
+    // cannot resurrect attention the user already answered. A genuinely new
+    // prompt (different rule/reason, or blocked re-entered from another
+    // state) starts unseen so it alerts again.
+    const continuing =
+      current.lifecycle === "blocked" &&
+      current.reason === reason &&
+      current.matchedRule === matchedRule;
+    seen = continuing ? current.seen || watched : watched;
+    // A newly established prompt supersedes any turn boundary observed before
+    // it; only a boundary seen afterwards can argue the prompt is gone.
+    // Acknowledgement and redraws are `continuing` and leave this alone.
+    if (!continuing) completionSeen.delete(current.terminalId);
+    noteWork(current, false);
+  } else if (lifecycle === "working") {
+    noteWork(current, true);
+  } else if (lifecycle === "idle") {
+    // Done = a work stretch ended while nobody was looking. Idle reached
+    // without an intervening stretch (an unanswered blocked prompt going
+    // quiet, a fresh prompt after launch) is plain idle. A Done already on
+    // screen stays unseen until it is actually viewed.
+    seen = watched || (current.lifecycle === "idle" ? current.seen : !hasWorked(current));
+    noteWork(current, false);
+  }
   return { lifecycle, authority, reason, matchedRule, seen };
 };
+
+const notified = (signal?: AgentActivitySignal): boolean =>
+  Boolean(signal?.attention) && signal!.attentionSource === "notification";
+
+const settled = (signal?: AgentActivitySignal): boolean =>
+  Boolean(signal?.completed) ||
+  (Boolean(signal?.attention) && signal!.attentionSource === "completion");
+
+/** What the activity tracker alone would claim — used to skip sweeps that
+ *  would only relabel the authority of a verdict that already holds. */
+const activityLifecycle = (signal?: AgentActivitySignal): AgentLifecycle =>
+  signal?.busy ? "working" : notified(signal) ? "blocked" : settled(signal) ? "idle" : "unknown";
 
 const fallbackFor = (
   current: AgentRuntimeState,
   watched: boolean,
 ): Partial<AgentRuntimeState> => {
   const signal = fallbacks.get(current.terminalId)?.activity;
+  const blocked = current.lifecycle === "blocked";
   if (signal?.busy) {
     return lifecyclePatch(current, "working", "activity", watched);
   }
-  if (signal?.attention && signal.attentionSource === "notification") {
-    return lifecyclePatch(
-      current,
-      "blocked",
-      "osc",
-      watched,
-      "notification",
-    );
+  if (notified(signal)) {
+    // A ring that is still latched under an existing prompt corroborates it;
+    // it is not a second prompt. Rewriting a screen-derived reason and rule
+    // to "notification" would break the continuing-identity test, reset seen,
+    // and re-alert something the user already answered.
+    if (blocked) return {};
+    return lifecyclePatch(current, "blocked", "osc", watched, "notification");
   }
-  if (signal?.attention && signal.attentionSource === "completion") {
+  if (blocked) {
+    // Only newer evidence clears a prompt. A turn boundary observed after an
+    // OSC-derived prompt appeared is exactly that for a pane whose only
+    // authority is the ring: agents that ring when they finish would
+    // otherwise hold Needs Input for the rest of the session. A prompt the
+    // screen classifier actually read outranks a mere boundary and stays,
+    // as does a boundary that predates the ring.
+    const supersedes =
+      current.authority === "osc" &&
+      settled(signal) &&
+      completionSeen.has(current.terminalId);
+    if (!supersedes) return {};
+    consumeCompletion(current.terminalId);
     return lifecyclePatch(current, "idle", "activity", watched);
   }
+  if (settled(signal)) {
+    consumeCompletion(current.terminalId);
+    return lifecyclePatch(current, "idle", "activity", watched);
+  }
+  // No evidence at all: an inconclusive screen read, or the acknowledgement
+  // the tracker reports when the user merely views the pane.
   return lifecyclePatch(current, "unknown", "activity", watched);
 };
 
@@ -284,19 +480,61 @@ export function applyAgentScreen(
   ) {
     return;
   }
-  const patch =
-    classification.lifecycle === "unknown"
-      ? fallbackFor(current, watched)
-      : lifecyclePatch(
-          current,
-          classification.lifecycle,
-          "screen",
-          watched,
-          classification.reason,
-          classification.matchedRule,
-        );
-  replaceState(terminalId, changed(current, patch));
+  noteWatched(terminalId, watched);
+  if (classification.lifecycle === "unknown") {
+    // An inconclusive read is not evidence of anything: hand over to the
+    // activity fallback, which retains a blocked prompt.
+    replaceState(terminalId, changed(current, fallbackFor(current, watched)));
+    return;
+  }
+  const signal = fallbacks.get(terminalId)?.activity;
+  if (classification.lifecycle === "idle" && signal?.busy) {
+    // Claude leaves the composer on screen throughout a turn. When its
+    // working footer is clipped, customized, or between repaint frames, that
+    // composer is real UI but not real idle evidence. Sustained output has
+    // already passed the activity tracker's onset debounce, so retain it and
+    // do not refresh screen authority with this ambiguous idle frame.
+    replaceState(
+      terminalId,
+      changed(current, fallbackFor(current, watched)),
+    );
+    return;
+  }
+  screenEvidenceAt.set(terminalId, Date.now());
+  replaceState(
+    terminalId,
+    changed(
+      current,
+      lifecyclePatch(
+        current,
+        classification.lifecycle,
+        "screen",
+        watched,
+        classification.reason,
+        classification.matchedRule,
+      ),
+    ),
+  );
 }
+
+/**
+ * Fresh, unambiguous screen evidence outranks OSC and activity. A confirmed
+ * busy stretch is deliberately stronger than an `idle` screen verdict:
+ * Claude keeps its composer painted while working, so the composer alone is
+ * ambiguous. Other non-blocked screen verdicts yield after SCREEN_STALE_MS
+ * when activity actually contradicts them; otherwise one stale `working`
+ * frame can pin the display after the tracker observed completion. Blocked
+ * never expires this way: a prompt is cleared by newer terminal evidence, not
+ * by the passage of time.
+ */
+const screenAuthorityYields = (
+  current: AgentRuntimeState,
+  signal: AgentActivitySignal | undefined,
+): boolean =>
+  current.lifecycle !== "blocked" &&
+  Boolean(signal?.busy || signal?.attention || signal?.completed) &&
+  (Boolean(signal?.busy && current.lifecycle === "idle") ||
+    Date.now() - (screenEvidenceAt.get(current.terminalId) ?? 0) > SCREEN_STALE_MS);
 
 export function applyAgentActivity(
   terminalId: string,
@@ -305,11 +543,39 @@ export function applyAgentActivity(
 ): void {
   const current = useAgentRuntimeStore.getState().states[terminalId];
   if (!current) return;
-  fallbacks.set(terminalId, { activity: signal });
+  setFallback(terminalId, signal, watched);
+  if (current.occupancy !== "present") return;
   // Current screen evidence wins until the next parsed screen inspection
-  // explicitly says it disappeared.
-  if (current.authority === "screen" || current.occupancy !== "present") return;
+  // explicitly says it disappeared — or until it goes stale.
+  if (current.authority === "screen" && !screenAuthorityYields(current, signal)) {
+    return;
+  }
   replaceState(terminalId, changed(current, fallbackFor(current, watched)));
+}
+
+/**
+ * Ambient sweep on the shared monitor tick. The tracker reports a completed
+ * turn once; if the screen verdict was still fresh at that moment, nothing
+ * else ever calls back into the store, so staleness has to be re-checked
+ * here or a hung `working` outlives the evidence that contradicts it.
+ */
+export function reconcileAgentEvidence(): void {
+  for (const current of Object.values(useAgentRuntimeStore.getState().states)) {
+    if (current.occupancy !== "present" || current.authority !== "screen") continue;
+    const signal = fallbacks.get(current.terminalId)?.activity;
+    if (!screenAuthorityYields(current, signal)) continue;
+    // Handing an unchanged verdict to a weaker authority is not a semantic
+    // change: it would restamp changedAt (resetting an unseen Done's place in
+    // the inbox) and emit a redundant control-plane transition every tick.
+    if (activityLifecycle(signal) === current.lifecycle) continue;
+    replaceState(
+      current.terminalId,
+      // The DOM, not the last signal's snapshot: a screen that went silent is
+      // exactly the case where the cached value is stalest, and getting this
+      // wrong announces Done for a pane the user is looking at.
+      changed(current, fallbackFor(current, isWatched(current.terminalId))),
+    );
+  }
 }
 
 export function acknowledgeAgentRuntime(terminalId: string): void {
@@ -334,10 +600,16 @@ export function applyAgentProcessResult(
   if (pid === undefined) {
     // Give a just-typed launch time to reach exec; after that a successful
     // no-match snapshot authoritatively means the dedicated tab is a shell.
-    if (current.occupancy === "starting" && Date.now() - current.changedAt < 4000) {
+    // The grace is measured from the launch, not from changedAt: bookkeeping
+    // updates must not extend it, and a query outage must not skip it.
+    if (
+      current.occupancy === "starting" &&
+      Date.now() - (launchedAt.get(terminalId) ?? current.changedAt) < LAUNCH_GRACE_MS
+    ) {
       return;
     }
-    fallbacks.set(terminalId, { activity: { busy: false, attention: false } });
+    forgetTerminal(terminalId);
+    setFallback(terminalId, { busy: false, attention: false });
     replaceState(
       terminalId,
       changed(current, {
@@ -358,7 +630,7 @@ export function applyAgentProcessResult(
   // invalidate generation-owned prompts, task evidence, and notifications).
   if (current.occupantPid === pid) {
     if (current.occupancy !== "present") {
-      replaceState(terminalId, changed(current, { occupancy: "present" }));
+      replaceState(terminalId, masked(current, "present"));
     }
     return;
   }
@@ -368,8 +640,13 @@ export function applyAgentProcessResult(
   // discovered. Preserve that live fallback across the initial PID capture;
   // a true PID replacement starts from a clean authority boundary.
   if (!firstOccupant) {
-    fallbacks.set(terminalId, { activity: { busy: false, attention: false } });
+    setFallback(terminalId, { busy: false, attention: false });
   }
+  launchedAt.delete(terminalId);
+  screenEvidenceAt.delete(terminalId);
+  // A boundary observed under the previous occupant must never argue a new
+  // occupant's prompt away.
+  completionSeen.delete(terminalId);
   const next: AgentRuntimeState = {
     ...current,
     occupancy: "present",
@@ -436,16 +713,16 @@ export function markAgentProcessQueryFailed(terminalIds: readonly string[]): voi
   for (const id of terminalIds) {
     const current = useAgentRuntimeStore.getState().states[id];
     if (!current || current.occupancy === "exited") continue;
+    // A launch in progress has no occupant to mask and owns a grace window
+    // the mask would spend: leave it starting so the next clean no-match
+    // snapshot still has to wait the launch out before declaring absence.
+    if (current.occupancy === "starting") continue;
     // Keep last-known identity and lifecycle metadata while authority is
     // unavailable. occupancy=unknown suppresses their presentation, and a
     // later successful snapshot can prove whether this is the same occupant
-    // without inventing a replacement generation.
-    replaceState(
-      id,
-      changed(current, {
-        occupancy: "unknown",
-      }),
-    );
+    // without inventing a replacement generation. Masking is not a semantic
+    // change, so it leaves changedAt alone.
+    replaceState(id, masked(current, "unknown"));
   }
 }
 
@@ -486,7 +763,7 @@ export async function pollAgentProcesses(): Promise<void> {
 export const selectTerminalRollup = (
   store: AgentRuntimeStore,
   terminalIds?: readonly string[],
-): AgentRollup =>
+): AgentRollup | null =>
   rollupAgentStates(
     terminalIds
       ? terminalIds.map((id) => store.states[id])
@@ -496,7 +773,7 @@ export const selectTerminalRollup = (
 export const selectWorkspaceRollup = (
   store: AgentRuntimeStore,
   workspacePaths: readonly string[],
-): AgentRollup => {
+): AgentRollup | null => {
   const paths = new Set(workspacePaths);
   return rollupAgentStates(
     Object.values(store.states).filter((state) => paths.has(state.workspacePath)),

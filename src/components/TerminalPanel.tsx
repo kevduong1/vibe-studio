@@ -13,7 +13,10 @@ import { useWorkspace } from "../stores/workspaces";
 import { getSession } from "../lib/termSessions";
 import { setTerminalNotifications } from "../lib/agentNotifications";
 import { copyText } from "../lib/clipboard";
-import { useAgentRuntimeStore } from "../stores/agentRuntime";
+import {
+  setAgentPaneVisibility,
+  useAgentRuntimeStore,
+} from "../stores/agentRuntime";
 import {
   agentStateTooltip,
   displayAgentState,
@@ -61,9 +64,27 @@ const TerminalPane = memo(function TerminalPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
 
+  // Acknowledge on REAL visibility (see AgentDock's twin): the dock-tab flag
+  // ignores a hidden/maximized panel, an inactive workspace, and the other
+  // panel group — all display:none, all offsetParent null. The host's
+  // ResizeObserver fires on the actual reveal.
   useEffect(() => {
-    if (visible && document.hasFocus()) getSession(terminal.id)?.acknowledge();
-  }, [terminal.id, visible]);
+    const host = hostRef.current;
+    if (!host) return;
+    const isWatched = () => host.offsetParent !== null && document.hasFocus();
+    const ack = () => {
+      if (isWatched()) getSession(terminal.id)?.acknowledge();
+    };
+    ack();
+    const ro = new ResizeObserver(ack);
+    ro.observe(host);
+    // Same live predicate the runtime's ambient sweep needs (see AgentDock).
+    const unwatch = setAgentPaneVisibility(terminal.id, isWatched);
+    return () => {
+      unwatch();
+      ro.disconnect();
+    };
+  }, [terminal.id]);
 
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
   const agentPresent = terminal.kind !== "shell" || runtime?.occupancy === "present";

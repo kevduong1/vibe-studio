@@ -200,7 +200,8 @@ function WorkspaceTab({
   onContext: (path: string, e: ReactMouseEvent) => void;
   onRenameStart: () => void;
   onRenameEnd: () => void;
-  activity: AgentRollup;
+  /** null = no agent anywhere in this tab's terminals. */
+  activity: AgentRollup | null;
   groupWorkspaces?: Workspace[];
   title?: string;
 }) {
@@ -245,7 +246,7 @@ function WorkspaceTab({
         <>
           <GroupFolderBadge workspaces={groupWorkspaces} activePath={ws.path} />
           <ActivityGlyph
-            activity={activity}
+            activity={activity ?? "idle"}
             idle={null}
             color={paletteColor(colorIndex)}
           />
@@ -255,7 +256,7 @@ function WorkspaceTab({
            carrier). The inline styles outrank Titlebar.css's .ws-tab > svg
            fg-dim rule and the activity classes' default colors. */
         <ActivityGlyph
-          activity={activity}
+          activity={activity ?? "idle"}
           idle={<IcFolder style={{ color: paletteColor(colorIndex) }} />}
           color={paletteColor(colorIndex)}
         />

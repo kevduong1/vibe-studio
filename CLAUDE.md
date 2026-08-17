@@ -22,9 +22,9 @@ behavior still requires manual verification. All agents should also follow
 | `src/lib/path.ts` | Shared POSIX-path helpers (`basename`, `dirname`, `isMarkdownPath`) — import these, don't redefine per file |
 | `src/lib/fuzzy.ts` | Hand-rolled two-phase fuzzy matcher for quick open: O(n) subsequence reject over the whole list, then a scoring DP (boundary/camelCase/basename/consecutive bonuses) returning matched positions for highlighting |
 | `src/lib/graphLayout.ts` | Pure lane-layout algorithm for the commit graph (algorithm documented in-file); lane colors are resolved CSS strings handed out by the caller's `LaneColorFn` where a lane OPENS (default: the rotating `--graph-N` palette) |
-| `src/lib/agentState.ts` | Pure semantic agent model: occupancy/lifecycle/authority types, derived display state, rollup priority, labels/tooltips, and notification-edge selection |
-| `src/lib/agentProfiles.ts` | Independently authored Claude/Codex screen-detection profiles; bounded near-tail rules for blocked/working/idle evidence |
-| `src/lib/terminalActivity.ts` | Generic lifecycle fallback for dedicated agent terminals: sustained output, BEL/OSC 9/777 notifications, quiet completion, and OSC 133/633 shell marks |
+| `src/lib/agentState.ts` | Pure semantic agent model: occupancy/lifecycle/authority types, derived display state (blocked outranks the starting/launch grace), rollup priority (`rollupAgentStates` skips absent states and returns `null` when nothing is present, distinct from idle), labels/tooltips, and notification-edge selection |
+| `src/lib/agentProfiles.ts` | Independently authored Claude/Codex screen-detection profiles; box-frame/rule-line normalization (`normalizeAgentScreenLines`) and bounded near-tail rules for blocked/working/idle evidence |
+| `src/lib/terminalActivity.ts` | Generic lifecycle fallback for dedicated/discovered agents: sustained normal- or alternate-screen output (runtime occupancy prevents ordinary TUI false positives), BEL/OSC 9/777 notifications, a `completed` turn-boundary signal reported for every stretch regardless of ping-worthiness, and OSC 133/633 shell marks that supply exact stretch boundaries only (never busy ownership for a whole agent session) |
 | `src/lib/termSession.ts` / `trackedCommand.ts` | Framework-free xterm+PTY session (attach/detach reparenting; ONLY `dispose()` kills the PTY); semantic screen inspection/acknowledgement, `XTERM_THEME`, and the multiline nonce-bound check-command wrapper live here |
 | `src/lib/termSessions.ts` | Session registry for ALL dock terminals (`getOrCreateSession`/`getSession`/`disposeSession`) — sessions outlive React unmounts |
 | `src/lib/agentSessions.ts` / `agentLaunchProgram.ts` / `agentCheckpointPrompt.ts` | Global-agent glue on the registry: semantic metadata, close paths, setup-before-baseline plus launch-shell environment, shared raw-Enter checkpoint handling, and intentional `claude`/`codex --yolo` launch defaults; restored layouts intentionally remain fresh shells |
@@ -55,7 +55,7 @@ behavior still requires manual verification. All agents should also follow
 | `src/stores/editor.ts` | Per-workspace editor-tab store factory (`Tab = file \| diff \| memory \| preview`), dirty tracking, session-only preview creation/orientation plus teardown ownership (`pendingPreviewDisposals` survives tab removal until native close succeeds), `closeTabSafely(store, id)` / batch `closeTabsSafely` (confirm unsaved), `openFile(path, at?)` + nonce-gated `reveal` request (cursor-to-line, consumed by Editor.tsx), `retargetFileTabs(from, to)` (explorer renames/moves — drops dirty flags, drafts die with the old tab id) |
 | `src/stores/search.ts` | Per-workspace search store factory (⌘⇧F state: query/toggles/results); 250 ms debounce + sequence-number stale-result guard live in the store closure |
 | `src/stores/terminal.ts` | Per-workspace terminal dock store factory (shell/Claude/Codex tabs, dockTree layout, ephemeral notification toggles, NOT persisted; never touches xterm or IPC) |
-| `src/stores/agentRuntime.ts` | One ephemeral semantic runtime store for both docks: registration, occupancy polling, generation-safe transitions, authority fallback, acknowledgement, and workspace/group rollup selectors |
+| `src/stores/agentRuntime.ts` | One ephemeral semantic runtime store for both docks: registration, occupancy polling, generation-safe transitions, a per-generation work-stretch flag that drives unseen Done, confirmed output overriding Claude's ambiguous always-painted idle composer, other screen authority yielding to contradicting activity after 15s staleness (blocked excepted), a one-shot post-prompt completion-boundary set that can additionally clear an osc-only (ring-only) blocked prompt, a 1 Hz ambient reconcile on the shared poll tick reading pane visibility live off the DOM (`setAgentPaneVisibility`), acknowledgement, and workspace/group rollup selectors |
 | `src/stores/agentTasks.ts` | Session-only generation-owned task/review store: cheap launch HEAD + async stable fingerprints, sequence-guarded/shared refreshes, runtime reconciliation after frontend hot reload, independent human review/check states, and stable inbox attention age |
 | `src/stores/agentTerminals.ts` | GLOBAL terminal-groupings store: any number of named dockTree layouts (`groupings`, one panel tab each; `activeGroupingId`) over ONE shared terminals map, terminal↔project bindings, deletion-aware last-workspace navigation memory, deduped default titles, ephemeral live pane titles (`paneTitle`), per-terminal `notificationsEnabled` opt-in, localStorage persistence (`vibe-studio:agent-terminals`, v3; older layouts migrate on load), and `groupingDockStore(id)` — the cached per-grouping read-only store facade the generic Dock consumes |
 | `src/stores/agentDefinitions.ts` | Typed built-in/custom agent definitions and launch profiles; visible `codex --yolo` default, stable definition IDs, command assembly, and restore/folder policy metadata |
@@ -224,20 +224,42 @@ cd src-tauri && cargo test      # backend unit tests
   the newest matching logical line wins. A transient process-table failure
   changes presentation to Unknown but retains last-known PID/generation and
   evidence until a successful poll proves replacement or absence.
-  Screen > OSC > activity; delayed evidence must match the occupant
-  generation. Read `docs/architecture/agent-runtime.md` before changing this
-  pipeline.
+  Structured/working screen evidence normally outranks OSC and activity, but
+  confirmed sustained output outranks Claude's always-painted idle composer;
+  delayed evidence must match the occupant generation. Read
+  `docs/architecture/agent-runtime.md` before changing this pipeline.
 - Agent PTYs set `TERM_PROGRAM=ghostty` so supported CLIs emit OSC 9/777
   notifications and OSC 0 titles. Known cost: TERM_PROGRAM-sniffing image CLIs
   may emit Kitty graphics xterm.js drops. PTY spawn also removes host-private
   `NO_COLOR`, `CODEX_CI`, `CODEX_THREAD_ID`, and Codex-forced pager settings;
   otherwise a dev app launched from an agent silently changes its child CLIs.
   The login shell may set them again intentionally.
-- Semantic **Done** is derived from a present agent becoming idle in the
-  background and remaining unseen. Viewing acknowledges Done; viewing blocked
+- Semantic **Done** is derived from a work stretch (a per-generation flag, not
+  working→idle adjacency) that ended while the pane was unseen — an unanswered
+  blocked prompt going quiet, or idle reached fresh after launch with no
+  intervening stretch, is plain idle instead. A pane counts as watched only
+  when it is visible (`offsetParent !== null`) AND the app is foreground.
+  Blocked is retained through an inconclusive screen read and through
+  viewing/acknowledgement (acknowledgement clears only the activity tracker's
+  attention ping, never its `completed` turn-boundary signal); a still-latched
+  notification under an existing prompt is corroboration, not a new prompt,
+  and must not rewrite its reason/rule. Resumed work (a `busy` activity
+  signal) always wins and clears blocked regardless of authority, but for a
+  screen-authority prompt only indirectly — via the next inconclusive/unknown
+  screen read handing off to the activity fallback, not a direct override.
+  The `completed` turn-boundary signal, by contrast, IS authority-gated: it
+  can only clear an osc-only prompt (no corroborating screen read), and only
+  when observed strictly after the ring that established it (`completionSeen`,
+  one-shot); a screen-authority prompt is never cleared by `completed` alone.
+  Process exit/replacement unconditionally resets lifecycle regardless of the
+  above. Viewing acknowledges Done; viewing blocked
   only dismisses its alert and MUST NOT clear lifecycle without new evidence.
-  Rollup priority is blocked > done > working > idle/unknown/absent. Runtime
-  and seen state are never persisted; restored global tabs are fresh shells.
+  An acknowledged prompt stays seen
+  while the SAME prompt (generation+reason+matchedRule) keeps re-classifying;
+  a genuinely new prompt (including re-entry after acknowledgement) alerts
+  again. Rollup priority is blocked > done > working > idle/unknown/absent.
+  Runtime and seen state are never persisted; restored global tabs are fresh
+  shells.
 - Every detected dedicated-agent generation owns one session-only `AgentTask`.
   Lifecycle and review are independent: Done never means checks passed.
   Shared-checkout review scope is the entire repository since base HEAD;
@@ -274,8 +296,14 @@ cd src-tauri && cargo test      # backend unit tests
   terminal-input slot before sending. Dispatch resets the screen-evidence
   boundary; a committed user/automation turn gates later queued input until
   generation-owned post-boundary output reaches a stable non-unknown semantic
-  state, including fast idle-to-idle turns. Do not infer turn completion from
-  `pty_write` returning. Timeout or
+  state, including fast idle-to-idle turns. Settlement counts landed
+  classifications (one per debounce-settled screen inspection, not per raw
+  PTY write) and excludes the dispatch echo: the first landed classification
+  after dispatch is the CLI echoing the submitted prompt into its own
+  composer, so at least one further landing is required before a non-unknown
+  classification counts as settled (`promptTurnSettledByScreen`,
+  `DISPATCH_ECHO_LANDINGS`). Do not infer turn completion from `pty_write`
+  returning. Timeout or
   cancellation removes pending text before it can reach the PTY. Never
   persist a prompt queue, truncate instructions silently, or retarget it after
   process replacement. Multiline

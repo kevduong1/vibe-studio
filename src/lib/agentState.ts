@@ -46,27 +46,38 @@ export const displayAgentState = (state?: AgentRuntimeState): AgentDisplayState 
   if (!state || state.occupancy === "absent" || state.occupancy === "exited") {
     return "absent";
   }
-  if (state.occupancy === "starting") return "starting";
   if (state.occupancy === "unknown") return "unknown";
+  // Blocked outranks the launch grace: an agent that asks for permission
+  // before its PID has been captured is still waiting for the user, and
+  // presenting that as "Working" both hides the prompt and dismisses its
+  // alert.
   if (state.lifecycle === "blocked") return "blocked";
+  if (state.occupancy === "starting") return "starting";
   if (state.lifecycle === "working") return "working";
   if (state.lifecycle === "idle") return state.seen ? "idle" : "done";
   return "unknown";
 };
 
-const PRIORITY: Record<AgentRollup, number> = {
+/** The one rollup ordering: blocked > done > working > idle. Chrome that
+ *  sorts or compares rolled-up activity reads it from here. */
+export const ROLLUP_PRIORITY: Record<AgentRollup, number> = {
   idle: 0,
   working: 1,
   done: 2,
   blocked: 3,
 };
 
+/** `null` means there is nothing to roll up — no state in the set has an
+ *  agent present. That is deliberately distinct from `"idle"` (an agent is
+ *  present and quiet), so chrome can hide itself instead of claiming a
+ *  terminal is idle when it holds an ordinary shell. */
 export const rollupAgentStates = (
   states: Iterable<AgentRuntimeState | undefined>,
-): AgentRollup => {
-  let best: AgentRollup = "idle";
+): AgentRollup | null => {
+  let best: AgentRollup | null = null;
   for (const state of states) {
     const display = displayAgentState(state);
+    if (display === "absent") continue;
     const level: AgentRollup =
       display === "blocked"
         ? "blocked"
@@ -75,7 +86,7 @@ export const rollupAgentStates = (
           : display === "working" || display === "starting"
             ? "working"
             : "idle";
-    if (PRIORITY[level] > PRIORITY[best]) best = level;
+    if (best === null || ROLLUP_PRIORITY[level] > ROLLUP_PRIORITY[best]) best = level;
   }
   return best;
 };
@@ -131,6 +142,11 @@ export const agentStateTooltip = (state: AgentRuntimeState): string => {
 
 export type AgentAlertAction = "blocked" | "done" | "dismiss" | "none";
 
+const blockedUnseen = (
+  state: AgentRuntimeState | undefined,
+  display: AgentDisplayState,
+): boolean => Boolean(state) && display === "blocked" && !state!.seen;
+
 /** Pure notification-edge selector. Redraws of an unchanged semantic state
  * return none; acknowledgement and every terminal state that supersedes an
  * alert return dismiss. */
@@ -151,10 +167,17 @@ export const agentAlertAction = (
     previous.lifecycle === current.lifecycle &&
     previous.seen === current.seen
   ) return "none";
-  if (current && !current.seen && after === "blocked" && before !== "blocked") {
+  // Entering blocked-and-unseen from anything else is the edge — including
+  // from an acknowledged blocked state, which is how a second prompt in the
+  // same turn gets its alert. A redraw of the same unseen prompt stays inside
+  // blocked-unseen and returns none.
+  if (blockedUnseen(current, after) && !blockedUnseen(previous, before)) {
     return "blocked";
   }
   if (current && after === "done" && before !== "done") return "done";
+  // `starting` dismisses because a launch supersedes the previous occupant's
+  // alert — a blocked lifecycle displays as blocked even during the launch
+  // grace, so a live prompt never reaches this branch.
   if (
     !current ||
     current.seen ||

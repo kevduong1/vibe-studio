@@ -21,7 +21,11 @@ import {
   ptySpawn,
   ptyWrite,
 } from "./ipc";
-import { boundedLogicalTail, classifyAgentScreen } from "./agentProfiles";
+import {
+  boundedLogicalTail,
+  classifyAgentScreen,
+  normalizeAgentScreenLines,
+} from "./agentProfiles";
 import type { AgentKind, AgentRuntimeState } from "./agentState";
 import {
   acknowledgeAgentRuntime,
@@ -131,24 +135,82 @@ export function semanticRuntimeTransitionAction(
 }
 
 export interface SemanticDebounceWindow {
-  key: string | null;
+  /** Lifecycle episode that owns the bounded maximum. */
+  episode: string | null;
   since: number | null;
 }
 
-/** Preserve the bounded debounce only while equivalent semantic evidence is
- * repeating. A changed classification gets its own full stability window. */
+/** Bound the debounce per pending LIFECYCLE, not per matched rule. Two rules
+ * that alternate while describing the same lifecycle — a spinner frame and a
+ * footer hint, say — must not restart the maximum on every write, or the
+ * classification never lands. A genuine lifecycle change still gets its own
+ * full stability window. */
 export function advanceSemanticDebounceWindow(
   previous: SemanticDebounceWindow,
-  key: string,
+  episode: string,
   now: number,
 ): { window: SemanticDebounceWindow; remaining: number } {
-  const since = previous.key === key && previous.since !== null
+  const since = previous.episode === episode && previous.since !== null
     ? previous.since
     : now;
   return {
-    window: { key, since },
+    window: { episode, since },
     remaining: SEMANTIC_MAX_DEBOUNCE_MS - (now - since),
   };
+}
+
+/** One xterm physical buffer row, reduced to what classification needs. */
+export interface ScreenRow {
+  text: string;
+  /** The row continues the previous one (xterm reflowed a long line). */
+  isWrapped: boolean;
+}
+
+/**
+ * Join wrapped physical rows into logical lines, then drop the blank rows
+ * xterm pre-fills its buffer with. A fresh or short screen is mostly empty
+ * rows; left in place they occupy every rule's small tailLines window and
+ * push the only evidence on screen out of range. Interior blank lines stay —
+ * both CLIs use them to space dialog content.
+ */
+export function logicalLinesFromRows(rows: readonly ScreenRow[]): string[] {
+  const logical: string[] = [];
+  for (const row of rows) {
+    if (row.isWrapped && logical.length > 0) logical[logical.length - 1] += row.text;
+    else logical.push(row.text);
+  }
+  while (logical.length > 0 && logical[logical.length - 1].trim() === "") logical.pop();
+  return logical;
+}
+
+export interface ScreenBoundaryProbe {
+  /** xterm buffer type: `normal` or `alternate`. */
+  bufferType: string;
+  /** Visible viewport height. */
+  rows: number;
+  /** Index of the last row holding content, or -1 for a blank buffer. */
+  lastContentRow: number;
+}
+
+/**
+ * First buffer row a boundary reset makes eligible as evidence.
+ *
+ * The cursor row is the wrong anchor. Both CLIs redraw a bottom-anchored
+ * frame, so rows BELOW the cursor survive a reset as stale evidence, while
+ * the rows a repaint rewrites ABOVE it are excluded. Anchor on the end of
+ * content instead, less one viewport: a TUI repaint can only rewrite rows
+ * that are currently on screen, so content a full screen above the reset
+ * point is true scrollback and can never become this generation's evidence.
+ *
+ * The alternate screen has no scrollback and Codex repaints the whole
+ * viewport every frame, so a row boundary is meaningless there — the viewport
+ * is post-boundary in full and stability comes from the classification
+ * debounce instead. (A row boundary would otherwise pin itself near baseY=0
+ * and permanently collapse the window to the last few rows.)
+ */
+export function semanticBoundaryFirstLine(probe: ScreenBoundaryProbe): number {
+  if (probe.bufferType === "alternate") return 0;
+  return Math.max(0, probe.lastContentRow + 1 - Math.max(1, probe.rows));
 }
 
 export interface TermSessionOptions {
@@ -255,7 +317,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
   let unRuntime: (() => void) | null = null;
   let semanticTimer: number | null = null;
   let semanticPendingSince: number | null = null;
-  let semanticPendingKey: string | null = null;
+  let semanticPendingEpisode: string | null = null;
   let semanticBoundary: { bufferType: string; firstLine: number } | null = null;
   let semanticBoundaryArmed = false;
   const tracked = new Map<
@@ -428,6 +490,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     maxLines: number,
     maxChars: number,
     firstLine = 0,
+    normalize = false,
   ): string[] => {
     const lineLimit = Math.max(0, Math.floor(maxLines));
     const charLimit = Math.max(0, Math.floor(maxChars));
@@ -438,27 +501,51 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       firstLine,
       buffer.length - Math.max(120, lineLimit * 8),
     );
-    const logical: string[] = [];
+    const rows: ScreenRow[] = [];
     for (let y = first; y < buffer.length; y++) {
       const line = buffer.getLine(y);
       if (!line) continue;
-      const text = line.translateToString(true);
-      if (line.isWrapped && logical.length > 0) logical[logical.length - 1] += text;
-      else logical.push(text);
+      rows.push({ text: line.translateToString(true), isWrapped: line.isWrapped });
     }
-    return boundedLogicalTail(logical, lineLimit, charLimit);
+    // Normalize BEFORE the bound so the caps count evidence lines: applied
+    // afterwards, every box border the classifier discards would still have
+    // spent one of the caller's lines. The row collection above is already
+    // wider than the cap, so this costs no extra buffer reads and the bound
+    // stays the authoritative privacy limit.
+    const logical = logicalLinesFromRows(rows);
+    return boundedLogicalTail(
+      normalize ? normalizeAgentScreenLines(logical) : logical,
+      lineLimit,
+      charLimit,
+    );
   };
 
+  /** Verbatim context peek: the user is shown real terminal content, so the
+   * CLI's own framing stays in place. */
   const readTail = (maxLines: number, maxChars: number): string[] =>
     readLogicalTail(maxLines, maxChars);
+
+  /** Bounded backward scan for the end of painted content. One viewport is
+   * enough: anything older is scrollback the boundary already excludes. */
+  const lastContentRow = (): number => {
+    const buffer = term.buffer.active;
+    const floor = Math.max(0, buffer.length - term.rows);
+    for (let y = buffer.length - 1; y >= floor; y--) {
+      const line = buffer.getLine(y);
+      if (line && line.translateToString(true).trim() !== "") return y;
+    }
+    return floor - 1;
+  };
 
   const resetSemanticBoundary = () => {
     const buffer = term.buffer.active;
     semanticBoundary = {
       bufferType: buffer.type,
-      // Include the cursor's current line: the launch command and its first
-      // response can append to it without increasing buffer.length.
-      firstLine: buffer.baseY + buffer.cursorY,
+      firstLine: semanticBoundaryFirstLine({
+        bufferType: buffer.type,
+        rows: term.rows,
+        lastContentRow: lastContentRow(),
+      }),
     };
   };
 
@@ -467,7 +554,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     const firstLine = semanticBoundary?.bufferType === buffer.type
       ? semanticBoundary.firstLine
       : 0;
-    return readLogicalTail(40, 16 * 1024, firstLine);
+    return readLogicalTail(40, 16 * 1024, firstLine, true);
   };
 
   // 6973 is app-private. Returning true consumes the marker before xterm
@@ -499,7 +586,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     if (semanticTimer !== null) window.clearTimeout(semanticTimer);
     semanticTimer = null;
     semanticPendingSince = null;
-    semanticPendingKey = null;
+    semanticPendingEpisode = null;
   };
 
   const inspectSemanticScreen = () => {
@@ -507,7 +594,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     const state = useAgentRuntimeStore.getState().states[id];
     if (!state) return;
     const generation = state.generation;
-    const classification = classifyAgentScreen(state.kind, logicalScreenTail());
+    const classification = classifyAgentScreen(state.kind, logicalScreenTail(), true);
     const delay = classification.strong
       ? 0
       : classification.lifecycle === "idle"
@@ -515,49 +602,47 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
         : classification.lifecycle === "working"
           ? 180
           : 250;
-    if (classification.strong) {
-      clearSemanticTimer();
+    // A landing is the unit of prompt-turn evidence, not a write: PTY output
+    // arrives in reader-sized chunks, so one echoed prompt can span several
+    // writes, but the debounce coalesces them into a single landing.
+    const land = () => {
+      noteAgentPromptOutput(id, generation);
       applyAgentScreen(id, generation, classification, watched());
       settleAgentPromptTurn(id, generation, classification);
+    };
+    if (classification.strong) {
+      clearSemanticTimer();
+      land();
       return;
     }
     const now = Date.now();
-    const key = [
-      generation,
-      classification.lifecycle,
-      classification.reason ?? "",
-      classification.matchedRule ?? "",
-    ].join(":");
+    const episode = `${generation}:${classification.lifecycle}`;
     const advanced = advanceSemanticDebounceWindow(
-      { key: semanticPendingKey, since: semanticPendingSince },
-      key,
+      { episode: semanticPendingEpisode, since: semanticPendingSince },
+      episode,
       now,
     );
-    semanticPendingKey = advanced.window.key;
+    semanticPendingEpisode = advanced.window.episode;
     semanticPendingSince = advanced.window.since;
     const { remaining } = advanced;
     if (semanticTimer !== null) window.clearTimeout(semanticTimer);
     if (remaining <= 0) {
       semanticTimer = null;
       semanticPendingSince = null;
-      semanticPendingKey = null;
-      applyAgentScreen(id, generation, classification, watched());
-      settleAgentPromptTurn(id, generation, classification);
+      semanticPendingEpisode = null;
+      land();
       return;
     }
     semanticTimer = window.setTimeout(() => {
       semanticTimer = null;
       semanticPendingSince = null;
-      semanticPendingKey = null;
-      applyAgentScreen(id, generation, classification, watched());
-      settleAgentPromptTurn(id, generation, classification);
+      semanticPendingEpisode = null;
+      land();
     }, Math.min(delay, remaining));
   };
-  const semanticSub = semanticEnabled ? term.onWriteParsed(() => {
-    const state = useAgentRuntimeStore.getState().states[id];
-    if (state) noteAgentPromptOutput(id, state.generation);
-    inspectSemanticScreen();
-  }) : null;
+  const semanticSub = semanticEnabled
+    ? term.onWriteParsed(() => inspectSemanticScreen())
+    : null;
   const onWindowFocus = () => {
     if (el.offsetParent !== null) acknowledgeAgentRuntime(id);
   };
@@ -588,8 +673,10 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
         // project dir) would close the terminal and destroy its own error
         // output — keep the corpse readable instead.
         if (code && Date.now() - spawnedAt < EARLY_EXIT_MS) {
-          // No more output is coming: retire the tracker now so a busy
-          // indicator can't sit stuck until its 30s failsafe.
+          // No more output is coming, so no quiet window will ever close on
+          // its own: retire the tracker now rather than let the spinner ride
+          // out its quiet timer and then announce a completed stretch that
+          // was really a crash.
           tracker?.dispose();
           tracker = null;
           applyAgentActivity(id, { busy: false, attention: false }, watched());

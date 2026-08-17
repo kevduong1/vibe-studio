@@ -10,16 +10,22 @@
  *    shows, so a lone redraw burst (the SIGWINCH repaint when a pane is
  *    dragged or refit) never blips it. Silent commands (`sleep 5`) are
  *    intentionally missed — better than a spinner that can get stuck on.
- *    Alternate-screen TUIs (vim, htop) repaint constantly without "working"
- *    in any meaningful sense, so they never count.
+ *    Alternate-screen output is tracked too because Codex uses that buffer.
+ *    The semantic runtime applies these signals only while process polling
+ *    proves a supported agent is present, so an ordinary vim/htop session in
+ *    a discovery-enabled shell cannot become agent work.
+ *  - completed: a confirmed stretch whose quiet survived PING_GRACE_MS — the
+ *    turn is over. This is the semantic signal (the runtime store turns it
+ *    into idle, and into unseen Done when the stretch ran unwatched); it is
+ *    reported for every stretch, however short and whoever was watching.
+ *    Bursty jobs whose output merely stalls resume within the grace and keep
+ *    their original stretch, so a mid-turn pause never announces completion.
  *  - attention: BEL / OSC 9 / OSC 777 notifications (pty.rs masquerades as a
  *    notification-capable TERM_PROGRAM so agent CLIs actually send these),
- *    plus a busy stretch ≥ ATTENTION_MIN_BUSY_MS ending while the pane was
- *    unwatched ("finished or wants input while you were away") — unwatched
- *    both when the stretch ends and when the grace expires: a user who
- *    watched the end and then left doesn't need to be called back. A stretch
- *    only "ends" once quiet survives PING_GRACE_MS — bursty jobs whose
- *    output merely stalls resume within it and keep their original stretch.
+ *    plus a completing stretch ≥ ATTENTION_MIN_BUSY_MS that ended while the
+ *    pane was unwatched ("finished or wants input while you were away") —
+ *    unwatched both when the stretch ends and when the grace expires: a user
+ *    who watched the end and then left doesn't need to be called back.
  *    Attention clears when the user types in or clicks into the pane
  *    (acknowledge) — never from the output path: xterm fires onWriteParsed
  *    for the very chunk that delivered a notification, and onData also fires
@@ -27,12 +33,17 @@
  *    both must be guarded or a ping would wipe itself before being seen.
  *
  * When OSC 133/633 semantic-prompt marks ARE present (iTerm2 / VS Code shell
- * integration sourced in the user's zshrc), they own busy/idle exactly and
- * the output heuristic stands down — until marks go stale mid-stream (e.g.
- * an ssh session with remote integration ended), which falls back. Marks are
- * only ever emitted at command boundaries, so staleness is only judged while
- * idle (a healthy prompt re-marks); a busy command's output never goes
- * "stale", no matter how long it runs.
+ * integration sourced in the user's zshrc), they supply exact command
+ * boundaries: C starts a stretch immediately (no onset debounce) and A/B/D
+ * end one immediately (no grace). They do NOT own busy for the duration in
+ * between, because these trackers exist for agent panes: an agent CLI is one
+ * long command, emitting a single C at launch and no D until it exits, so
+ * mark-owned busy would report "working" for the entire session and drown
+ * every quiet turn boundary. Between marks the ordinary quiet heuristic runs,
+ * which costs a silent shell command its spinner (`sleep 60` under shell
+ * integration) but never reports a turn that did not happen. Marks going
+ * stale mid-stream (an ssh session with remote integration ended) drops the
+ * tracker back to pure heuristics, so OSC 9 progress is honoured again.
  */
 import type { Terminal } from "@xterm/xterm";
 import type { AgentActivitySignal } from "../stores/agentRuntime";
@@ -50,15 +61,17 @@ const QUIET_MS = 600;
 /** Quiet must survive this long before it counts as "the work ended". */
 const PING_GRACE_MS = 3000;
 /**
- * Only busy stretches at least this long raise attention when they end
+ * Only busy stretches at least this long raise ATTENTION when they end
  * unwatched, so short unattended bursts (dev-server rebuilds, the odd log
- * line) don't ping the workspace tab.
+ * line) don't ping the workspace tab. It deliberately no longer gates
+ * semantic completion: a five-second floor on `completed` meant quick agent
+ * turns never settled at all (no idle, no Done). The floor stays where its
+ * noise argument holds — the ping — and the turn boundary is reported
+ * regardless.
  */
 const ATTENTION_MIN_BUSY_MS = 5000;
 /** Output with no mark for this long = shell integration died; fall back. */
 const MARK_STALE_MS = 10_000;
-/** Failsafe so integrated busy can't be stranded if the final mark is lost. */
-const INTEGRATED_QUIET_MS = 30_000;
 
 export interface ActivityTracker {
   /** User clicked into the pane — acknowledge (clear) any attention. */
@@ -77,6 +90,8 @@ export function trackActivity(
   let busy = false;
   let attention = false;
   let attentionSource: AgentActivitySignal["attentionSource"];
+  /** A stretch ended and stayed ended — the turn boundary the store needs. */
+  let completed = false;
   /** Start of the current busy stretch; survives sub-grace output stalls. */
   let busySince = 0;
   /** First output of a not-yet-confirmed heuristic stretch (0 = none). */
@@ -84,34 +99,42 @@ export function trackActivity(
   let lastOutputAt = 0;
   let lastInputAt = 0;
   let lastMarkAt = 0;
-  /** OSC 133/633 marks seen — they own busy/idle, heuristics stand down. */
+  /** OSC 133/633 marks seen — they supply exact command boundaries. */
   let integrated = false;
-  /**
-   * The integrated quiet failsafe ended a stretch without a completion
-   * signal; a D mark arriving later may still owe that stretch its ping.
-   */
-  let quietEnded = false;
   /** Skip the onWriteParsed of a chunk that only delivered a notification. */
   let skipWrite = false;
+  /**
+   * The user reached the pane while a stretch was settling: the pending
+   * completion must still be reported (it is the only turn boundary the
+   * runtime gets) but it no longer deserves an attention ping.
+   */
+  let pingSuppressed = false;
   let quietTimer: number | null = null;
   let pingTimer: number | null = null;
 
-  const update = (
-    nextBusy: boolean,
-    nextAttention: boolean,
-    nextSource: AgentActivitySignal["attentionSource"] = nextAttention
-      ? attentionSource
-      : undefined,
-  ) => {
+  const update = (patch: Partial<AgentActivitySignal>) => {
+    const nextBusy = patch.busy ?? busy;
+    const nextAttention = patch.attention ?? attention;
+    const nextSource = nextAttention
+      ? (patch.attentionSource ?? attentionSource)
+      : undefined;
+    const nextCompleted = patch.completed ?? completed;
     if (
       nextBusy === busy &&
       nextAttention === attention &&
-      nextSource === attentionSource
+      nextSource === attentionSource &&
+      nextCompleted === completed
     ) return;
     busy = nextBusy;
     attention = nextAttention;
     attentionSource = nextSource;
-    onChange({ busy, attention, ...(attentionSource && { attentionSource }) });
+    completed = nextCompleted;
+    onChange({
+      busy,
+      attention,
+      ...(attentionSource && { attentionSource }),
+      ...(completed && { completed }),
+    });
   };
 
   const stopQuietTimer = () => {
@@ -126,58 +149,53 @@ export function trackActivity(
       pingTimer = null;
     }
   };
-  const armQuietTimer = (ms: number, onQuiet: () => void = endBusy) => {
+  const armQuietTimer = (ms: number) => {
     stopQuietTimer();
-    quietTimer = window.setTimeout(onQuiet, ms);
+    quietTimer = window.setTimeout(() => endBusy(), ms);
   };
 
   /**
    * Output stopped (or progress was cleared): the busy indicator drops now,
-   * but whether this deserves a ping is decided only once the quiet survives
-   * the grace window — output resuming in time cancels it (same stretch).
+   * but the turn is only declared over once the quiet survives the grace
+   * window — output resuming in time cancels it (same stretch). Whether the
+   * completion also deserves a ping is decided at the same moment.
    */
   const endBusy = () => {
     stopQuietTimer();
     pendingSince = 0; // an unconfirmed candidate went quiet — never was work
     if (!busy) return;
-    update(false, attention);
+    update({ busy: false });
     const stretch = lastOutputAt - busySince;
     // "Ended while you were away" means unwatched at the END of the stretch
     // too, not just when the grace expires — a user who watched the command
     // finish and then switched away mustn't be pinged back.
     const endedWatched = watched();
     stopPingTimer();
+    pingSuppressed = false;
     pingTimer = window.setTimeout(() => {
       pingTimer = null;
-      if (!endedWatched && !watched() && stretch >= ATTENTION_MIN_BUSY_MS) {
-        update(busy, true, "completion");
-      }
+      const ping =
+        !pingSuppressed &&
+        !endedWatched &&
+        !watched() &&
+        stretch >= ATTENTION_MIN_BUSY_MS;
+      update(
+        ping
+          ? { completed: true, attention: true, attentionSource: "completion" }
+          : { completed: true },
+      );
     }, PING_GRACE_MS);
-  };
-
-  /**
-   * Integrated-mode failsafe quiet: recover a stranded busy indicator (lost
-   * D mark, silent command) WITHOUT treating it as a completion — no ping.
-   * quietEnded lets a D mark that does arrive late still earn its ping.
-   */
-  const endBusyQuietly = () => {
-    stopQuietTimer();
-    pendingSince = 0;
-    if (!busy) return;
-    quietEnded = true;
-    update(false, attention);
   };
 
   const beginBusy = () => {
     lastOutputAt = Date.now();
-    quietEnded = false; // heuristic stretch supersedes any failsafe-ended one
     armQuietTimer(QUIET_MS);
     if (busy) return;
     if (pingTimer !== null) {
       // Resumed within grace: the same, already-proven stretch (original
-      // busySince) — no re-confirmation.
+      // busySince) — no re-confirmation, and the turn was never over.
       stopPingTimer();
-      update(true, attention);
+      update({ busy: true, completed: false });
       return;
     }
     // Debounced onset: a genuinely new stretch is only a candidate until
@@ -188,7 +206,7 @@ export function trackActivity(
     } else if (lastOutputAt - pendingSince >= BUSY_CONFIRM_MS) {
       busySince = pendingSince; // the stretch started at its first output
       pendingSince = 0;
-      update(true, attention);
+      update({ busy: true, completed: false });
     }
   };
 
@@ -196,7 +214,12 @@ export function trackActivity(
     // The chunk delivering a notification mustn't also start a busy stretch
     // (which is what its own onWriteParsed would do).
     skipWrite = true;
-    if (!watched()) update(busy, true, "notification");
+    // Recorded even while the pane is watched: the ring is evidence that the
+    // agent stopped for input, and dropping it left a still-pending prompt
+    // invisible the moment the user looked away. Watchedness decides only
+    // whether it arrives already acknowledged — the store reads that from
+    // the same watched() the caller passes it.
+    update({ attention: true, attentionSource: "notification" });
   };
 
   const disposables = [
@@ -205,34 +228,12 @@ export function trackActivity(
         skipWrite = false;
         return;
       }
-      if (integrated) {
-        // Staleness only applies while idle: marks come at command
-        // boundaries only, so a busy command's output is never "stale" —
-        // a long build must not flip back to the heuristic mid-command
-        // (busy flicker + false pings). A stranded busy (lost D mark) is
-        // the quiet failsafe's job, after which staleness applies again.
-        if (busy || Date.now() - lastMarkAt <= MARK_STALE_MS) {
-          lastOutputAt = Date.now(); // keep stretch accounting honest
-          if (busy) armQuietTimer(INTEGRATED_QUIET_MS, endBusyQuietly);
-          return;
-        }
-        // Marks are stale and the failsafe quietly ended a C-opened
-        // stretch: non-echo output means the command was merely silent
-        // (long link phase) and is still running — resume the SAME stretch
-        // (original busySince) so the eventual D mark's ping is honest and
-        // the heuristic stays out mid-command. Echo instead means the user
-        // is typing at a prompt the integration failed to mark: it died.
-        if (quietEnded && Date.now() - lastInputAt >= ECHO_MS) {
-          quietEnded = false;
-          lastOutputAt = Date.now();
-          armQuietTimer(INTEGRATED_QUIET_MS, endBusyQuietly);
-          update(true, attention);
-          return;
-        }
-        quietEnded = false;
-        integrated = false; // marks died mid-stream — heuristics take over
+      // Marks that stopped arriving while nothing is running (an ssh session
+      // with remote integration ended) mean the integration died; only then
+      // do mark-specific paths like OSC 9 progress come back.
+      if (integrated && !busy && Date.now() - lastMarkAt > MARK_STALE_MS) {
+        integrated = false;
       }
-      if (term.buffer.active.type === "alternate") return;
       if (Date.now() - lastInputAt < ECHO_MS) {
         // Echo can't start a busy stretch, but it keeps one alive.
         if (busy) armQuietTimer(QUIET_MS);
@@ -247,9 +248,11 @@ export function trackActivity(
       // the user while they're away.
       if (!watched()) return;
       lastInputAt = Date.now();
-      // The user responded — whatever wanted them has them now.
-      stopPingTimer();
-      if (attention) update(busy, false);
+      // The user responded — whatever wanted them has them now. The settling
+      // stretch still owes the runtime its boundary, so only the ping is
+      // cancelled; killing the timer would strand the turn as unknown.
+      pingSuppressed = true;
+      if (attention) update({ attention: false });
     }),
 
     term.onBell(notify),
@@ -265,30 +268,30 @@ export function trackActivity(
         integrated = true;
         lastMarkAt = Date.now();
         stopQuietTimer();
-        pendingSince = 0; // marks own busy/idle — drop any heuristic candidate
+        pendingSince = 0; // an exact boundary supersedes any heuristic candidate
         if (kind === "C") {
+          // An exact command start needs no onset debounce, but the stretch
+          // it opens is bounded by the ordinary quiet window — an agent's
+          // one session-long command must not read as one endless turn.
           if (!busy) busySince = lastMarkAt;
-          quietEnded = false;
           lastOutputAt = lastMarkAt;
           stopPingTimer();
-          // In case the D mark gets lost.
-          armQuietTimer(INTEGRATED_QUIET_MS, endBusyQuietly);
-          update(true, attention);
+          armQuietTimer(QUIET_MS);
+          update({ busy: true, completed: false });
         } else {
           // A/B/D all mean any in-flight command is over (A/B: the prompt
           // is back — the only signal a prompt-only integration ever
-          // sends). An explicit end pings immediately — no grace needed —
-          // but still only for stretches long enough to matter. busy may
-          // already have been dropped by the quiet failsafe (quietEnded);
-          // the stretch still counts. A pending heuristic grace ping keeps
-          // its own appointment — busy is false then, so this expression
-          // stays out of its way.
+          // sends). An explicit end completes immediately — no grace
+          // needed — and pings only for stretches long enough to matter. If
+          // the quiet window already dropped busy, its pending grace ping
+          // keeps its own appointment and owns the decision.
           const ping =
-            (busy || quietEnded) &&
-            !watched() &&
-            lastMarkAt - busySince >= ATTENTION_MIN_BUSY_MS;
-          quietEnded = false;
-          update(false, attention || ping, ping ? "completion" : attentionSource);
+            busy && !watched() && lastMarkAt - busySince >= ATTENTION_MIN_BUSY_MS;
+          update(
+            ping
+              ? { busy: false, completed: true, attention: true, attentionSource: "completion" }
+              : { busy: false, completed: true },
+          );
         }
         return true;
       }),
@@ -322,8 +325,15 @@ export function trackActivity(
   return {
     acknowledge: () => {
       if (disposed) return; // a click on a dead pane must not re-report
-      stopPingTimer(); // the user has seen it — don't ping after they leave
-      update(busy, false);
+      // The user has seen it — don't ping after they leave. The pending
+      // timer is deliberately left running: it carries the completion of a
+      // stretch that is still settling, and reaching the pane (a click, an
+      // inbox jump, a file drop, any reveal) must not delete the only turn
+      // boundary the runtime will ever see for that stretch.
+      pingSuppressed = true;
+      // Only the alert is cleared. The runtime keeps a blocked lifecycle
+      // until new terminal evidence changes it: viewing is not an answer.
+      update({ attention: false });
     },
     // Idempotent: a pane whose PTY died early disposes its tracker right
     // away (nothing further to track) and again on unmount.

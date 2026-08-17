@@ -28,13 +28,19 @@ fresh shells and correctly show **No Agent** until an agent is launched.
 - `generation`: incremented when an agent process appears or its PID changes
 
 Presentation is derived, never stored. In particular, **Done** means a present
-agent is idle after background work and `seen === false`. The display states
-are `starting`, `working`, `blocked`, `done`, `idle`, `unknown`, and `absent`.
-Done is therefore a turn-completion/attention state, not a judgment about the
-meaning of the final response: an agent can finish a turn with a conversational
-question and still be Done. **Needs Input** is reserved for explicit structured
-question/permission UI or a notification signal, where the terminal provides
-stronger evidence than arbitrary response prose.
+agent is `lifecycle === "idle"` with `seen === false`; the store (below) only
+ever sets `seen: false` on that idle transition when a work stretch actually
+ran, so by the time this pure derivation sees it, Done already excludes idle
+reached without background work. The display states are `starting`, `working`,
+`blocked`, `done`, `idle`, `unknown`, and `absent`. Blocked outranks the
+`starting`/launch-grace occupancy: an agent that asks for permission before its
+PID has even been captured still displays as blocked rather than Working, so
+the prompt and its alert are never hidden. Done is therefore a
+turn-completion/attention state, not a judgment about the meaning of the final
+response: an agent can finish a turn with a conversational question and still
+be Done. **Needs Input** is reserved for explicit structured question/permission
+UI or a notification signal, where the terminal provides stronger evidence
+than arbitrary response prose.
 
 `src/stores/agentRuntime.ts` is the one global ephemeral store. It includes
 both terminal scopes, so workspace and related-workspace rollups see project
@@ -55,84 +61,205 @@ IDs. The Rust backend:
 5. Returns only PID, parent/root matching-agent PIDs, executable basename, and
    foreground membership—never arguments or environment.
 
-A successful query with no match means `absent`. A query failure means
-`unknown`; it must never manufacture a false absence. The runtime retains the
-last-known PID, generation, child-process rows, and lifecycle evidence while
-the query authority is unavailable. Rediscovering that same PID restores the
-existing occupant without replacing its generation and immediately
-reclassifies the bounded screen tail, including output parsed during the
-outage. A process result that was already in flight cannot overwrite the
-stronger fact that the owning PTY exited. Unsupported platforms degrade to
-`unknown`. The process-table parser treats the complete final `comm` column as
-the executable path, including spaces. Generation checks reject delayed screen
-results from a previous agent occupant.
+A successful query with no match means `absent`, unless the terminal is still
+inside its launch grace (below), in which case it stays `starting` — the grace
+already owns that window and a masked `unknown` would only spend it early. A
+query failure on an otherwise-present occupant means `unknown`; it must never
+manufacture a false absence. The runtime retains the last-known PID,
+generation, child-process rows, and lifecycle evidence while the query
+authority is unavailable. This masking/unmasking of `occupancy` is bookkeeping,
+not a semantic change, so it deliberately never restamps `changedAt` — doing so
+would reorder the inbox's waiting age and restart age-based graces for no real
+transition. Rediscovering that same PID restores the existing occupant without
+replacing its generation and immediately reclassifies the bounded screen tail,
+including output parsed during the outage. A process result that was already
+in flight cannot overwrite the stronger fact that the owning PTY exited.
+Unsupported platforms degrade to `unknown`. The process-table parser treats
+the complete final `comm` column as the executable path, including spaces.
+Generation checks reject delayed screen results from a previous agent
+occupant.
 
 Fresh launches call `markAgentLaunching()` before typing `claude` or
-`codex --yolo` into the shell. Dedicated Codex tabs deliberately default to
-`--yolo` in both docks so they start fully autonomous. The launch sheet exposes
-explicit permission/sandbox choices but preserves this initial default unless
-the product decision changes explicitly.
+`codex --yolo` into the shell, which gives the tab up to 4 s (measured from the
+launch call itself, not from `changedAt`) to reach exec before a clean
+no-match snapshot may declare it an ordinary shell — bookkeeping updates and
+query outages during that window must not shorten it. Dedicated Codex tabs
+deliberately default to `--yolo` in both docks so they start fully autonomous.
+The launch sheet exposes explicit permission/sandbox choices but preserves
+this initial default unless the product decision changes explicitly.
 
 ## Lifecycle authorities
 
 After xterm parses output, `termSession.ts` reads at most the bottom 40 logical
 lines and 16,384 characters from the active normal or alternate-screen buffer.
-Wrapped physical rows are joined before classification.
+The bound is applied AFTER normalization (below), not to raw physical rows:
+normalizing first means the 40/16,384 caps count evidence lines, not box
+borders and blank filler the classifier would immediately discard — applying
+the bound to raw rows would let frame chrome spend the caller's budget and
+push real evidence out of the window.
 
 `src/lib/agentProfiles.ts` contains independently authored profiles for Claude
-Code 2.1.226 and Codex CLI 0.147.0, including their structured multi-question
-overlays. Every profile declares a schema version and authored-for CLI version;
-Settings exposes rule counts and current privacy-bounded match diagnostics.
-Eligible rules are compared by the logical line containing their evidence:
-the newest evidence wins. Priority resolves only a same-line tie:
+Code 2.1.233 (schema version 3) and Codex CLI 0.147.0 (schema version 4),
+including their structured multi-question overlays. Every profile declares a
+schema version and authored-for CLI version; Settings exposes rule counts and
+current privacy-bounded match diagnostics.
 
-1. Blocked prompts, with reasons such as permission, question, authentication,
-   quota, or error.
-2. Active work/spinners.
-3. Idle input prompts.
+Before rules run, the tail is normalized in two passes: wrapped physical rows
+are joined into logical lines and trailing blank rows are trimmed
+(`logicalLinesFromRows` in `termSession.ts`), then box-drawn frame edges are
+stripped from each line and pure horizontal-rule lines are dropped entirely
+(`normalizeAgentScreenLines` in `agentProfiles.ts`, idempotent —
+`classifyAgentScreen` applies it again for free on tails a caller already
+prepared). Only the resulting lines are matched against rules.
 
-Only near-tail evidence is eligible. Newer working or idle UI therefore
-invalidates stale blocked text above it. Strong permission/question matches
-are anchored to complete CLI-owned action labels, navigation hints, or form
-controls and apply immediately. Blocked rules match complete, CLI-owned UI
-phrases rather than isolated domain words. Ordinary changes are debounced, and
-idle requires stable evidence. Each distinct classification gets a fresh
-stability window; repeated equivalent evidence shares a trailing debounce with
-an 800 ms maximum so a continuous output stream cannot postpone classification
-forever.
+The scan walks the bounded tail newest line to oldest and stops at the first
+line any eligible rule matches (a rule is eligible once the line's depth from
+the bottom is within its own `tailLines` window) — recency wins across rule
+classes, so newer working or idle UI always invalidates stale blocked text
+above it, and there is no global priority ordering between blocked/working/idle
+across different lines. Priority resolves only a same-line tie, where more than
+one rule matches the same line: the strongest match wins, and among matches of
+equal strength the first one in the profile's declared rule order wins. Strong
+permission/question matches are anchored to complete CLI-owned action labels,
+navigation hints, or form controls and apply immediately (no debounce). Blocked
+rules match complete, CLI-owned UI phrases rather than isolated domain words.
+
+Ordinary (non-strong) changes are debounced, and idle requires stable
+evidence. The debounce is bounded per pending **lifecycle episode**
+(`` `${generation}:${lifecycle}` ``), not per matched rule: two rules that
+alternate while describing the same lifecycle — a spinner frame and a footer
+hint, say — share one stability window instead of each restarting it, capped
+at an 800 ms maximum so churn between rule variants cannot postpone landing
+forever. A genuine lifecycle change still gets its own full window.
 Arbitrary response prose in the bounded tail must not acquire screen authority
 merely because it asks a conversational question or discusses concepts such as
 quotas or rate limits.
 
-Each occupant generation also has a screen boundary. App-initiated launches
-place it before the launch command so startup UI remains eligible; unannounced
-process discovery and PID replacement establish it at discovery and wait for
-new output. Old xterm scrollback is never promoted into a new generation.
-Activity fallback observed during startup is retained across the first PID
-capture, while screen evidence is reclassified inside the new boundary.
+Each occupant generation also has a screen boundary
+(`semanticBoundaryFirstLine`). App-initiated launches place it before the
+launch command so startup UI remains eligible; unannounced process discovery
+and PID replacement establish it at discovery and wait for new output. Old
+xterm scrollback is never promoted into a new generation. Activity fallback
+observed during startup is retained across the first PID capture, while
+screen evidence is reclassified inside the new boundary.
 
-Screen evidence has priority. When it disappears, the runtime falls back to
-the existing activity tracker:
+The boundary means something different per buffer. On the normal buffer, the
+cursor row is the wrong anchor — both CLIs redraw a bottom-anchored frame, so
+rows below the cursor would survive a reset as stale evidence while rows a
+repaint rewrites above it would be wrongly excluded. Instead the boundary
+anchors on end-of-content minus one full viewport: a TUI repaint can only
+rewrite rows currently on screen, so anything further back than one viewport
+above the end of content is true scrollback that can never become the new
+generation's evidence. The alternate screen has no scrollback and Codex
+repaints the whole viewport every frame, so a row anchor is meaningless there:
+the boundary is line 0 (the whole viewport is eligible), and stability comes
+from the classification debounce instead. A prompt dispatch (user Enter or a
+programmatic `sendPrompt`) resets the boundary the same way a launch does, so
+older scrollback can never satisfy a new turn.
 
-- sustained output → `working` with `activity` authority;
+Unambiguous screen evidence has priority, but only while it is fresh. Claude's
+composer is one deliberate exception: Claude keeps the same otherwise-idle
+composer painted throughout a turn, so a confirmed sustained-output stretch
+immediately outranks an `idle` composer verdict. Repaints of that composer
+cannot renew idle screen authority until output stops. This restores the
+generic activity behavior when the working footer is clipped, customized, or
+temporarily absent without weakening structured prompts. When screen evidence
+disappears (an inconclusive/`unknown` read), the runtime also falls back to the
+activity tracker immediately:
+
+- sustained normal- or alternate-screen output → `working` with `activity`
+  authority (the latter covers Codex; process-authoritative occupancy prevents
+  ordinary alternate-screen TUIs in shell tabs from surfacing as agents);
 - BEL/OSC notification → `blocked` with `osc` authority;
-- a background working stretch becoming quiet → idle and unseen **Done**.
+- a confirmed busy stretch whose quiet survived the tracker's grace →
+  `completed`, which the store turns into idle (and, if the stretch ran
+  unwatched, unseen **Done**) regardless of the stretch's length or whether it
+  also earned a ping.
 
-Blocked state is not cleared merely by viewing it. Viewing acknowledges and
-dismisses its alert, while lifecycle remains blocked until newer terminal
-evidence shows the prompt disappeared or work resumed.
+A non-blocked screen verdict that stops being reproduced also yields to
+contradicting activity evidence once it is more than ~15 s old; the ambiguous
+idle-composer/busy-output conflict above yields immediately. A 1 Hz ambient
+reconcile on the shared poll tick (`reconcileAgentEvidence`) re-checks every
+screen-authority terminal's staleness so a hung tool call or a spinner frame
+that stops redrawing cannot pin `working` forever against a tracker that
+already observed the turn end. Blocked never expires this way — the 15 s bound
+does not apply to it — because only *newer terminal evidence* proves a prompt
+is gone, never the passage of time. Blocked state is not cleared merely by
+viewing it: viewing acknowledges and dismisses its alert (clearing only the
+activity tracker's `attention` ping, never its `completed` turn-boundary
+signal — see below) without touching lifecycle. The occupant exiting or being
+replaced by a new PID unconditionally resets lifecycle to `unknown` under a
+fresh generation, independent of everything below.
+
+The activity fallback's own priority, inside `fallbackFor`, is: a `busy`
+signal wins unconditionally, checked before anything else and regardless of
+the current lifecycle or authority; only then does a still-latched
+notification or a `completed` turn boundary get considered. So resumed work
+always clears blocked once the fallback path actually runs — including a
+**screen**-authority blocked prompt, but only indirectly: `applyAgentActivity`
+itself declines to touch a fresh screen-authority blocked state (screen
+priority holds), yet it still records the incoming signal; the clear happens
+the next time the screen classifier itself reads back `unknown` (an
+inconclusive read), at which point `applyAgentScreen` hands off to
+`fallbackFor` unconditionally and finds the already-recorded `busy` signal
+waiting. A still-latched **notification** (BEL/OSC 9/777) under an existing
+prompt, by contrast, never overwrites it regardless of authority: it is
+corroboration, not a second prompt, so it must not rewrite the prompt's
+reason/rule (which would break the "same prompt" identity check and wrongly
+re-alert something already acknowledged).
+
+The `completed` turn-boundary signal is the one path that IS authority-gated:
+it can only clear a prompt whose `authority === "osc"` — evidence that is
+*only* the ring, with no corroborating screen read — and only when the
+boundary was observed strictly *after* the ring that established the prompt
+(`completionSeen`, a one-shot per-terminal set consumed on use). This is what
+lets an agent that rings on completion, rather than rendering a static
+prompt, settle back to idle instead of holding Needs Input for the rest of the
+session. A **screen**-authority blocked prompt is never cleared by a
+`completed` signal alone — only by resumed work (via the unknown-classification
+handoff above) or a genuinely new screen classification. A boundary that
+predates the ring, or that merely repeats an already-latched completion
+(rising-edge only), does not count either way. Establishing a new prompt drops
+any earlier unconsumed boundary, so a stale boundary from before the prompt
+can never later be misread as evidence the prompt ended.
 
 ## Seen and acknowledgement
 
-A pane is considered watched when it is visible while the application is
-foreground. Clicking/focusing it also acknowledges it. The important edges
-are:
+A pane is considered watched only when it is visible (`offsetParent !== null`)
+**and** the application is foreground (`document.hasFocus()`). Each mounted
+pane host (both docks) publishes this as a live predicate
+(`setAgentPaneVisibility`); the 1 Hz ambient sweep in `reconcileAgentEvidence`
+calls that predicate fresh off the DOM rather than trusting the watched flag
+carried on the last activity signal, since a screen that has gone silent —
+exactly the case the sweep exists to catch — is exactly when that cached value
+is stalest. A terminal with no mounted pane host falls back to the last
+signal's watched flag. Clicking/focusing a pane also acknowledges it, but
+acknowledgement is narrower than it looks: it clears only the activity
+tracker's `attention` ping, never its `completed` turn-boundary signal — the
+turn-boundary bookkeeping above (`completionSeen`) depends on `completed`
+surviving acknowledgement so a ring the user already dismissed can still later
+prove an osc-authority prompt has ended. Unseen **Done** is derived from a per-
+generation work-stretch flag, not from working→idle adjacency: the routine
+path into a completed turn is working → unknown (one inconclusive screen
+read) → idle, so adjacency alone would miss it, while an unanswered blocked
+prompt going quiet, or idle reached fresh with no intervening work (a fresh
+prompt right after launch), must settle to plain idle rather than announce a
+turn that never ran. The important edges are:
 
 - working → visible idle: idle, already seen;
 - working → hidden/background idle: unseen **Done**;
 - unseen Done → viewed: idle and seen;
-- hidden blocked → viewed: blocked and seen;
+- hidden blocked → viewed: blocked and seen (the alert dismisses; lifecycle
+  does not change);
 - agent process exits to shell: absent with lifecycle diagnostics cleared.
+
+Acknowledgement is itself state-scoped, not global: an acknowledged blocked
+prompt stays seen only while the *same* prompt keeps re-classifying (same
+generation, reason, and matched rule — a redraw or a retained inconclusive
+read). The alert edge is entering blocked-and-unseen from anything else,
+including re-entry after acknowledgement, so a genuinely new prompt in the
+same turn — or the same rule firing again after the lifecycle left blocked and
+came back — alerts again.
 
 Seen state is session-only and is never written to local storage.
 
@@ -156,7 +283,12 @@ not color-only. Tooltips contain agent kind, state, reason, authority,
 transition time, and matched rule ID. Workspace tabs, workspace families,
 global grouping tabs, and the hidden-panel indicator roll up with priority:
 
-`blocked > done > working > idle/unknown/absent`
+`blocked > done > working (includes starting) > idle (includes unknown)`
+
+`rollupAgentStates` skips `absent` states outright rather than ranking them at
+the bottom, so a set containing only absent (or no) agents rolls up to `null`,
+never a false `idle`. Chrome treats `null` as no badge — a terminal that never
+held an agent must not present as a quiet one.
 
 The titlebar also owns a global inbox over both docks. It preserves semantic
 ordering, routes to the exact workspace/group/tab/session, and projects review

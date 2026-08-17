@@ -88,10 +88,24 @@ describe("agent review state", () => {
     const pending = { generation: 3, outputSequence: 8 };
     const idle = { lifecycle: "idle", strong: false } as const;
     expect(promptTurnSettledByScreen(pending, 3, 8, idle)).toBe(false);
-    expect(promptTurnSettledByScreen(pending, 2, 9, idle)).toBe(false);
-    expect(promptTurnSettledByScreen(pending, 3, 9, { lifecycle: "unknown", strong: false }))
+    // The echo of the submitted prompt is one landed classification, however
+    // many PTY chunks carried it, and it looks exactly like idle.
+    expect(promptTurnSettledByScreen(pending, 3, 9, idle)).toBe(false);
+    expect(promptTurnSettledByScreen(pending, 2, 10, idle)).toBe(false);
+    expect(promptTurnSettledByScreen(pending, 3, 10, { lifecycle: "unknown", strong: false }))
       .toBe(false);
-    expect(promptTurnSettledByScreen(pending, 3, 9, idle)).toBe(true);
+    expect(promptTurnSettledByScreen(pending, 3, 10, idle)).toBe(true);
+  });
+
+  it("does not settle on a prompt echo split across PTY chunks", () => {
+    const pending = { generation: 4, outputSequence: 0 };
+    const idle = { lifecycle: "idle", strong: false } as const;
+    // A bracketed-paste echo arrives as several reader-sized chunks, but the
+    // classification debounce coalesces them into ONE landing — which is why
+    // the counter is landings and not writes.
+    const echoLandings = 1;
+    expect(promptTurnSettledByScreen(pending, 4, echoLandings, idle)).toBe(false);
+    expect(promptTurnSettledByScreen(pending, 4, echoLandings + 1, idle)).toBe(true);
   });
 
   it("pins check evidence to the terminal occupant generation", () => {

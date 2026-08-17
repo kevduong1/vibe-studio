@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   agentAlertAction,
+  displayAgentState,
+  rollupAgentStates,
   type AgentRuntimeState,
 } from "./agentState";
 
@@ -45,11 +47,52 @@ describe("semantic notification edges", () => {
     }
   });
 
+  it("alerts again for a new prompt after the first one was acknowledged", () => {
+    const acknowledged = runtime("blocked", true);
+    const second: AgentRuntimeState = {
+      ...acknowledged,
+      seen: false,
+      reason: "question",
+      matchedRule: "ask",
+    };
+    expect(agentAlertAction(acknowledged, second)).toBe("blocked");
+    expect(agentAlertAction(second, { ...second })).toBe("none");
+  });
+
+  it("does not dismiss a live prompt raised during the launch grace", () => {
+    const blocked = runtime("blocked", false);
+    const starting: AgentRuntimeState = { ...blocked, occupancy: "starting" };
+    expect(displayAgentState(starting)).toBe("blocked");
+    expect(agentAlertAction(runtime("unknown", true), starting)).toBe("blocked");
+    expect(agentAlertAction(starting, blocked)).toBe("none");
+  });
+
   it("dismisses on acknowledgement, resumed work, exit, close, and disable-equivalent removal", () => {
     const blocked = runtime("blocked", false);
     expect(agentAlertAction(blocked, { ...blocked, seen: true })).toBe("dismiss");
     expect(agentAlertAction(blocked, runtime("working", true))).toBe("dismiss");
     expect(agentAlertAction(blocked, { ...blocked, occupancy: "absent", lifecycle: "unknown" })).toBe("dismiss");
     expect(agentAlertAction(blocked, undefined)).toBe("dismiss");
+  });
+});
+
+describe("rollups", () => {
+  it("reports nothing to roll up separately from a present idle agent", () => {
+    expect(rollupAgentStates([])).toBeNull();
+    expect(rollupAgentStates([undefined])).toBeNull();
+    expect(
+      rollupAgentStates([{ ...runtime("unknown", true), occupancy: "absent" }]),
+    ).toBeNull();
+    expect(rollupAgentStates([runtime("idle", true)])).toBe("idle");
+  });
+
+  it("uses blocked > done > working > idle", () => {
+    const idle = runtime("idle", true);
+    const working = runtime("working", true);
+    const done = runtime("idle", false);
+    const blocked = runtime("blocked", false);
+    expect(rollupAgentStates([idle, working])).toBe("working");
+    expect(rollupAgentStates([working, done])).toBe("done");
+    expect(rollupAgentStates([done, blocked])).toBe("blocked");
   });
 });

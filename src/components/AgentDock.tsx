@@ -17,7 +17,10 @@ import {
   useAgentTerminalsStore,
   type AgentTerminal,
 } from "../stores/agentTerminals";
-import { useAgentRuntimeStore } from "../stores/agentRuntime";
+import {
+  setAgentPaneVisibility,
+  useAgentRuntimeStore,
+} from "../stores/agentRuntime";
 import {
   agentStateTooltip,
   displayAgentState,
@@ -119,9 +122,30 @@ const AgentPane = memo(function AgentPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
 
+  // Acknowledge on REAL visibility, the same predicate the evidence side
+  // uses: the dock-tab flag says nothing about the panel being hidden,
+  // maximized away, or showing the other group — all display:none. The
+  // host's ResizeObserver is what fires on an actual reveal (⌘`), and a
+  // tab flip behind a hidden panel leaves offsetParent null, so a Done
+  // nobody saw stays unseen.
   useEffect(() => {
-    if (visible && document.hasFocus()) getSession(terminal.id)?.acknowledge();
-  }, [terminal.id, visible]);
+    const host = hostRef.current;
+    if (!host) return;
+    const isWatched = () => host.offsetParent !== null && document.hasFocus();
+    const ack = () => {
+      if (isWatched()) getSession(terminal.id)?.acknowledge();
+    };
+    ack();
+    const ro = new ResizeObserver(ack);
+    ro.observe(host);
+    // The runtime's ambient sweep has no DOM of its own; this is the only
+    // live answer to "can the user see it right now".
+    const unwatch = setAgentPaneVisibility(terminal.id, isWatched);
+    return () => {
+      unwatch();
+      ro.disconnect();
+    };
+  }, [terminal.id]);
 
   return (
     <div

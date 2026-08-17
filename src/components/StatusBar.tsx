@@ -492,7 +492,7 @@ export default function StatusBar({
           onClick={togglePanel}
         >
           <IcTerminal />
-          {!panelVisible && agentActivity !== "idle" && (
+          {!panelVisible && agentActivity !== null && agentActivity !== "idle" && (
             <span
               className={`statusbar-attention-dot ${agentActivity}`}
               title={

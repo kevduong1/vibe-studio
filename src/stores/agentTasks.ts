@@ -193,13 +193,23 @@ export const subscribeAgentPromptTurnAvailability = (
   return () => promptTurnListeners.delete(listener);
 };
 
-/** Record parsed output, never plaintext. The sequence is generation-local
- * evidence that something rendered after a prompt's commit boundary. */
+/** Record one landed screen classification, never plaintext. The sequence is
+ * generation-local evidence that post-boundary output reached a debounced,
+ * stable semantic state — a raw write would count reader-sized chunks of one
+ * repaint instead. */
 export function noteAgentPromptOutput(terminalId: string, generation: number): void {
   const pending = pendingPromptTurns.get(terminalId);
   if (!pending || pending.generation !== generation) return;
   promptOutputSequences.set(terminalId, (promptOutputSequences.get(terminalId) ?? 0) + 1);
 }
+
+/** The first landing after a dispatch is the CLI echoing the submitted prompt
+ * back into its own composer, which happens before the agent has consumed the
+ * turn — and that echo classifies as idle, so it would otherwise satisfy the
+ * gate on its own. Settlement needs a landing beyond it. Landings, not writes:
+ * a long bracketed-paste echo spans several reader-sized PTY chunks, and only
+ * the debounce that coalesces them makes this count chunk-independent. */
+const DISPATCH_ECHO_LANDINGS = 1;
 
 export function promptTurnSettledByScreen(
   pending: { generation: number; outputSequence: number },
@@ -208,7 +218,7 @@ export function promptTurnSettledByScreen(
   classification: ScreenClassification,
 ): boolean {
   return pending.generation === generation &&
-    outputSequence > pending.outputSequence &&
+    outputSequence > pending.outputSequence + DISPATCH_ECHO_LANDINGS &&
     classification.lifecycle !== "unknown";
 }
 
