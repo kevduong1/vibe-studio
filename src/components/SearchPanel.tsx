@@ -84,7 +84,7 @@ export default function SearchPanel() {
 
   const openMatch = (file: string, m: SearchMatch) => {
     // Backend paths are repo-relative; the editor wants absolute.
-    ws.editor.getState().openFile(`${ws.path}/${file}`, {
+    ws.editor.getState().previewFile(`${ws.path}/${file}`, {
       line: m.lineNumber,
       column: m.column,
     });

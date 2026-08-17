@@ -12,6 +12,7 @@ import {
 } from "../lib/lsp/settings";
 import { serverLangForPath } from "../lib/lsp/types";
 import { isMarkdownPath } from "../lib/path";
+import { useActiveEditorStatus } from "../lib/editorStatus";
 import { useActiveWorkspace, type Workspace } from "../stores/workspaces";
 import { useUiStore } from "../stores/ui";
 import {
@@ -134,6 +135,35 @@ function MarkdownPreviewItem({ ws }: { ws: Workspace }) {
       <IcEye />
       Preview
     </button>
+  );
+}
+
+/** Cursor/file-format fundamentals for the active editable buffer. */
+function EditorStatusItems({ ws }: { ws: Workspace }) {
+  const status = useActiveEditorStatus(ws.editor);
+  const wordWrap = useUiStore((s) => s.wordWrap);
+  const toggleWordWrap = useUiStore((s) => s.toggleWordWrap);
+  if (!status) return null;
+  return (
+    <>
+      <span className="statusbar-item" title="Cursor position">
+        Ln {status.line}, Col {status.column}
+        {status.selected > 0 ? ` (${status.selected} selected)` : ""}
+      </span>
+      <span className="statusbar-item" title="Detected indentation">
+        {status.indentation}
+      </span>
+      <span className="statusbar-item" title="Line ending preserved on save">
+        {status.lineEnding}
+      </span>
+      <button
+        className={`statusbar-item statusbar-clickable${wordWrap ? " statusbar-md-on" : ""}`}
+        title={`${wordWrap ? "Disable" : "Enable"} word wrap`}
+        onClick={toggleWordWrap}
+      >
+        Wrap
+      </button>
+    </>
   );
 }
 
@@ -471,6 +501,7 @@ export default function StatusBar({
       <div className="statusbar-right">
         <CodexUsageStatusItem />
         <UsageStatusItem />
+        {ws && <EditorStatusItems ws={ws} />}
         {ws && <MarkdownPreviewItem ws={ws} />}
         {ws && <LspStatusItem ws={ws} />}
         {ws && (

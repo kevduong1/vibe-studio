@@ -1,5 +1,5 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
-import { confirm, message } from "@tauri-apps/plugin-dialog";
+import { message } from "@tauri-apps/plugin-dialog";
 import type { DiffKind, MemoryEntry, StatusCode } from "../lib/ipc";
 import { basename } from "../lib/path";
 import { disposePreviewWithFallback } from "../lib/previewDisposal";
@@ -45,6 +45,13 @@ export type Tab =
 export interface EditorState {
   tabs: Tab[];
   activeTabId: string | null;
+  /** At most one clean file/diff is provisional. Opening another provisional
+      item replaces it in place; editing or explicitly keeping it pins it. */
+  transientTabId: string | null;
+  /** Bounded navigation helpers. Browser previews are intentionally excluded
+      from closedTabs because their native session is destroyed on close. */
+  closedTabs: Tab[];
+  recentFiles: string[];
   /** Workspace close sets this synchronously before taking its preview
       snapshot, so no later preview tab can outlive that workspace. */
   closing: boolean;
@@ -59,7 +66,9 @@ export interface EditorState {
   reveal: { tabId: string; line: number; column: number; nonce: number } | null;
 
   openFile: (path: string, at?: { line: number; column?: number }) => void;
+  previewFile: (path: string, at?: { line: number; column?: number }) => void;
   openDiff: (req: DiffRequest) => void;
+  previewDiff: (req: DiffRequest) => void;
   /** Open an agent memory as a read-only preview tab (MemoryPreview.tsx).
       Reopening an already-open entry refreshes its snapshot in place — the
       sidebar refetches from disk/sqlite, tabs just mirror what it handed
@@ -73,30 +82,71 @@ export interface EditorState {
   beginPreviewDisposal: (id: string) => void;
   completePreviewDisposal: (id: string) => void;
   closeTab: (id: string) => void;
+  pinTab: (id: string) => void;
+  moveTab: (id: string, toIndex: number) => void;
+  activateRelative: (delta: -1 | 1) => void;
+  reopenClosedTab: () => void;
   /** Repoint open file tabs at/under `from` after it was renamed or moved to
       `to` (tab ids embed the path). Order and active tab are preserved;
       dirty flags drop — unsaved drafts are keyed by the old tab id and do
       not survive, so callers must confirm the loss first. */
   retargetFileTabs: (from: string, to: string) => void;
   setActive: (id: string) => void;
-  markDirty: (id: string, dirty: boolean) => void;
+  /** Track unsaved state. `pin` is false for editor-internal/programmatic
+      document transactions; real user edits and ordinary callers pin by
+      default so a dirty provisional tab can never be replaced. */
+  markDirty: (id: string, dirty: boolean, pin?: boolean) => void;
   /** Drop the reveal request, but only if it is still the one consumed. */
   clearReveal: (nonce: number) => void;
 }
 
 export type EditorStore = StoreApi<EditorState>;
 
+export interface EditorSessionSnapshot {
+  tabs: Tab[];
+  activeTabId: string | null;
+  recentFiles: string[];
+}
+
 // repoPath is part of the id: the same file/kind in two repos is two tabs.
 const diffTabId = (req: DiffRequest) =>
   `diff:${req.repoPath}:${req.kind}:${req.oid ?? ""}:${req.path}`;
 
+const MAX_CLOSED_TABS = 20;
+const MAX_RECENT_FILES = 30;
+
+const diffTab = (req: DiffRequest): Extract<Tab, { kind: "diff" }> => {
+  const suffix =
+    req.kind === "staged"
+      ? " (staged)"
+      : req.kind === "commit"
+        ? ` (${(req.oid ?? "").slice(0, 7)})`
+        : req.kind === "checkpoint"
+          ? " (latest turn)"
+          : "";
+  return {
+    id: diffTabId(req),
+    kind: "diff",
+    title: `${basename(req.path)}${suffix}`,
+    diff: req,
+  };
+};
+
 let revealNonce = 0;
 
 /** Per-workspace editor-tab store; created by the workspaces store. */
-export const createEditorStore = (): EditorStore =>
+export const createEditorStore = (
+  initial?: Partial<EditorSessionSnapshot>,
+): EditorStore =>
   createStore<EditorState>((set, get) => ({
-    tabs: [],
-    activeTabId: null,
+    tabs: initial?.tabs ?? [],
+    activeTabId:
+      initial?.activeTabId && initial.tabs?.some((tab) => tab.id === initial.activeTabId)
+        ? initial.activeTabId
+        : initial?.tabs?.[0]?.id ?? null,
+    transientTabId: null,
+    closedTabs: [],
+    recentFiles: initial?.recentFiles ?? [],
     closing: false,
     pendingPreviewDisposals: {},
     dirty: {},
@@ -105,42 +155,96 @@ export const createEditorStore = (): EditorStore =>
     openFile: (path, at) => {
       if (get().closing) return;
       const id = `file:${path}`;
-      const { tabs } = get();
-      if (!tabs.some((t) => t.id === id)) {
-        set({
-          tabs: [...tabs, { id, kind: "file", path, title: basename(path) }],
-        });
-      }
-      set({
+      set((s) => ({
+        tabs: s.tabs.some((t) => t.id === id)
+          ? s.tabs
+          : [...s.tabs, { id, kind: "file", path, title: basename(path) }],
         activeTabId: id,
+        transientTabId: s.transientTabId === id ? null : s.transientTabId,
+        recentFiles: [path, ...s.recentFiles.filter((p) => p !== path)].slice(
+          0,
+          MAX_RECENT_FILES,
+        ),
         reveal: at
           ? { tabId: id, line: at.line, column: at.column ?? 1, nonce: ++revealNonce }
-          : get().reveal,
+          : s.reveal,
+      }));
+      revealEditor();
+    },
+
+    previewFile: (path, at) => {
+      if (get().closing) return;
+      const tab: Extract<Tab, { kind: "file" }> = {
+        id: `file:${path}`,
+        kind: "file",
+        path,
+        title: basename(path),
+      };
+      set((s) => {
+        const existing = s.tabs.find((item) => item.id === tab.id);
+        if (existing) {
+          return {
+            activeTabId: tab.id,
+            recentFiles: [path, ...s.recentFiles.filter((p) => p !== path)].slice(
+              0,
+              MAX_RECENT_FILES,
+            ),
+            reveal: at
+              ? { tabId: tab.id, line: at.line, column: at.column ?? 1, nonce: ++revealNonce }
+              : s.reveal,
+          };
+        }
+        const replaceAt = s.transientTabId
+          ? s.tabs.findIndex((item) => item.id === s.transientTabId)
+          : -1;
+        const tabs =
+          replaceAt >= 0 && !s.dirty[s.transientTabId!]
+            ? s.tabs.map((item, index) => (index === replaceAt ? tab : item))
+            : [...s.tabs, tab];
+        return {
+          tabs,
+          activeTabId: tab.id,
+          transientTabId: tab.id,
+          recentFiles: [path, ...s.recentFiles.filter((p) => p !== path)].slice(
+            0,
+            MAX_RECENT_FILES,
+          ),
+          reveal: at
+            ? { tabId: tab.id, line: at.line, column: at.column ?? 1, nonce: ++revealNonce }
+            : s.reveal,
+        };
       });
       revealEditor();
     },
 
     openDiff: (req) => {
       if (get().closing) return;
-      const id = diffTabId(req);
-      const { tabs } = get();
-      if (!tabs.some((t) => t.id === id)) {
-        const suffix =
-          req.kind === "staged"
-            ? " (staged)"
-            : req.kind === "commit"
-              ? ` (${(req.oid ?? "").slice(0, 7)})`
-              : req.kind === "checkpoint"
-                ? " (latest turn)"
-              : "";
-        set({
-          tabs: [
-            ...tabs,
-            { id, kind: "diff", title: `${basename(req.path)}${suffix}`, diff: req },
-          ],
-        });
-      }
-      set({ activeTabId: id });
+      const tab = diffTab(req);
+      set((s) => ({
+        tabs: s.tabs.some((item) => item.id === tab.id) ? s.tabs : [...s.tabs, tab],
+        activeTabId: tab.id,
+        transientTabId: s.transientTabId === tab.id ? null : s.transientTabId,
+      }));
+      revealEditor();
+    },
+
+    previewDiff: (req) => {
+      if (get().closing) return;
+      const tab = diffTab(req);
+      set((s) => {
+        if (s.tabs.some((item) => item.id === tab.id)) return { activeTabId: tab.id };
+        const replaceAt = s.transientTabId
+          ? s.tabs.findIndex((item) => item.id === s.transientTabId)
+          : -1;
+        return {
+          tabs:
+            replaceAt >= 0 && !s.dirty[s.transientTabId!]
+              ? s.tabs.map((item, index) => (index === replaceAt ? tab : item))
+              : [...s.tabs, tab],
+          activeTabId: tab.id,
+          transientTabId: tab.id,
+        };
+      });
       revealEditor();
     },
 
@@ -216,7 +320,7 @@ export const createEditorStore = (): EditorStore =>
 
     closeTab: (id) => {
       if (get().closing) return;
-      const { tabs, activeTabId, dirty } = get();
+      const { tabs, activeTabId, dirty, transientTabId } = get();
       const idx = tabs.findIndex((t) => t.id === id);
       if (idx === -1) return;
       if (tabs[idx].kind === "preview") {
@@ -237,7 +341,58 @@ export const createEditorStore = (): EditorStore =>
       if (activeTabId === id) {
         nextActive = next.length ? next[Math.min(idx, next.length - 1)].id : null;
       }
-      set({ tabs: next, activeTabId: nextActive, dirty: restDirty });
+      const closed = tabs[idx];
+      set((s) => ({
+        tabs: next,
+        activeTabId: nextActive,
+        transientTabId: transientTabId === id ? null : transientTabId,
+        dirty: restDirty,
+        closedTabs:
+          closed.kind === "preview" || transientTabId === id
+            ? s.closedTabs
+            : [closed, ...s.closedTabs.filter((tab) => tab.id !== closed.id)].slice(
+                0,
+                MAX_CLOSED_TABS,
+              ),
+      }));
+    },
+
+    pinTab: (id) =>
+      set((s) => (s.transientTabId === id ? { transientTabId: null } : s)),
+
+    moveTab: (id, toIndex) =>
+      set((s) => {
+        const from = s.tabs.findIndex((tab) => tab.id === id);
+        if (from < 0) return s;
+        const target = Math.max(0, Math.min(toIndex, s.tabs.length - 1));
+        if (from === target) return s;
+        const tabs = [...s.tabs];
+        const [tab] = tabs.splice(from, 1);
+        tabs.splice(target, 0, tab);
+        return { tabs };
+      }),
+
+    activateRelative: (delta) =>
+      set((s) => {
+        if (s.tabs.length < 2) return s;
+        const current = s.tabs.findIndex((tab) => tab.id === s.activeTabId);
+        const index = (Math.max(0, current) + delta + s.tabs.length) % s.tabs.length;
+        return { activeTabId: s.tabs[index].id };
+      }),
+
+    reopenClosedTab: () => {
+      if (get().closing) return;
+      set((s) => {
+        const [tab, ...closedTabs] = s.closedTabs;
+        if (!tab) return s;
+        return {
+          tabs: s.tabs.some((item) => item.id === tab.id) ? s.tabs : [...s.tabs, tab],
+          activeTabId: tab.id,
+          closedTabs,
+          transientTabId: null,
+        };
+      });
+      revealEditor();
     },
 
     retargetFileTabs: (from, to) => {
@@ -247,6 +402,7 @@ export const createEditorStore = (): EditorStore =>
         let changed = false;
         const dirty = { ...s.dirty };
         let activeTabId = s.activeTabId;
+        let transientTabId = s.transientTabId;
         const tabs = s.tabs.map((t) => {
           const path =
             t.kind === "file"
@@ -261,24 +417,30 @@ export const createEditorStore = (): EditorStore =>
           const id = `file:${path}`;
           delete dirty[t.id]; // the draft died with the old id
           if (activeTabId === t.id) activeTabId = id;
+          if (transientTabId === t.id) transientTabId = id;
           return { ...t, id, path, title: basename(path) };
         });
-        return changed ? { tabs, activeTabId, dirty } : s;
+        return changed ? { tabs, activeTabId, dirty, transientTabId } : s;
       });
     },
 
     setActive: (id) => {
       if (!get().closing) set({ activeTabId: id });
     },
-    markDirty: (id, d) =>
+    markDirty: (id, d, pin = d) =>
       set((s) => {
+        const transientTabId =
+          d && pin && s.transientTabId === id ? null : s.transientTabId;
         if (
           s.closing ||
           s.tabs.find((tab) => tab.id === id)?.kind === "preview" ||
-          s.dirty[id] === d
+          (s.dirty[id] === d && transientTabId === s.transientTabId)
         )
           return s;
-        return { dirty: { ...s.dirty, [id]: d } };
+        return {
+          dirty: { ...s.dirty, [id]: d },
+          transientTabId,
+        };
       }),
     clearReveal: (nonce) =>
       set((s) => (s.reveal?.nonce === nonce ? { reveal: null } : s)),
@@ -296,11 +458,19 @@ export async function closeTabSafely(
   const { dirty, tabs, closeTab } = editor.getState();
   if (dirty[id]) {
     const tab = tabs.find((t) => t.id === id);
-    const ok = await confirm(
-      `"${tab?.title ?? "This tab"}" has unsaved changes that will be lost.`,
-      { title: "Discard changes?", kind: "warning" },
+    const result = await message(
+      `Save the changes you made to “${tab?.title ?? "this file"}”?`,
+      {
+        title: "Unsaved Changes",
+        kind: "warning",
+        buttons: { yes: "Save", no: "Don’t Save", cancel: "Cancel" },
+      },
     );
-    if (!ok) return;
+    if (result === "Cancel") return;
+    if (result === "Save") {
+      const { saveEditorTab } = await import("../lib/editorBuffers");
+      if (!(await saveEditorTab(editor, id))) return;
+    }
   }
   closeTab(id);
 }

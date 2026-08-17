@@ -8,11 +8,22 @@ import { basicSetup, EditorView } from "codemirror";
 import { Compartment, EditorState, Text, type Extension } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
-import { LanguageDescription } from "@codemirror/language";
+import { indentUnit, LanguageDescription } from "@codemirror/language";
 import { setDiagnostics } from "@codemirror/lint";
+import { gotoLine } from "@codemirror/search";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { languages } from "@codemirror/language-data";
 import { fsReadFile, fsWriteFile, gitDiffFile, onRepoChanged } from "../lib/ipc";
+import {
+  clearBufferedEditor,
+  detectLineEnding,
+  getBufferedEditor,
+  pruneEditorBuffers,
+  registerLiveSaver,
+  serializeText,
+  setBufferedEditor,
+  type LineEnding,
+} from "../lib/editorBuffers";
 import { changeRuler, computeRulerMarks, setRulerMarks } from "../lib/cmChangeRuler";
 import { registerEditorSelection } from "../lib/editorAgentContext";
 import { lspExtension } from "../lib/lsp/cmLsp";
@@ -24,6 +35,12 @@ import {
   useWorkspace,
   useWorkspacesStore,
 } from "../stores/workspaces";
+import { useUiStore } from "../stores/ui";
+import {
+  clearEditorStatus,
+  detectIndentation,
+  setEditorStatus,
+} from "../lib/editorStatus";
 import { editorSearch } from "./EditorSearch";
 import { IcClose } from "./icons";
 import "./EditorArea.css";
@@ -136,6 +153,7 @@ export const readOnlyExtension: CmExtension = [
 export function editKeymap(onSave: (view: EditorView) => void): CmExtension {
   return keymap.of([
     indentWithTab,
+    { key: "Ctrl-g", run: gotoLine },
     {
       key: "Mod-s",
       preventDefault: true,
@@ -160,36 +178,15 @@ export function BannerDismiss({ onClick }: { onClick: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// Draft cache: unsaved text survives tab switches (views unmount per tab)
+// Shared buffer registry: unsaved text survives tab switches and can be saved
+// safely even when its CodeMirror view is not mounted.
 // ---------------------------------------------------------------------------
-
-const draftCache = new Map<string, { text: string | Text; savedText: string | Text }>();
-
-// Keys are namespaced per workspace: with nested repos the same absolute file
-// can be open in two workspaces (identical tab id), and sharing one slot
-// would leak unsaved edits across them. NUL never appears in paths.
-const draftKeyFor = (wsPath: string, tabId: string) => `${wsPath}\0${tabId}`;
 
 // Drop drafts whose tab was closed (or whose whole workspace was closed).
 const pruneDrafts = () => {
   const { workspaces } = useWorkspacesStore.getState();
-  for (const key of [...draftCache.keys()]) {
-    const sep = key.indexOf("\0");
-    const wsPath = key.slice(0, sep);
-    const tabId = key.slice(sep + 1);
-    const ws = workspaces.find((w) => w.path === wsPath);
-    if (!ws || !ws.editor.getState().tabs.some((t) => t.id === tabId)) {
-      draftCache.delete(key);
-    }
-  }
+  for (const ws of workspaces) pruneEditorBuffers(ws.editor);
 };
-
-/** Latest unsaved text for a tab, if any — the markdown preview renders the
-    live draft rather than stale disk content. */
-export function peekDraft(wsPath: string, tabId: string): string | null {
-  const draft = draftCache.get(draftKeyFor(wsPath, tabId));
-  return draft ? draft.text.toString() : null;
-}
 
 // Subscribe each workspace's editor store (incl. ones created later) to the
 // pruner. Closed workspaces' subscriptions die with their stores.
@@ -217,11 +214,13 @@ export default function Editor({ tab }: { tab: FileTab }) {
   const markDirty = useEditor((s) => s.markDirty);
   const reveal = useEditor((s) => s.reveal);
   const closing = useEditor((s) => s.closing);
-  const draftKey = draftKeyFor(ws.path, tab.id);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   /** Last loaded/saved content as a CodeMirror Text (no toString per keystroke). */
   const savedRef = useRef<Text>(Text.empty);
+  const savedDiskTextRef = useRef("");
+  const lineEndingRef = useRef<LineEnding>("LF");
+  const indentationRef = useRef("Spaces: 2");
   const [loading, setLoading] = useState(true);
   const [binary, setBinary] = useState(false);
   const [truncated, setTruncated] = useState(false);
@@ -234,8 +233,8 @@ export default function Editor({ tab }: { tab: FileTab }) {
 
   /** Write the buffer out; unless `force`, refuse when the disk changed. */
   const save = useCallback(
-    async (view: EditorView, force: boolean) => {
-      if (ws.editor.getState().closing) return;
+    async (view: EditorView, force: boolean): Promise<boolean> => {
+      if (ws.editor.getState().closing) return false;
       const doc = view.state.doc;
       try {
         if (!force) {
@@ -246,29 +245,40 @@ export default function Editor({ tab }: { tab: FileTab }) {
           } catch {
             // unreadable / deleted on disk — writing recreates it
           }
-          if (viewRef.current !== view || ws.editor.getState().closing) return;
-          if (onDisk !== null && onDisk !== savedRef.current.toString()) {
+          if (viewRef.current !== view || ws.editor.getState().closing) return false;
+          if (onDisk !== null && onDisk !== savedDiskTextRef.current) {
             setSaveConflict(true);
-            return;
+            return false;
           }
         }
-        if (ws.editor.getState().closing) return;
-        await fsWriteFile(tab.path, doc.toString());
-        if (viewRef.current !== view || ws.editor.getState().closing) return;
+        if (ws.editor.getState().closing) return false;
+        const diskText = serializeText(doc, lineEndingRef.current);
+        await fsWriteFile(tab.path, diskText);
+        if (viewRef.current !== view || ws.editor.getState().closing) return false;
         savedRef.current = doc;
+        savedDiskTextRef.current = diskText;
         const now = view.state.doc;
         const dirty = !now.eq(doc);
-        if (dirty) draftCache.set(draftKey, { text: now, savedText: doc });
-        else draftCache.delete(draftKey);
+        if (dirty) {
+          setBufferedEditor(ws.editor, tab.id, {
+            path: tab.path,
+            text: now,
+            savedText: doc,
+            savedDiskText: diskText,
+            lineEnding: lineEndingRef.current,
+          });
+        } else clearBufferedEditor(ws.editor, tab.id);
         markDirty(tab.id, dirty);
         setSaveError(null);
         setSaveConflict(false);
         setDiskChanged(false);
+        return true;
       } catch (e) {
         if (viewRef.current === view) setSaveError(String(e));
+        return false;
       }
     },
-    [tab.id, tab.path, draftKey, markDirty, ws.editor],
+    [tab.id, tab.path, markDirty, ws.editor],
   );
 
   /** Go-to-definition jump target. Longest-prefix match over open workspaces
@@ -326,14 +336,16 @@ export default function Editor({ tab }: { tab: FileTab }) {
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: fresh },
       });
-      draftCache.delete(draftKey);
+      savedDiskTextRef.current = file.text;
+      lineEndingRef.current = detectLineEnding(file.text);
+      clearBufferedEditor(ws.editor, tab.id);
       markDirty(tab.id, false);
       setDiskChanged(false);
       setSaveConflict(false);
     } catch {
       // mid-write / deleted — keep the banner so the user can retry
     }
-  }, [tab.id, tab.path, draftKey, markDirty, ws.editor]);
+  }, [tab.id, tab.path, markDirty, ws.editor]);
 
   useEffect(() => {
     let disposed = false;
@@ -343,8 +355,11 @@ export default function Editor({ tab }: { tab: FileTab }) {
     let unsubLspStatus: (() => void) | null = null;
     let unsubClosing: (() => void) | null = null;
     let unregisterSelection: (() => void) | null = null;
+    let unregisterSaver: (() => void) | null = null;
+    let unsubWordWrap: (() => void) | null = null;
     let diskTimer: ReturnType<typeof setTimeout> | null = null;
     let rulerTimer: ReturnType<typeof setTimeout> | null = null;
+    let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
     /** Git HEAD content for the overview ruler; null = no ruler. */
     let rulerBaseline: Text | null = null;
     /** Whether the view currently holds non-empty ruler marks. */
@@ -364,10 +379,13 @@ export default function Editor({ tab }: { tab: FileTab }) {
         const file = await fsReadFile(tab.path);
         const v = viewRef.current;
         if (disposed || !v || file.binary || ws.editor.getState().closing) return;
-        if (file.text === savedRef.current.toString()) return; // our own write
+        if (file.text === savedDiskTextRef.current) return; // our own write
         if (v.state.doc.eq(savedRef.current)) {
           const fresh = v.state.toText(file.text);
           savedRef.current = fresh;
+          savedDiskTextRef.current = file.text;
+          lineEndingRef.current = detectLineEnding(file.text);
+          indentationRef.current = detectIndentation(file.text);
           v.dispatch({
             changes: { from: 0, to: v.state.doc.length, insert: fresh },
           });
@@ -436,10 +454,15 @@ export default function Editor({ tab }: { tab: FileTab }) {
       let savedDoc: string | Text;
       let isTruncated = false;
 
-      const cached = draftCache.get(draftKey);
+      const cached = getBufferedEditor(ws.editor, tab.id);
       if (cached) {
         doc = cached.text;
         savedDoc = cached.savedText;
+        savedDiskTextRef.current = cached.savedDiskText;
+        lineEndingRef.current = cached.lineEnding;
+        indentationRef.current = detectIndentation(
+          serializeText(cached.text, cached.lineEnding),
+        );
       } else {
         const file = await fsReadFile(tab.path);
         if (disposed) return;
@@ -450,6 +473,9 @@ export default function Editor({ tab }: { tab: FileTab }) {
         }
         doc = file.text;
         savedDoc = file.text;
+        savedDiskTextRef.current = file.text;
+        lineEndingRef.current = detectLineEnding(file.text);
+        indentationRef.current = detectIndentation(file.text);
         isTruncated = file.truncated;
       }
 
@@ -465,6 +491,7 @@ export default function Editor({ tab }: { tab: FileTab }) {
       // synthetic buffer that would fight this tab over the same document.
       const lspCompartment = new Compartment();
       const editabilityCompartment = new Compartment();
+      const wrappingCompartment = new Compartment();
       let lspHandle: WorkspaceLsp | null = isTruncated
         ? null
         : getLspForFile(ws.path, tab.path);
@@ -478,15 +505,55 @@ export default function Editor({ tab }: { tab: FileTab }) {
         editorTheme,
         editorSearch,
         lang ?? [],
+        EditorState.tabSize.of(
+          indentationRef.current === "Tabs"
+            ? 4
+            : Number(indentationRef.current.split(": ")[1]) || 2,
+        ),
+        indentUnit.of(
+          indentationRef.current === "Tabs"
+            ? "\t"
+            : " ".repeat(Number(indentationRef.current.split(": ")[1]) || 2),
+        ),
         lspCompartment.of(lspExt()),
         changeRuler("field"),
+        wrappingCompartment.of(
+          useUiStore.getState().wordWrap ? EditorView.lineWrapping : [],
+        ),
         EditorView.updateListener.of((u) => {
+          const head = u.state.selection.main.head;
+          const line = u.state.doc.lineAt(head);
+          setEditorStatus(ws.editor, tab.id, {
+            line: line.number,
+            column: head - line.from + 1,
+            selected: u.state.selection.ranges.reduce(
+              (sum, range) => sum + Math.abs(range.to - range.from),
+              0,
+            ),
+            lineEnding: lineEndingRef.current,
+            indentation: indentationRef.current,
+          });
           if (!u.docChanged || ws.editor.getState().closing) return;
           const dirty = !u.state.doc.eq(savedRef.current);
-          if (dirty)
-            draftCache.set(draftKey, { text: u.state.doc, savedText: savedRef.current });
-          else draftCache.delete(draftKey);
-          markDirty(tab.id, dirty);
+          const userEdited = u.transactions.some((transaction) =>
+            ["input", "delete", "move", "undo", "redo"].some((event) =>
+              transaction.isUserEvent(event),
+            ),
+          );
+          if (dirty) {
+            setBufferedEditor(ws.editor, tab.id, {
+              path: tab.path,
+              text: u.state.doc,
+              savedText: savedRef.current,
+              savedDiskText: savedDiskTextRef.current,
+              lineEnding: lineEndingRef.current,
+            });
+          } else clearBufferedEditor(ws.editor, tab.id);
+          markDirty(tab.id, dirty, userEdited);
+          if (autoSaveTimer) clearTimeout(autoSaveTimer);
+          if (dirty && useUiStore.getState().autoSave) {
+            autoSaveTimer = setTimeout(() => void save(u.view, false), 1000);
+          }
           // Keep the ruler blips tracking the buffer (debounced rediff).
           if (rulerTimer) clearTimeout(rulerTimer);
           rulerTimer = setTimeout(recomputeRuler, RULER_RECOMPUTE_MS);
@@ -498,8 +565,47 @@ export default function Editor({ tab }: { tab: FileTab }) {
         ),
       ];
 
+      // Establish the clean baseline before CodeMirror or one of its
+      // extensions can emit an initialization transaction. Otherwise a newly
+      // previewed file can be mistaken for a user edit and get pinned.
+      savedRef.current =
+        typeof savedDoc === "string"
+          ? Text.of(savedDoc.split(/\r\n?|\n/))
+          : savedDoc;
       view = new EditorView({ doc, extensions, parent: hostRef.current! });
       viewRef.current = view;
+      unregisterSaver = registerLiveSaver(ws.editor, tab.id, (force) => save(view!, force));
+      const publishStatus = () => {
+        if (!view) return;
+        const head = view.state.selection.main.head;
+        const line = view.state.doc.lineAt(head);
+        setEditorStatus(ws.editor, tab.id, {
+          line: line.number,
+          column: head - line.from + 1,
+          selected: 0,
+          lineEnding: lineEndingRef.current,
+          indentation: indentationRef.current,
+        });
+      };
+      publishStatus();
+      unsubWordWrap = useUiStore.subscribe((state, previous) => {
+        if (state.wordWrap !== previous.wordWrap && view) {
+          view.dispatch({
+            effects: wrappingCompartment.reconfigure(
+              state.wordWrap ? EditorView.lineWrapping : [],
+            ),
+          });
+        }
+        if (
+          state.autoSave &&
+          !previous.autoSave &&
+          view &&
+          !view.state.doc.eq(savedRef.current)
+        ) {
+          if (autoSaveTimer) clearTimeout(autoSaveTimer);
+          autoSaveTimer = setTimeout(() => view && void save(view, false), 1000);
+        }
+      });
       unregisterSelection = registerEditorSelection(ws.path, tab.id, () => {
         const current = viewRef.current;
         if (!current) return null;
@@ -512,8 +618,6 @@ export default function Editor({ tab }: { tab: FileTab }) {
           toLine: current.state.doc.lineAt(range.to).number,
         };
       });
-      savedRef.current =
-        typeof savedDoc === "string" ? view.state.toText(savedDoc) : savedDoc;
       setLoading(false);
       void refreshRulerBaseline();
 
@@ -586,18 +690,22 @@ export default function Editor({ tab }: { tab: FileTab }) {
       disposed = true;
       if (diskTimer) clearTimeout(diskTimer);
       if (rulerTimer) clearTimeout(rulerTimer);
+      if (autoSaveTimer) clearTimeout(autoSaveTimer);
       unlistenRepo?.();
       unsubLspSettings?.();
       unsubLspStatus?.();
       unsubClosing?.();
       unregisterSelection?.();
+      unregisterSaver?.();
+      unsubWordWrap?.();
+      clearEditorStatus(ws.editor, tab.id);
       viewRef.current = null;
       // destroy() runs the LSP plugin's destroy → didClose; never close the
       // document anywhere else (a second close would desync the server's
       // open-document set on StrictMode remounts).
       view?.destroy();
     };
-  }, [tab.id, tab.path, draftKey, markDirty, save, revealTo, openLocation, ws.editor, ws.path]);
+  }, [tab.id, tab.path, markDirty, save, revealTo, openLocation, ws.editor, ws.path]);
 
   return (
     <div className="editor-pane">

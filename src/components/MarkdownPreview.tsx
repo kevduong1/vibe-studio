@@ -9,10 +9,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { fsReadFile, onRepoChanged, openUrl } from "../lib/ipc";
+import { peekDraft } from "../lib/editorBuffers";
 import { renderMarkdownDoc } from "../lib/markdownDoc";
 import type { Tab } from "../stores/editor";
 import { useWorkspace } from "../stores/workspaces";
-import { peekDraft } from "./Editor";
 import "./MarkdownPreview.css";
 
 type FileTab = Extract<Tab, { kind: "file" }>;
@@ -32,7 +32,7 @@ export default function MarkdownPreview({ tab }: { tab: FileTab }) {
 
     const render = async () => {
       try {
-        let text = peekDraft(ws.path, tab.id);
+        let text = peekDraft(ws.editor, tab.id);
         if (text === null) {
           const file = await fsReadFile(tab.path);
           if (file.binary) throw new Error("File is not valid UTF-8 text.");

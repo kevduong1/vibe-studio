@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState, type CSSProperties } from "react";
 import { useStore } from "zustand";
 import { message, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   getRecentRepos,
   restoreSession,
@@ -10,6 +11,7 @@ import {
   WorkspaceContext,
   type Workspace,
 } from "./stores/workspaces";
+import { appExit, onAppExitRequested } from "./lib/ipc";
 import { useUiStore } from "./stores/ui";
 import { closeTabSafely } from "./stores/editor";
 import { useProjectColorVar } from "./lib/projectColors";
@@ -42,6 +44,7 @@ import {
 import { listenAgentNotificationActivations } from "./lib/agentInbox";
 import { listenNativeAgentSessionCapture } from "./lib/nativeAgentSessions";
 import { listenAgentControlPlane } from "./lib/agentControlPlane";
+import { saveDirtyTabs } from "./lib/editorBuffers";
 
 const SettingsModal = lazy(() => import("./components/SettingsModal"));
 const AgentLaunchDialog = lazy(() => import("./components/AgentLaunchDialog"));
@@ -241,6 +244,81 @@ export default function App() {
   // Restore the persisted zoom level (the webview always opens at 1).
   useEffect(() => initZoom(), []);
 
+  // Window-close and native macOS Cmd+Q safety. Both native requests are held
+  // synchronously, share this prompt/save routine, then exit through the
+  // explicitly approved Rust command.
+  useEffect(() => {
+    let disposed = false;
+    let resolving = false;
+    let unlistenClose: (() => void) | null = null;
+    let unlistenExit: (() => void) | null = null;
+    const appWindow = getCurrentWindow();
+    const resolveExit = async () => {
+      if (resolving) return;
+      resolving = true;
+      const dirtyWorkspaces = useWorkspacesStore
+        .getState()
+        .workspaces.filter((workspace) =>
+          Object.values(workspace.editor.getState().dirty).some(Boolean),
+        );
+      try {
+        if (dirtyWorkspaces.length > 0) {
+          const count = dirtyWorkspaces.reduce(
+            (sum, workspace) =>
+              sum + Object.values(workspace.editor.getState().dirty).filter(Boolean).length,
+            0,
+          );
+          const result = await message(
+            `${count} unsaved ${count === 1 ? "file has" : "files have"} changes.`,
+            {
+              title: "Quit Vibe Studio?",
+              kind: "warning",
+              buttons: {
+                yes: count === 1 ? "Save and Quit" : "Save All and Quit",
+                no: "Quit Without Saving",
+                cancel: "Cancel",
+              },
+            },
+          );
+          if (disposed || result === "Cancel") return;
+          if (result === "Save and Quit" || result === "Save All and Quit") {
+            for (const workspace of dirtyWorkspaces) {
+              if (!(await saveDirtyTabs(workspace.editor))) return;
+            }
+            if (
+              useWorkspacesStore
+                .getState()
+                .workspaces.some((workspace) =>
+                  Object.values(workspace.editor.getState().dirty).some(Boolean),
+                )
+            ) return;
+          }
+        }
+        await appExit();
+      } catch (error) {
+        console.error("Failed to resolve application exit", error);
+      } finally {
+        resolving = false;
+      }
+    };
+    void appWindow.onCloseRequested((event) => {
+      event.preventDefault();
+      void resolveExit();
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenClose = fn;
+    });
+    void onAppExitRequested(() => void resolveExit()).then((fn) => {
+      if (disposed) fn();
+      else unlistenExit = fn;
+    });
+    return () => {
+      disposed = true;
+      unlistenClose?.();
+      unlistenExit?.();
+    };
+  }, []);
+
   const togglePanel = useUiStore((s) => s.togglePanel);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
 
@@ -324,7 +402,22 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
-      if (e.key === "`") {
+      const { workspaces, activePath } = useWorkspacesStore.getState();
+      const activeWorkspace = workspaces.find((workspace) => workspace.path === activePath);
+      if (e.key === "Tab" && e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        activeWorkspace?.editor.getState().activateRelative(e.shiftKey ? -1 : 1);
+      } else if (
+        e.metaKey &&
+        e.shiftKey &&
+        (e.key === "[" || e.key === "]")
+      ) {
+        e.preventDefault();
+        activeWorkspace?.editor.getState().activateRelative(e.key === "[" ? -1 : 1);
+      } else if (e.key.toLowerCase() === "t" && e.shiftKey) {
+        e.preventDefault();
+        activeWorkspace?.editor.getState().reopenClosedTab();
+      } else if (e.key === "`") {
         e.preventDefault();
         togglePanel();
       } else if (e.key === "b" && !e.shiftKey) {
@@ -333,9 +426,7 @@ export default function App() {
       } else if (e.key.toLowerCase() === "b" && e.shiftKey) {
         // ⌘⇧B: run the (.vscode/tasks.json) build task, VS Code-style
         e.preventDefault();
-        const { workspaces, activePath } = useWorkspacesStore.getState();
-        const ws = workspaces.find((w) => w.path === activePath);
-        if (ws) void runBuildTask(ws);
+        if (activeWorkspace) void runBuildTask(activeWorkspace);
       } else if (e.key.toLowerCase() === "f" && e.shiftKey) {
         // ⌘⇧F: workspace search — reveal the sidebar + focus the query input
         e.preventDefault();
@@ -343,15 +434,13 @@ export default function App() {
       } else if (e.key === "p" && !e.shiftKey && !e.altKey) {
         // ⌘P: quick-open a file by fuzzy name
         e.preventDefault(); // WKWebView would otherwise open the print dialog
-        const { workspaces, activePath } = useWorkspacesStore.getState();
-        const ws = workspaces.find((w) => w.path === activePath);
-        if (ws) setQuickOpen(ws);
+        if (activeWorkspace) setQuickOpen(activeWorkspace);
       } else if (e.key === "w" && !e.shiftKey) {
         e.preventDefault();
-        const { workspaces, activePath } = useWorkspacesStore.getState();
-        const ws = workspaces.find((w) => w.path === activePath);
-        const activeTabId = ws?.editor.getState().activeTabId;
-        if (ws && activeTabId) void closeTabSafely(ws.editor, activeTabId);
+        const activeTabId = activeWorkspace?.editor.getState().activeTabId;
+        if (activeWorkspace && activeTabId) {
+          void closeTabSafely(activeWorkspace.editor, activeTabId);
+        }
       } else if (e.key >= "1" && e.key <= "9" && !e.shiftKey && !e.altKey) {
         // ⌘1…⌘9: jump to the Nth workspace tab
         const { workspaces, setActive } = useWorkspacesStore.getState();

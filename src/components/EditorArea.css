@@ -55,6 +55,9 @@
 .editor-tab.active:hover {
   background: var(--bg-elevated);
 }
+.editor-tab.transient .tab-title {
+  font-style: italic;
+}
 
 .editor-tab-add {
   width: 30px;

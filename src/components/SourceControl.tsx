@@ -18,6 +18,7 @@ import {
 } from "../lib/ipc";
 import { statusColor, statusLetter, statusPaths } from "../lib/status";
 import { basename, dirname } from "../lib/path";
+import { ContextMenu } from "./ContextMenu";
 import GitGraph from "./GitGraph";
 import {
   IcApply,
@@ -91,13 +92,15 @@ function Section({
 function FileRow({ file, staged }: { file: FileStatus; staged: boolean }) {
   const ws = useWorkspace();
   const openDiff = useEditor((s) => s.openDiff);
+  const previewDiff = useEditor((s) => s.previewDiff);
   const openFile = useEditor((s) => s.openFile);
   const color = statusColor(file.status);
   const name = basename(file.path);
   const dir = dirname(file.path);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   const onRowClick = () => {
-    openDiff({
+    previewDiff({
       repoPath: ws.path,
       path: file.path,
       kind: staged ? "staged" : "worktree",
@@ -108,6 +111,16 @@ function FileRow({ file, staged }: { file: FileStatus; staged: boolean }) {
 
   const onOpenFile = () => {
     openFile(`${ws.path}/${file.path}`);
+  };
+
+  const onOpenDiff = () => {
+    openDiff({
+      repoPath: ws.path,
+      path: file.path,
+      kind: staged ? "staged" : "worktree",
+      status: file.status,
+      origPath: file.origPath,
+    });
   };
 
   const onDiscard = async () => {
@@ -123,51 +136,111 @@ function FileRow({ file, staged }: { file: FileStatus; staged: boolean }) {
   };
 
   return (
-    <div className="sc-row sc-file-row" title={file.path} onClick={onRowClick}>
-      <span
-        className={`sc-file-name truncate${file.status === "D" ? " deleted" : ""}`}
-        style={{ color }}
+    <>
+      <div
+        className="sc-row sc-file-row"
+        title={file.path}
+        onClick={onRowClick}
+        onDoubleClick={onOpenDiff}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setMenu({ x: event.clientX, y: event.clientY });
+        }}
       >
-        {name}
-      </span>
-      <span className="sc-file-dir truncate">{dir}</span>
-      <span className="sc-row-actions" onClick={(e) => e.stopPropagation()}>
-        {file.status !== "D" && (
-          <button className="icon-btn" title="Open File" onClick={onOpenFile}>
-            <IcFile />
-          </button>
-        )}
-        {!staged && (
+        <span
+          className={`sc-file-name truncate${file.status === "D" ? " deleted" : ""}`}
+          style={{ color }}
+        >
+          {name}
+        </span>
+        <span className="sc-file-dir truncate">{dir}</span>
+        <span className="sc-row-actions" onClick={(e) => e.stopPropagation()}>
+          {file.status !== "D" && (
+            <button className="icon-btn" title="Open File" onClick={onOpenFile}>
+              <IcFile />
+            </button>
+          )}
+          {!staged && (
+            <button
+              className="icon-btn"
+              title="Discard Changes"
+              onClick={() => void onDiscard()}
+            >
+              <IcDiscard />
+            </button>
+          )}
+          {staged ? (
+            <button
+              className="icon-btn"
+              title="Unstage Changes"
+              onClick={() => void ws.repo.getState().unstage(statusPaths(file))}
+            >
+              <IcMinus />
+            </button>
+          ) : (
+            <button
+              className="icon-btn"
+              title="Stage Changes"
+              onClick={() => void ws.repo.getState().stage(statusPaths(file))}
+            >
+              <IcPlus />
+            </button>
+          )}
+        </span>
+        <span className="sc-file-letter" style={{ color }}>
+          {statusLetter(file.status)}
+        </span>
+      </div>
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
           <button
-            className="icon-btn"
-            title="Discard Changes"
-            onClick={() => void onDiscard()}
+            disabled={file.status === "D"}
+            title={
+              file.status === "D"
+                ? "Deleted file has no working-tree file"
+                : undefined
+            }
+            onClick={() => {
+              onOpenFile();
+              setMenu(null);
+            }}
           >
-            <IcDiscard />
+            Open File
           </button>
-        )}
-        {staged ? (
           <button
-            className="icon-btn"
-            title="Unstage Changes"
-            onClick={() => void ws.repo.getState().unstage(statusPaths(file))}
+            onClick={() => {
+              onOpenDiff();
+              setMenu(null);
+            }}
           >
-            <IcMinus />
+            Open Changes
           </button>
-        ) : (
+          <div className="ctx-menu-sep" />
+          {!staged && (
+            <button
+              onClick={() => {
+                setMenu(null);
+                void onDiscard();
+              }}
+            >
+              Discard Changes…
+            </button>
+          )}
           <button
-            className="icon-btn"
-            title="Stage Changes"
-            onClick={() => void ws.repo.getState().stage(statusPaths(file))}
+            onClick={() => {
+              setMenu(null);
+              const action = staged
+                ? ws.repo.getState().unstage
+                : ws.repo.getState().stage;
+              void action(statusPaths(file));
+            }}
           >
-            <IcPlus />
+            {staged ? "Unstage Changes" : "Stage Changes"}
           </button>
-        )}
-      </span>
-      <span className="sc-file-letter" style={{ color }}>
-        {statusLetter(file.status)}
-      </span>
-    </div>
+        </ContextMenu>
+      )}
+    </>
   );
 }
 

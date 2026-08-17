@@ -54,6 +54,7 @@ import {
   type AgentDefinition,
 } from "../stores/agentDefinitions";
 import { useAgentRuntimeStore } from "../stores/agentRuntime";
+import { useUiStore } from "../stores/ui";
 import {
   runTerminalRecipe,
   useTerminalRecipesStore,
@@ -98,6 +99,41 @@ function AppearanceSettings() {
         </div>
       ))}
     </div>
+  );
+}
+
+function EditorSettings() {
+  const wordWrap = useUiStore((state) => state.wordWrap);
+  const autoSave = useUiStore((state) => state.autoSave);
+  const toggleWordWrap = useUiStore((state) => state.toggleWordWrap);
+  const toggleAutoSave = useUiStore((state) => state.toggleAutoSave);
+  return (
+    <>
+      <div className="settings-row">
+        <div className="settings-row-main">
+          <span className="settings-row-name">Word wrap</span>
+          <span className="settings-row-status">Soft-wrap long lines</span>
+        </div>
+        <button
+          className={`settings-toggle ${wordWrap ? "on" : ""}`}
+          role="switch"
+          aria-checked={wordWrap}
+          onClick={toggleWordWrap}
+        />
+      </div>
+      <div className="settings-row">
+        <div className="settings-row-main">
+          <span className="settings-row-name">Auto Save</span>
+          <span className="settings-row-status">After one second without typing</span>
+        </div>
+        <button
+          className={`settings-toggle ${autoSave ? "on" : ""}`}
+          role="switch"
+          aria-checked={autoSave}
+          onClick={toggleAutoSave}
+        />
+      </div>
+    </>
   );
 }
 
@@ -730,6 +766,13 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 modeOn={modeOn}
               />
             ))}
+          </section>
+          <section className="settings-section">
+            <h3>Editor</h3>
+            <p className="settings-hint">
+              Lightweight editing preferences are saved across launches.
+            </p>
+            <EditorSettings />
           </section>
           <section className="settings-section">
             <h3>Agent Integrations</h3>

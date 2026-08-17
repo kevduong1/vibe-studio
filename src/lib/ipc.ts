@@ -11,6 +11,17 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AgentRuntimeState } from "./agentState";
 
 // ---------------------------------------------------------------------------
+// Application lifecycle
+// ---------------------------------------------------------------------------
+
+/** Complete a quit that already passed the frontend's dirty-buffer guard. */
+export const appExit = (): Promise<void> => invoke("app_exit");
+
+/** Native macOS Cmd+Q is held by Rust until the frontend resolves save UI. */
+export const onAppExitRequested = (handler: () => void): Promise<UnlistenFn> =>
+  listen("app-exit-requested", handler);
+
+// ---------------------------------------------------------------------------
 // Localhost preview types
 // ---------------------------------------------------------------------------
 

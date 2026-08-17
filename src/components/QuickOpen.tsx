@@ -89,7 +89,19 @@ export default function QuickOpen({
     if (!files) return [];
     const q = filter.trim().toLowerCase();
     if (!q) {
-      return files
+      const byPath = new Map(files.map((file) => [file.path, file]));
+      const recent = ws.editor
+        .getState()
+        .recentFiles.map((path) =>
+          path.startsWith(`${ws.path}/`) ? path.slice(ws.path.length + 1) : path,
+        )
+        .flatMap((path) => {
+          const file = byPath.get(path);
+          if (!file) return [];
+          byPath.delete(path);
+          return [file];
+        });
+      return [...recent, ...byPath.values()]
         .slice(0, MAX_SHOWN)
         .map((f) => ({ path: f.path, positions: NO_POSITIONS }));
     }
@@ -105,7 +117,7 @@ export default function QuickOpen({
         (a.path < b.path ? -1 : 1),
     );
     return scored.slice(0, MAX_SHOWN);
-  }, [files, filter]);
+  }, [files, filter, ws.editor, ws.path]);
   const sel = Math.max(0, Math.min(index, shown.length - 1));
 
   useEffect(() => {
@@ -115,7 +127,7 @@ export default function QuickOpen({
   const open = (rel: string) => {
     // Backend paths are repo-relative; the editor wants absolute (the tab id
     // then matches FileExplorer's, so the same file never opens twice).
-    ws.editor.getState().openFile(`${ws.path}/${rel}`);
+    ws.editor.getState().previewFile(`${ws.path}/${rel}`);
     onClose();
   };
 

@@ -10,20 +10,23 @@
  */
 import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
 import { create, useStore } from "zustand";
-import { confirm, message } from "@tauri-apps/plugin-dialog";
+import { message } from "@tauri-apps/plugin-dialog";
 import { gitOpen } from "../lib/ipc";
 import { disposePreviewsWithFallback } from "../lib/previewDisposal";
 import { projectDisplayName } from "../lib/projectNames";
 import { disposeWorkspaceLsp, setActiveLspWorkspace } from "../lib/lsp/servers";
 import { disposeSession } from "../lib/termSessions";
+import { confirmSaveDirtyTabs } from "../lib/editorBuffers";
 import { removeAgentTask } from "./agentTasks";
 import { runRestoreTerminalRecipes } from "./terminalRecipes";
 import { createRepoStore, type RepoState, type RepoStore } from "./repo";
 import {
   createEditorStore,
+  type EditorSessionSnapshot,
   type EditorState,
   type EditorStore,
   type PreviewTab,
+  type Tab,
 } from "./editor";
 import { createSearchStore, type SearchState, type SearchStore } from "./search";
 import {
@@ -76,30 +79,98 @@ const pushRecentRepo = (path: string) => {
   localStorage.setItem(RECENT_KEY, JSON.stringify(list));
 };
 
-/** Open workspace roots + active path, persisted for session restore. */
+/** Open workspace roots, active path, and durable editor tabs. Transient and
+    native browser preview tabs intentionally never survive relaunch. */
 const saveSession = (s: { workspaces: Workspace[]; activePath: string | null }) =>
   localStorage.setItem(
     SESSION_KEY,
     JSON.stringify({
       paths: s.workspaces.map((w) => w.path),
       active: s.activePath,
+      editors: Object.fromEntries(
+        s.workspaces.map((workspace) => {
+          const editor = workspace.editor.getState();
+          const tabs = editor.tabs.filter(
+            (tab): tab is Extract<Tab, { kind: "file" | "diff" }> =>
+              tab.id !== editor.transientTabId &&
+              (tab.kind === "file" || tab.kind === "diff"),
+          );
+          return [
+            workspace.path,
+            {
+              tabs,
+              activeTabId: tabs.some((tab) => tab.id === editor.activeTabId)
+                ? editor.activeTabId
+                : tabs[0]?.id ?? null,
+              recentFiles: editor.recentFiles,
+            },
+          ];
+        }),
+      ),
     }),
   );
 
-const loadSession = (): { paths: string[]; active: string | null } | null => {
+const sanitizeEditorSession = (value: unknown): EditorSessionSnapshot | null => {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (!Array.isArray(raw.tabs)) return null;
+  const tabs = raw.tabs.filter((item): item is Tab => {
+    if (!item || typeof item !== "object") return false;
+    const tab = item as Record<string, unknown>;
+    if (typeof tab.id !== "string" || typeof tab.title !== "string") return false;
+    if (tab.kind === "file") return typeof tab.path === "string";
+    if (tab.kind !== "diff" || !tab.diff || typeof tab.diff !== "object") return false;
+    const diff = tab.diff as Record<string, unknown>;
+    return (
+      typeof diff.repoPath === "string" &&
+      typeof diff.path === "string" &&
+      ["worktree", "staged", "commit", "checkpoint"].includes(String(diff.kind))
+    );
+  });
+  return {
+    tabs,
+    activeTabId:
+      typeof raw.activeTabId === "string" && tabs.some((tab) => tab.id === raw.activeTabId)
+        ? raw.activeTabId
+        : tabs[0]?.id ?? null,
+    recentFiles: Array.isArray(raw.recentFiles)
+      ? raw.recentFiles.filter((path): path is string => typeof path === "string").slice(0, 30)
+      : [],
+  };
+};
+
+interface WorkspaceSession {
+  paths: string[];
+  active: string | null;
+  editors: Record<string, EditorSessionSnapshot>;
+}
+
+const loadSession = (): WorkspaceSession | null => {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed.paths)) return null;
+    const editors: Record<string, EditorSessionSnapshot> = {};
+    if (parsed.editors && typeof parsed.editors === "object") {
+      for (const [path, value] of Object.entries(parsed.editors)) {
+        const editor = sanitizeEditorSession(value);
+        if (editor) editors[path] = editor;
+      }
+    }
     return {
       paths: parsed.paths.filter((p: unknown) => typeof p === "string"),
       active: typeof parsed.active === "string" ? parsed.active : null,
+      editors,
     };
   } catch {
     return null;
   }
 };
+
+const startupSession = loadSession();
+const pendingEditorSessions = new Map(Object.entries(startupSession?.editors ?? {}));
+const editorSessionUnsubscribers = new WeakMap<EditorStore, () => void>();
 
 export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
   workspaces: [],
@@ -120,10 +191,11 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
       path: root,
       tabGroupId: info.tabGroupId,
       repo: createRepoStore(root),
-      editor: createEditorStore(),
+      editor: createEditorStore(pendingEditorSessions.get(root)),
       terminal: createTerminalStore(),
       search: createSearchStore(root),
     };
+    pendingEditorSessions.delete(root);
     set((s) => {
       const next = {
         workspaces: [...s.workspaces, ws],
@@ -135,6 +207,10 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
       return next;
     });
     pushRecentRepo(root);
+    editorSessionUnsubscribers.set(
+      ws.editor,
+      ws.editor.subscribe(() => saveSession(get())),
+    );
     await ws.repo.getState().init();
   },
 
@@ -143,33 +219,22 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
     if (!ws) return;
     const editor = ws.editor;
     if (editor.getState().closing) return;
-    const dirtyIds = () =>
-      Object.entries(editor.getState().dirty)
-        .filter(([, dirty]) => dirty)
-        .map(([id]) => id);
-    const confirmDirty = async (ids: string[]) => {
-      if (ids.length === 0) return true;
-      return confirm(
-        `"${projectDisplayName(ws.path)}" has ${ids.length} unsaved ${
-          ids.length === 1 ? "file" : "files"
-        } whose changes will be lost.`,
-        { title: "Close Workspace?", kind: "warning" },
-      );
-    };
-    const confirmedDirtyIds = dirtyIds();
-    if (!(await confirmDirty(confirmedDirtyIds))) {
-      return;
-    }
+    const dirtyCount = Object.values(editor.getState().dirty).filter(Boolean).length;
+    if (
+      !(await confirmSaveDirtyTabs(
+        editor,
+        "Close Workspace?",
+        `“${projectDisplayName(ws.path)}” has ${dirtyCount} unsaved ${
+          dirtyCount === 1 ? "file" : "files"
+        }.`,
+      ))
+    ) return;
     // Another close may have passed its dirty prompt while this one awaited
     // its own prompt. Only the first caller owns teardown.
     if (editor.getState().closing) return;
     editor.getState().beginClosing();
     let removed = false;
     try {
-      // The first prompt was open while the editor was still interactive. Once
-      // gated, obtain confirmation for any dirty tab that appeared in between.
-      const newlyDirtyIds = dirtyIds().filter((id) => !confirmedDirtyIds.includes(id));
-      if (!(await confirmDirty(newlyDirtyIds))) return;
       const previewIds = [
         ...new Set([
           ...editor
@@ -225,6 +290,8 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
         saveSession(next);
         return next;
       });
+      editorSessionUnsubscribers.get(editor)?.();
+      editorSessionUnsubscribers.delete(editor);
       removed = true;
     } catch (error) {
       console.error("Failed to close workspace", error);
@@ -287,7 +354,7 @@ export async function switchToProject(path: string): Promise<void> {
  * while the restore was still running.
  */
 export async function restoreSession(): Promise<void> {
-  const session = loadSession();
+  const session = startupSession;
   const paths = session ? session.paths : getRecentRepos().slice(0, 1);
   const store = useWorkspacesStore;
 

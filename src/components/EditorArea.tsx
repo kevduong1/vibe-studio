@@ -47,15 +47,21 @@ function TabItem({
   tab,
   active,
   dirty,
+  transient,
+  onActivate,
+  onPointerDown,
   onContext,
 }: {
   tab: Tab;
   active: boolean;
   dirty: boolean;
+  transient: boolean;
+  onActivate: () => void;
+  onPointerDown: (e: React.PointerEvent) => void;
   onContext: (tabId: string, e: ReactMouseEvent) => void;
 }) {
   const ws = useWorkspace();
-  const setActive = useEditor((s) => s.setActive);
+  const pinTab = useEditor((s) => s.pinTab);
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -70,7 +76,8 @@ function TabItem({
   return (
     <div
       ref={ref}
-      className={`editor-tab ${active ? "active" : ""} ${dirty ? "dirty" : ""}`}
+      data-editor-tab-id={tab.id}
+      className={`editor-tab ${active ? "active" : ""} ${dirty ? "dirty" : ""} ${transient ? "transient" : ""}`}
       title={
         tab.kind === "file"
           ? tab.path
@@ -80,7 +87,9 @@ function TabItem({
               ? tab.memory.entry.description || tab.title
               : tab.preview.url
       }
-      onClick={() => setActive(tab.id)}
+      onClick={onActivate}
+      onPointerDown={onPointerDown}
+      onDoubleClick={() => pinTab(tab.id)}
       onMouseDown={(e) => {
         // prevent middle-click autoscroll; close on aux click below
         if (e.button === 1) e.preventDefault();
@@ -110,6 +119,7 @@ function TabItem({
         <button
           className="icon-btn tab-close"
           title="Close"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             void closeTabSafely(ws.editor, tab.id);
@@ -141,6 +151,20 @@ function TabMenu({
   const idx = tabs.findIndex((t) => t.id === tabId);
   if (idx === -1) return null; // tab closed from under the menu
   const tab = tabs[idx];
+  const fileChange =
+    tab.kind === "file" && tab.path.startsWith(`${repoPath}/`)
+      ? (() => {
+          const rel = tab.path.slice(repoPath.length + 1);
+          const status = ws.repo.getState().status;
+          const unstaged = status?.unstaged.find((file) => file.path === rel);
+          const staged = status?.staged.find((file) => file.path === rel);
+          return unstaged
+            ? { file: unstaged, kind: "worktree" as const }
+            : staged
+              ? { file: staged, kind: "staged" as const }
+              : null;
+        })()
+      : null;
   const close = (ids: string[]) => {
     onClose();
     void closeTabsSafely(ws.editor, ids);
@@ -167,6 +191,34 @@ function TabMenu({
         Close Tabs to the Right
       </button>
       <button onClick={() => close(tabs.map((t) => t.id))}>Close All</button>
+      <button
+        disabled={idx === 0}
+        onClick={() => close(tabs.slice(0, idx).map((t) => t.id))}
+      >
+        Close Tabs to the Left
+      </button>
+      <button
+        disabled={!tabs.some((candidate) => !ws.editor.getState().dirty[candidate.id])}
+        onClick={() =>
+          close(
+            tabs
+              .filter((candidate) => !ws.editor.getState().dirty[candidate.id])
+              .map((candidate) => candidate.id),
+          )
+        }
+      >
+        Close Saved Tabs
+      </button>
+      {ws.editor.getState().transientTabId === tab.id && (
+        <button
+          onClick={() => {
+            ws.editor.getState().pinTab(tab.id);
+            onClose();
+          }}
+        >
+          Keep Open
+        </button>
+      )}
       {tab.kind === "file" && (
         <>
           <div className="ctx-menu-sep" />
@@ -185,6 +237,22 @@ function TabMenu({
           <button onClick={() => sendContext({ kind: "file", path: tab.path })}>
             Send File to Agent
           </button>
+          {fileChange && (
+            <button
+              onClick={() => {
+                ws.editor.getState().openDiff({
+                  repoPath,
+                  path: fileChange.file.path,
+                  kind: fileChange.kind,
+                  status: fileChange.file.status,
+                  origPath: fileChange.file.origPath,
+                });
+                onClose();
+              }}
+            >
+              View Changes
+            </button>
+          )}
           <div className="ctx-menu-sep" />
           <button
             onClick={() => {
@@ -220,12 +288,47 @@ function TabMenu({
       {tab.kind === "diff" && (
         <>
           <div className="ctx-menu-sep" />
+          <button
+            disabled={tab.diff.status === "D"}
+            onClick={() => {
+              ws.editor.getState().openFile(`${tab.diff.repoPath}/${tab.diff.path}`);
+              onClose();
+            }}
+          >
+            Open File
+          </button>
           <button onClick={() => sendContext({
             kind: "diff",
             path: tab.diff.path,
             diffKind: tab.diff.kind,
           })}>
             Send Diff to Agent
+          </button>
+          <div className="ctx-menu-sep" />
+          <button
+            onClick={() => {
+              void copyText(`${tab.diff.repoPath}/${tab.diff.path}`);
+              onClose();
+            }}
+          >
+            Copy Path
+          </button>
+          <button
+            onClick={() => {
+              void copyText(tab.diff.path);
+              onClose();
+            }}
+          >
+            Copy Relative Path
+          </button>
+          <button
+            disabled={tab.diff.status === "D"}
+            onClick={() => {
+              void fsReveal(`${tab.diff.repoPath}/${tab.diff.path}`);
+              onClose();
+            }}
+          >
+            Reveal in Finder
           </button>
         </>
       )}
@@ -271,6 +374,7 @@ export default function EditorArea({
   const workspace = useWorkspace();
   const tabs = useEditor((s) => s.tabs);
   const activeTabId = useEditor((s) => s.activeTabId);
+  const transientTabId = useEditor((s) => s.transientTabId);
   const dirty = useEditor((s) => s.dirty);
   // Rendered as a sibling of the strip (Titlebar pattern) so backdrop and
   // item clicks don't bubble into the tabs' activate-on-click.
@@ -281,6 +385,36 @@ export default function EditorArea({
   } | null>(null);
   const [previewPickerOpen, setPreviewPickerOpen] = useState(false);
   const markdownPreview = useUiStore((s) => s.markdownPreview);
+  const draggedRef = useRef(false);
+
+  const beginTabDrag = (event: React.PointerEvent, tabId: string) => {
+    if (event.button !== 0) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let dragging = false;
+    const move = (pointer: PointerEvent) => {
+      if (!dragging && Math.hypot(pointer.clientX - startX, pointer.clientY - startY) < 4) return;
+      dragging = true;
+      draggedRef.current = true;
+      const target = document
+        .elementFromPoint(pointer.clientX, pointer.clientY)
+        ?.closest<HTMLElement>("[data-editor-tab-id]");
+      const targetId = target?.dataset.editorTabId;
+      if (!targetId || targetId === tabId) return;
+      const state = workspace.editor.getState();
+      const index = state.tabs.findIndex((candidate) => candidate.id === targetId);
+      if (index >= 0) state.moveTab(tabId, index);
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      if (dragging) setTimeout(() => (draggedRef.current = false), 0);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  };
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
 
@@ -297,6 +431,12 @@ export default function EditorArea({
                 tab={tab}
                 active={tab.id === activeTabId}
                 dirty={!!dirty[tab.id]}
+                transient={tab.id === transientTabId}
+                onActivate={() => {
+                  if (draggedRef.current) return;
+                  workspace.editor.getState().setActive(tab.id);
+                }}
+                onPointerDown={(event) => beginTabDrag(event, tab.id)}
                 onContext={(tabId, e) => {
                   e.preventDefault();
                   setTabMenu({ tabId, x: e.clientX, y: e.clientY });

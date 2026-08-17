@@ -14,7 +14,14 @@ mod search;
 mod usage;
 mod watcher;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+
+#[tauri::command]
+fn app_exit(app: tauri::AppHandle) {
+    // Programmatic exits carry Some(code), so the RunEvent guard below lets
+    // this approved path through while still intercepting a native Cmd+Q.
+    app.exit(0);
+}
 
 fn main() {
     tauri::Builder::default()
@@ -45,6 +52,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            app_exit,
             // git
             git::git_open,
             git::git_worktree_list,
@@ -153,11 +161,24 @@ fn main() {
             // never fire and dev servers (in their own job-control process
             // groups) would survive. LSP servers self-exit on stdin EOF, so
             // their async kill is fine.
-            if let tauri::RunEvent::Exit = event {
-                control::stop(&app_handle.state::<control::ControlState>());
-                preview::close_all(app_handle);
-                pty::kill_all_blocking(&app_handle.state::<pty::PtyState>());
-                lsp::kill_all(&app_handle.state::<lsp::LspState>());
+            match event {
+                // macOS Cmd+Q is application-level, not a window close. Hold
+                // it synchronously and let the frontend run the same native
+                // dirty-buffer prompt as the window close path. `app_exit`
+                // re-enters here with Some(0), which is intentionally allowed.
+                tauri::RunEvent::ExitRequested {
+                    code: None, api, ..
+                } => {
+                    api.prevent_exit();
+                    let _ = app_handle.emit("app-exit-requested", ());
+                }
+                tauri::RunEvent::Exit => {
+                    control::stop(&app_handle.state::<control::ControlState>());
+                    preview::close_all(app_handle);
+                    pty::kill_all_blocking(&app_handle.state::<pty::PtyState>());
+                    lsp::kill_all(&app_handle.state::<lsp::LspState>());
+                }
+                _ => {}
             }
         });
 }

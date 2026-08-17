@@ -192,8 +192,10 @@
   --palette-app: var(--theme-canvas);
   --palette-titlebar: color-mix(in srgb, var(--theme-canvas) 55%, var(--theme-chrome));
   --palette-sidebar: var(--theme-chrome);
-  --palette-editor: var(--theme-editor);
-  --palette-panel: color-mix(in srgb, var(--theme-canvas) 55%, var(--theme-editor));
+  /* File/diff views and terminal panels share one inset workspace canvas.
+     The brighter editor anchor still feeds inputs, tabs, and raised chrome. */
+  --palette-editor: color-mix(in srgb, var(--theme-canvas) 55%, var(--theme-editor));
+  --palette-panel: var(--palette-editor);
   --palette-statusbar: var(--theme-canvas);
   --palette-input: color-mix(in srgb, var(--theme-editor) 98%, #ffffff);
   --palette-surface: color-mix(in srgb, var(--theme-chrome) 60%, var(--theme-editor));

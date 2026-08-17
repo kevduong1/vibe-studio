@@ -20,8 +20,9 @@ agent-driven development. Built with [Tauri 2](https://tauri.app) — native
 WKWebView, no bundled Chromium — so it stays light on CPU and RAM.
 
 The interface uses a modern, layered dark workspace: rounded inset surfaces,
-project-tinted accents, and elevated command overlays keep dense repository,
-editor, and terminal workflows easy to scan. Pick Midnight, Charcoal, Soft
+matching editor/diff and terminal canvases, project-tinted accents, and
+elevated command overlays keep dense repository, editor, and terminal workflows
+easy to scan. Pick Midnight, Charcoal, Soft
 Gray, Slate, or one of 18 additional neutral, cool, warm, earth, and jewel
 palettes in **Settings → Appearance**; the app remembers the background palette
 across launches.
@@ -43,6 +44,8 @@ across launches.
 - Stage / unstage / discard, commit (+ amend, commit & push), stash
   (save / apply / pop / drop), fetch / pull / push using your existing git
   auth and credential helpers
+- Right-click a staged or working-tree change to open the file or pinned diff,
+  or use the applicable stage, unstage, and discard actions
 - **Commit graph** with colored branch lanes, branch & tag pills, and a
   branch filter; virtualized so huge histories stay smooth. The checked-out
   branch takes the active project's color, and a branch held by another
@@ -232,14 +235,27 @@ Repository checks come from `.vscode/tasks.json`:
 ### ✍️ Editor & navigation
 
 - CodeMirror 6 tabs with on-demand language loading, unsaved-draft
-  recovery, and external-change reload with save-conflict protection
+  recovery, preserved LF/CRLF/CR line endings, and external-change reload
+  with save-conflict protection
+- **Provisional tabs** — single-clicking Explorer, search, source-control, or
+  commit files reuses one italic tab; editing, double-clicking the file/tab,
+  or **Keep Open** pins it. Pinned file/diff tabs restore on relaunch
+- Drag tabs to reorder them; middle-click closes; **⌘⇧T** reopens the most
+  recently closed tab; tab menus include close-left / close-saved actions
 - **⌘P quick open** — fuzzy file matching (gitignore-aware) with match
-  highlighting
+  highlighting and recently opened files first when the query is empty
 - **⌘⇧F workspace search** — parallel Rust walk with case / whole-word /
   regex toggles; results open at the matching line
 - **⌘F find & replace** — floating VS Code-style widget in every editor
   and diff
-- Lazy file explorer, whole-app zoom (**⌘+ / ⌘− / ⌘0**)
+- **Control-G** go to line; Control-Tab / Control-Shift-Tab and
+  **⌘⇧[ / ⌘⇧]** cycle tabs
+- Lazy file explorer with active-file auto-reveal and complete Left/Right tree
+  navigation; whole-app zoom (**⌘+ / ⌘− / ⌘0**)
+- Status bar cursor/selection, detected indentation, line-ending, and persisted
+  word-wrap controls; optional one-second Auto Save in Settings
+- Closing a dirty tab/workspace or quitting offers native
+  **Save / Don’t Save / Cancel** protection
 - A file tab's context menu can send the bounded current selection, file
   reference, or diff-review request to a safe idle/question-owned agent in the
   same project; working or permission-blocked agents are never steered implicitly
@@ -281,6 +297,9 @@ Repository checks come from `.vscode/tasks.json`:
 
 - Side-by-side or unified, syntax-highlighted, unchanged regions collapsed
 - Working-tree diffs are **editable** — fix what you see and ⌘S saves it
+- **Open File** in the toolbar, tab menu, and source context menu; normal file
+  tabs offer the reverse **View Changes** action
+- Previous/next hunk navigation from the toolbar or **Shift-F7 / F7**
 - Auto-refreshes when the repo changes underneath it
 
 ## Keyboard shortcuts
@@ -290,6 +309,11 @@ Repository checks come from `.vscode/tasks.json`:
 | ⌘ P | Quick open file |
 | ⌘ ⇧ F | Search across the workspace |
 | ⌘ F | Find / replace in the editor |
+| Control G | Go to line |
+| Control Tab / Control ⇧ Tab | Next / previous editor tab |
+| ⌘ ⇧ [ / ⌘ ⇧ ] | Previous / next editor tab |
+| ⌘ ⇧ T | Reopen the last closed editor tab |
+| F7 / ⇧ F7 | Next / previous diff hunk |
 | ⌘ ⇧ B | Run build task |
 | ⌘ ⇧ I | Open Agent Inbox |
 | ⌘ ⌥ ↓ / ⌘ ⌥ ↑ | Next / previous actionable agent |

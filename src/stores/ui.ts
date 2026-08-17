@@ -25,6 +25,10 @@ interface UiState {
       shown only while the active tab is a .md file). App-wide, not per-tab:
       "reading mode" tends to be a moment, not a per-file choice. */
   markdownPreview: boolean;
+  /** App-wide editor soft wrapping preference. */
+  wordWrap: boolean;
+  /** Save dirty active editors after a short idle delay. */
+  autoSave: boolean;
   /** Mounted native-overlay families. A counter keeps nested and StrictMode
       unmounts from revealing previews too early. */
   nativeOverlayDepth: number;
@@ -43,12 +47,20 @@ interface UiState {
   togglePanelMaximized: () => void;
   setPanelMaximized: (v: boolean) => void;
   toggleMarkdownPreview: () => void;
+  toggleWordWrap: () => void;
+  toggleAutoSave: () => void;
   pushNativeOverlay: () => void;
   popNativeOverlay: () => void;
 }
 
 const clamp = (v: number, min: number, max: number) =>
   Math.min(max, Math.max(min, v));
+
+const storedBool = (key: string): boolean =>
+  typeof window !== "undefined" && window.localStorage.getItem(key) === "true";
+const storeBool = (key: string, value: boolean): void => {
+  if (typeof window !== "undefined") window.localStorage.setItem(key, String(value));
+};
 
 export const useUiStore = create<UiState>((set) => ({
   sidebarTab: "scm",
@@ -60,6 +72,8 @@ export const useUiStore = create<UiState>((set) => ({
   panelMaximized: false,
   searchFocusNonce: 0,
   markdownPreview: false,
+  wordWrap: storedBool("vibe-studio:word-wrap"),
+  autoSave: storedBool("vibe-studio:auto-save"),
   nativeOverlayDepth: 0,
 
   setSidebarTab: (tab) =>
@@ -92,6 +106,18 @@ export const useUiStore = create<UiState>((set) => ({
     set(v ? { panelMaximized: true, panelVisible: true } : { panelMaximized: false }),
   toggleMarkdownPreview: () =>
     set((s) => ({ markdownPreview: !s.markdownPreview })),
+  toggleWordWrap: () =>
+    set((s) => {
+      const wordWrap = !s.wordWrap;
+      storeBool("vibe-studio:word-wrap", wordWrap);
+      return { wordWrap };
+    }),
+  toggleAutoSave: () =>
+    set((s) => {
+      const autoSave = !s.autoSave;
+      storeBool("vibe-studio:auto-save", autoSave);
+      return { autoSave };
+    }),
   pushNativeOverlay: () =>
     set((s) => ({ nativeOverlayDepth: s.nativeOverlayDepth + 1 })),
   popNativeOverlay: () =>

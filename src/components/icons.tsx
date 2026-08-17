@@ -311,6 +311,11 @@ export const IcChevronDown = (props: IconProps) => (
     <path d="m3 5.7 5 5 5-5" />
   </Svg>
 );
+export const IcChevronUp = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="m3 10.3 5-5 5 5" />
+  </Svg>
+);
 /* double chevrons: bottom-panel maximize / restore */
 export const IcChevronsUp = (props: IconProps) => (
   <Svg {...props}>

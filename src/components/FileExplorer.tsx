@@ -88,6 +88,7 @@ export default function FileExplorer() {
   const repoPath = useRepo((s) => s.repoPath);
   const repoName = useRepo((s) => s.repoName);
   const openFile = useEditor((s) => s.openFile);
+  const previewFile = useEditor((s) => s.previewFile);
   const activeTabId = useEditor((s) => s.activeTabId);
 
   const [cache, setCache] = useState<DirCache>(() => new Map());
@@ -239,14 +240,44 @@ export default function FileExplorer() {
       ? activeTabId.slice("file:".length)
       : null;
   useEffect(() => {
-    if (activeFilePath) {
-      const next = new Set([activeFilePath]);
-      selectedRef.current = next;
-      setSelected(next);
-      setFocused(activeFilePath);
-      selectionAnchorRef.current = activeFilePath;
+    if (!activeFilePath || !repoPath || !activeFilePath.startsWith(`${repoPath}/`)) return;
+    const next = new Set([activeFilePath]);
+    selectedRef.current = next;
+    setSelected(next);
+    setFocused(activeFilePath);
+    selectionAnchorRef.current = activeFilePath;
+
+    // Auto-reveal: expand and load every ancestor, then scroll the row into
+    // view. Loading them together keeps deeply nested files snappy.
+    const dirs: string[] = [];
+    for (let dir = dirname(activeFilePath); dir !== repoPath && dir.startsWith(`${repoPath}/`); dir = dirname(dir)) {
+      dirs.push(dir);
     }
-  }, [activeFilePath]);
+    const expandedNext = new Set(expandedRef.current);
+    for (const dir of dirs) expandedNext.add(dir);
+    expandedRef.current = expandedNext;
+    setExpanded(expandedNext);
+    setRootExpanded(true);
+    let disposed = false;
+    void Promise.all(
+      dirs
+        .filter((dir) => !cacheRef.current.has(dir))
+        .map(async (dir): Promise<[string, DirEntry[] | "error"]> => {
+          try {
+            return [dir, await fsReadDir(dir)];
+          } catch {
+            return [dir, "error"];
+          }
+        }),
+    ).then((loaded) => {
+      if (disposed) return;
+      if (loaded.length) setCache((current) => new Map([...current, ...loaded]));
+      requestAnimationFrame(() => scrollRowIntoView(activeFilePath));
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [activeFilePath, repoPath]);
 
   const toggleDir = useCallback(
     (path: string) => {
@@ -712,7 +743,7 @@ export default function FileExplorer() {
     }
     setOnlySelected(entry.path);
     if (entry.isDir) toggleDir(entry.path);
-    else openFile(entry.path);
+    else previewFile(entry.path);
   };
 
   const onRowContext = (entry: DirEntry, ev: React.MouseEvent) => {
@@ -867,9 +898,23 @@ export default function FileExplorer() {
     } else if (ev.key === "ArrowRight") {
       ev.preventDefault();
       if (sel?.isDir && !expanded.has(sel.path)) toggleDir(sel.path);
+      else if (sel?.isDir) {
+        const child = entries[idx + 1];
+        if (child?.path.startsWith(`${sel.path}/`)) {
+          setOnlySelected(child.path);
+          scrollRowIntoView(child.path);
+        }
+      }
     } else if (ev.key === "ArrowLeft") {
       ev.preventDefault();
       if (sel?.isDir && expanded.has(sel.path)) toggleDir(sel.path);
+      else if (sel) {
+        const parent = dirname(sel.path);
+        if (parent !== repoPath && parent.startsWith(`${repoPath}/`)) {
+          setOnlySelected(parent);
+          scrollRowIntoView(parent);
+        }
+      }
     } else if (ev.key === "Enter") {
       ev.preventDefault();
       if (!sel) return;
@@ -1007,6 +1052,14 @@ export default function FileExplorer() {
                         return;
                       }
                       onRowClick(e, ev);
+                    }
+              }
+              onDoubleClick={
+                isRenaming || e.isDir
+                  ? undefined
+                  : (ev) => {
+                      ev.preventDefault();
+                      openFile(e.path);
                     }
               }
               onContextMenu={(ev) => onRowContext(e, ev)}

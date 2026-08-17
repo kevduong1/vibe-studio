@@ -446,7 +446,7 @@ const FileRow = memo(function FileRow({
     );
   }
   const open = () =>
-    ws.editor.getState().openDiff({
+    ws.editor.getState().previewDiff({
       repoPath,
       path: file.path,
       kind: "commit",
