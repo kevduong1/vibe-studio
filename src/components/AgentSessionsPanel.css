@@ -233,6 +233,7 @@
 
 .agent-session-avatar {
   position: relative;
+  isolation: isolate;
   width: 80px;
   height: 80px;
   flex-shrink: 0;
@@ -240,12 +241,50 @@
   place-items: center;
   margin-top: 1px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border-subtle));
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-active));
+  background:
+    radial-gradient(
+      circle at 50% 78%,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      transparent 56%
+    ),
+    linear-gradient(
+      155deg,
+      color-mix(in srgb, var(--accent) 9%, var(--bg-active)),
+      var(--bg-active) 62%
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
+    inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent);
+}
+
+.agent-session-avatar::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 3px;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: calc(var(--radius-lg) - 3px);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--fg) 4%, transparent),
+    transparent 34%
+  );
+}
+
+.agent-session-avatar.working {
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--border-subtle));
+}
+
+.agent-session-avatar.done {
+  border-color: color-mix(in srgb, var(--success) 44%, var(--border-subtle));
 }
 
 .agent-session-avatar canvas {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: block;
@@ -260,6 +299,12 @@
   border-style: dashed;
   background: var(--bg-active);
   animation: none;
+}
+
+.agent-session-avatar.subdued::before {
+  opacity: 0.3;
+  border-color: var(--border-subtle);
+  background: none;
 }
 
 .agent-session-avatar.subdued canvas {
@@ -280,12 +325,18 @@
 @keyframes agent-avatar-blocked {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 0%, transparent);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
+      inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--warning) 0%, transparent);
   }
 
   50% {
     border-color: var(--warning);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 22%, transparent);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
+      inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
+      0 0 0 2px color-mix(in srgb, var(--warning) 22%, transparent);
   }
 }
 

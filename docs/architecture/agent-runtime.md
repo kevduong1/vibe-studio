@@ -335,8 +335,8 @@ docks; workspace-scoped Explorer, Worktrees, Search, Source Control, and
 Memories live below a divider. The view remains available with no workspace
 open, preserves stable live-session sections, routes to the exact
 workspace/group/tab/session, and projects review state beside (never into)
-lifecycle state. Each row also resolves a large 80px pixel-art terrarium
-through the pure `agentAvatars.ts` personality/state model and the
+lifecycle state. Each row also resolves a large 80px pixel-art avatar tile
+through the pure `agentAvatars.ts` personality/sprite/state model and the
 `AgentAvatar.tsx` Canvas renderer. Character identity is a pure function of the
 project's current palette index and the *detected* runtime kind (not the tab's
 requested/default kind), so changing a project's color updates visible rows
@@ -353,28 +353,52 @@ immediately:
 | Yellow (6) | Apollo | Apollo |
 | Red (7) | Ares | Ares |
 
-The derived display state selects a four-pose `starting`, `working`, `blocked`,
-`done`, `idle`, or `unknown` stick-figure loop. Starting, blocked, done, idle,
-and unknown own shared readable lifecycle postures—walking in, shrugging,
-celebrating, sleeping, or inspecting a fault. Working is definition-owned:
-each of the twelve deity personalities declares a unique activity and the
-renderer supplies a matching pose, prop, and motion instead of a shared typing
-pose or workstation. The shipped set is rose tending, lyre playing, sword
-drill, archery, weaving, harvesting, summoning shades, smithing, a royal
-peacock audience, courier running, tide calling, and storm calling. Greek
-silhouettes such as a crown, crested helmet, laurel, robe, beard, or winged
-helm keep identity visible throughout. Idle gods recline in identity-specific
-resting places such as Zeus's cloud, Demeter's wheat, or Hades's underworld
-rest. Scenes draw on a
-40×40 integer pixel grid and scale to 80px with nearest-neighbor rendering.
-Scene colors resolve from `theme.css` tokens, so changing the app palette
-redraws the Canvas without embedding component-local colors. A single
+Art is hand-authored bitmap sprites, never procedural drawing. Rows of
+palette-key characters are laid out on a 20×20 logical grid that scales by an
+integer factor into the 80px tile (nearest-neighbor, `image-rendering:
+pixelated`), so every art pixel stays square on retina. Each frame composes a
+shared chunky mini-figure from ordered layers—low-alpha aura, ground shadow,
+torso, robe regalia, head, headgear, hands, held relic, relic glint, corner
+emblem, state cue—so twelve characters cost one body plus compact per-deity
+overlays. Every deity owns a unique headgear silhouette (crested helm, shade
+hood, winged cap, forge goggles…), a unique corner emblem (owl, bolt, wave,
+sun, moon, heart, wheat, hammer, sword, feather, wing, skull), and a unique
+held working relic (scroll, trident, lyre, bow, rose, wheat sheaf, hammer,
+sword, scepter, sealed letter, shade flame, bolt shard). Identity also spans
+the large silhouette and body: twelve distinct auras (aegis wings, solar rays,
+moon arc, tide rings, forge sparks, storm field…) sit behind twelve robe
+overlays (aegis, plate, scales, apron, courier straps, storm sash…). The scene
+carries no walls, floor, or furniture; the project accent paints the robe's
+stole and the CSS tile's restrained pool of light so rows stay tinted by their
+own project color.
+
+The derived display state selects the four-frame `starting`, `working`,
+`blocked`, `done`, `idle`, or `unknown` loop. Each state must be readable in a
+single still frame from pose and cue, not from motion: idle stands with open
+eyes, working bows its head over the held prop, blocked looks up beside a
+question cue, done wears a content pose beside a check, unknown is dimmed
+beside a scan cue, and starting materializes by opacity alone. Animation is
+deliberately calm—no element moves more than one logical pixel per frame and
+the figure never translates across the tile. Auras and the small relic glint
+change alpha only; they never sweep around the portrait. Cadences are slow
+(`AGENT_AVATAR_FRAME_MS`: idle 1100 ms, unknown 900, blocked 800, done 600,
+working 560, starting 350), and the whole vocabulary is a breathing bob, a
+blink, a one-pixel relic tap, and a cue/emblem/aura/glint pulse.
+
+`composeAgentAvatarFrame` returns pure positioned layer data, so sprite
+integrity, grid bounds, and the one-pixel amplitude rule are unit-testable
+without a DOM. Every palette key resolves to a `theme.css` custom property
+(`--agent-avatar-*`, plus `--project-N` for the accent), so changing the app
+palette or a project color redraws the Canvas without embedding
+component-local colors; the renderer resolves those tokens once per effect run
+rather than per frame and fills run-length-merged rectangles. A single
 module-level `requestAnimationFrame` clock serves only rows intersecting the
-viewport, and each Canvas redraws only when its four-pose frame actually
-changes; offscreen rows freeze on the state's descriptive pose.
+viewport, each Canvas redraws only when its four-frame index actually changes,
+and a per-deity phase offset keeps rows from blinking in lockstep; offscreen
+rows freeze on the state's descriptive frame.
 Only an unseen blocked prompt adds a CSS attention-ring pulse, while an
 acknowledged prompt keeps its waiting loop without the ring. `absent` draws an
-empty, desaturated, slashed, non-animated terrarium next to the explicit **No
+empty, desaturated, slashed, non-animated tile next to the explicit **No
 Agent** chip; it must never imply a live quiet agent. `prefers-reduced-motion`
 freezes the most descriptive pose for the state and does not subscribe that
 row to the animation clock. Avatar identity and state are exposed through

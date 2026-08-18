@@ -114,24 +114,29 @@ workspace-specific below it.
   failed checks, then completed/unreviewed/stale approvals. Active and quiet
   rows keep stable registration order so normal status ticks do not move the
   session you were about to select.
-- Every row includes a state-aware pixel-art terrarium, agent identity,
+- Every row includes a state-aware pixel-art avatar, agent identity,
   terminal/topic title, project, elapsed time, textual lifecycle state, and
   separate review/check evidence. The avatar character follows the source
   project's editable color and the detected agent: Blue uses Athena/Zeus,
   Purple Hera/Hades, Green Artemis/Demeter, and Orange Hermes/Hephaestus for
   Claude/Codex respectively; Pink uses Aphrodite, Cyan Poseidon, Yellow Apollo,
-  and Red Ares for either agent. Each large 80px box contains a code-rendered
-  stick figure whose four-pose loop shows starting, working, input,
-  completion, sleeping, or uncertain connection state. Working is deliberately
-  not one repeated typing loop: Aphrodite tends roses, Apollo plays a lyre,
-  Ares drills with a sword, Artemis fires a bow, Athena weaves, Demeter
-  harvests, Hades summons shades, Hephaestus works an anvil, Hera directs her
-  peacock, Hermes runs a delivery, Poseidon calls the tide, and Zeus hurls
-  lightning. Shared non-working poses keep lifecycle state readable.
-  Reduced-motion users receive a descriptive static pose; **No Agent** is an
-  explicitly empty, desaturated box and never animates. Idle agents actually
-  sleep in an identity-specific setting such as Zeus's cloud, Demeter's wheat,
-  or Hades's underworld rest.
+  and Red Ares for either agent. Each large 80px box holds a chunky pixel-art
+  mini-figure whose four-frame loop shows starting, working, input,
+  completion, resting, or uncertain connection state — readable from the pose
+  and its small corner cue alone, without waiting for the animation. Every
+  character keeps a distinct headgear, a signature corner emblem, its own
+  low-glow aura and robe regalia, and a held working relic: Aphrodite's rose,
+  Apollo's lyre, Ares's sword, Artemis's bow, Athena's scroll, Demeter's wheat
+  sheaf, Hades's shade flame,
+  Hephaestus's hammer, Hera's scepter, Hermes's sealed letter, Poseidon's
+  trident, and Zeus's bolt shard. Aegis wings, solar rays, moon arcs, tide
+  rings, forge sparks, storm fields, armor, straps, scales, and jeweled trim
+  keep the whole portrait recognizable—not just its hat. The inset tile adds a
+  restrained project-colored pool of light. Animation remains deliberately
+  quiet: a slow breath, a blink, a one-pixel relic tap and glint, and pulsing
+  cues/aura—nothing walks, sweeps, or flickers across the tile.
+  Reduced-motion users receive a descriptive static frame; **No Agent** is an
+  explicitly empty, desaturated box and never animates.
   Detected child
   agent processes appear as a bounded count, not as invented conversation
   history.

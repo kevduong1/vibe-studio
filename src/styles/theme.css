@@ -282,36 +282,66 @@
   --project-6: #e7b75b;
   --project-7: #f27676;
 
-  /* Code-rendered Agent Sessions terrariums. Canvas pixels cannot consume CSS
-     tokens directly, so AgentAvatar.tsx resolves this palette before drawing. */
-  --agent-avatar-background: color-mix(in srgb, var(--theme-canvas) 82%, var(--theme-chrome));
-  --agent-avatar-wall: color-mix(in srgb, var(--theme-border) 82%, var(--theme-editor));
-  --agent-avatar-floor: color-mix(in srgb, var(--theme-border) 72%, var(--fg-faint));
-  --agent-avatar-figure: var(--fg);
-  --agent-avatar-aphrodite-effect: #ff78b4;
-  --agent-avatar-aphrodite-detail: #ffd0e4;
-  --agent-avatar-apollo-effect: #ffca55;
-  --agent-avatar-apollo-detail: #fff1a8;
-  --agent-avatar-ares-effect: #f05a55;
-  --agent-avatar-ares-detail: #ffc06b;
-  --agent-avatar-artemis-effect: #a7ebd4;
-  --agent-avatar-artemis-detail: #d9e6ff;
-  --agent-avatar-athena-effect: #78a7ff;
-  --agent-avatar-athena-detail: #d7e4ff;
-  --agent-avatar-demeter-effect: #7fcf69;
-  --agent-avatar-demeter-detail: #e4c45b;
-  --agent-avatar-hades-effect: #a878ff;
-  --agent-avatar-hades-detail: #e1d0ff;
-  --agent-avatar-hephaestus-effect: #ff8a4d;
-  --agent-avatar-hephaestus-detail: #ffd070;
-  --agent-avatar-hera-effect: #cf8bff;
-  --agent-avatar-hera-detail: #70d7cf;
-  --agent-avatar-hermes-effect: #f4be50;
-  --agent-avatar-hermes-detail: #e8f5ff;
-  --agent-avatar-poseidon-effect: #55d7f0;
-  --agent-avatar-poseidon-detail: #b6f5ff;
-  --agent-avatar-zeus-effect: #ffd24d;
-  --agent-avatar-zeus-detail: #f5f7ff;
+  /* Agent Sessions pixel-art sprites. Canvas pixels cannot consume CSS tokens
+     directly, so AgentAvatar.tsx resolves this palette before drawing. Shared
+     keys build the mini-figure body; each deity owns a robe, hair/headgear,
+     regalia, low-alpha aura, and signature glow, while the project accent
+     paints the robe's stole and the portrait tile's pool of light. */
+  --agent-avatar-outline: #14161d;
+  --agent-avatar-skin: #f0c8a4;
+  --agent-avatar-skin-shade: #d3a179;
+  --agent-avatar-eye: #2b2333;
+  --agent-avatar-highlight: #fdf6e6;
+  --agent-avatar-prop: #9a7b5b;
+  --agent-avatar-shadow: color-mix(in srgb, var(--theme-canvas) 45%, #000);
+  --agent-avatar-aphrodite-robe: #f2a3c4;
+  --agent-avatar-aphrodite-robe-shade: color-mix(in srgb, var(--agent-avatar-aphrodite-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-aphrodite-hair: #f6d8a8;
+  --agent-avatar-aphrodite-glow: #ff78b4;
+  --agent-avatar-apollo-robe: #e8b25a;
+  --agent-avatar-apollo-robe-shade: color-mix(in srgb, var(--agent-avatar-apollo-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-apollo-hair: #ffe08a;
+  --agent-avatar-apollo-glow: #fff1a8;
+  --agent-avatar-ares-robe: #b8443f;
+  --agent-avatar-ares-robe-shade: color-mix(in srgb, var(--agent-avatar-ares-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-ares-hair: #c85a52;
+  --agent-avatar-ares-glow: #ffb066;
+  --agent-avatar-artemis-robe: #6fbf9a;
+  --agent-avatar-artemis-robe-shade: color-mix(in srgb, var(--agent-avatar-artemis-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-artemis-hair: #c98a5a;
+  --agent-avatar-artemis-glow: #a7ebd4;
+  --agent-avatar-athena-robe: #5b7fd4;
+  --agent-avatar-athena-robe-shade: color-mix(in srgb, var(--agent-avatar-athena-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-athena-hair: #d8a75a;
+  --agent-avatar-athena-glow: #9dc6ff;
+  --agent-avatar-demeter-robe: #7fae5a;
+  --agent-avatar-demeter-robe-shade: color-mix(in srgb, var(--agent-avatar-demeter-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-demeter-hair: #e8c661;
+  --agent-avatar-demeter-glow: #f0d878;
+  --agent-avatar-hades-robe: #4a3f66;
+  --agent-avatar-hades-robe-shade: color-mix(in srgb, var(--agent-avatar-hades-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-hades-hair: #2f2a44;
+  --agent-avatar-hades-glow: #a878ff;
+  --agent-avatar-hephaestus-robe: #8a6a4a;
+  --agent-avatar-hephaestus-robe-shade: color-mix(in srgb, var(--agent-avatar-hephaestus-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-hephaestus-hair: #b05a34;
+  --agent-avatar-hephaestus-glow: #ff8a4d;
+  --agent-avatar-hera-robe: #9a5fd0;
+  --agent-avatar-hera-robe-shade: color-mix(in srgb, var(--agent-avatar-hera-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-hera-hair: #4f3a5e;
+  --agent-avatar-hera-glow: #70d7cf;
+  --agent-avatar-hermes-robe: #b98f4a;
+  --agent-avatar-hermes-robe-shade: color-mix(in srgb, var(--agent-avatar-hermes-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-hermes-hair: #dfe8f5;
+  --agent-avatar-hermes-glow: #ffd884;
+  --agent-avatar-poseidon-robe: #3f8fb0;
+  --agent-avatar-poseidon-robe-shade: color-mix(in srgb, var(--agent-avatar-poseidon-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-poseidon-hair: #cfe8f0;
+  --agent-avatar-poseidon-glow: #55d7f0;
+  --agent-avatar-zeus-robe: #b9c2d8;
+  --agent-avatar-zeus-robe-shade: color-mix(in srgb, var(--agent-avatar-zeus-robe) 66%, var(--agent-avatar-outline));
+  --agent-avatar-zeus-hair: #eef0f6;
+  --agent-avatar-zeus-glow: #ffd24d;
 
   /* commit graph lane palette (cycled by lane index) */
   --graph-0: #7c6ff2;
