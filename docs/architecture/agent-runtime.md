@@ -18,6 +18,11 @@ descendant.
 Runtime state is ephemeral. Global tab metadata, layouts, PTYs, and semantic
 state are all session-only. After an app restart, both terminal docks start
 closed and empty; terminals exist only after an explicit user or task action.
+Global grouping state owns its name, navigation memory, and dock tree, but no
+independent presentation color. The panel derives one project-colored folder
+glyph per distinct terminal `workspacePath` in the grouping, including a
+project whose workspace is currently closed but whose global terminal remains
+live.
 
 ## State model
 
@@ -352,6 +357,9 @@ global grouping tabs, and the hidden-panel indicator roll up with priority:
 the bottom, so a set containing only absent (or no) agents rolls up to `null`,
 never a false `idle`. Chrome treats `null` as no badge — a terminal that never
 held an agent must not present as a quiet one.
+Global grouping tabs keep these activity glyphs separate from identity: their
+folder glyphs are derived from distinct member-terminal project bindings,
+while the grouping itself has no color state or color-selection control.
 
 The activity rail's top, global section opens **Agent Sessions** over both
 docks; workspace-scoped Explorer, Search, Source Control, and Memories live

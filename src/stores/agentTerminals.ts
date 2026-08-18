@@ -16,7 +16,6 @@ import { create, type StoreApi } from "zustand";
 import * as dock from "../lib/dockTree";
 import { type DropEdge } from "../lib/dockTree";
 import { projectDisplayName } from "../lib/projectNames";
-import { PROJECT_COLOR_NAMES } from "../lib/projectColors";
 import {
   type TerminalKind,
   prunePaneState,
@@ -43,8 +42,6 @@ export interface GlobalTermGrouping {
   id: string;
   /** Panel tab label (double-click to rename); defaults to "Global N". */
   name: string;
-  /** User-assigned identity color in the shared project/group palette. */
-  colorIndex: number;
   /** Workspace to restore when this large panel tab returns to the front. */
   lastActiveWorkspacePath: string | null;
   root: dock.DockNode | null;
@@ -65,7 +62,6 @@ export interface AgentTerminalsState {
   /** New empty grouping ("Global N"), made active. Returns its id. */
   newGrouping: () => string;
   renameGrouping: (id: string, name: string) => void;
-  setGroupingColor: (id: string, colorIndex: number) => void;
   setGroupingWorkspace: (id: string, workspacePath: string) => void;
   /** Rebind navigation memory that points at a checkout deleted from disk. */
   forgetWorkspace: (workspacePath: string, fallbackPath: string | null) => void;
@@ -145,12 +141,6 @@ const nextGroupingName = (groupings: GlobalTermGrouping[]): string => {
       return m ? Math.max(max, Number(m[1])) : max;
     }, 0) + 1;
   return `Global ${n}`;
-};
-
-const nextGroupingColor = (groupings: GlobalTermGrouping[]): number => {
-  const counts = new Array<number>(PROJECT_COLOR_NAMES.length).fill(0);
-  for (const grouping of groupings) counts[grouping.colorIndex] += 1;
-  return counts.indexOf(Math.min(...counts));
 };
 
 /** All terminal ids in one grouping's tree (activity rollups, close glue). */
@@ -234,7 +224,6 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
         {
           id,
           name: nextGroupingName(s.groupings),
-          colorIndex: nextGroupingColor(s.groupings),
           lastActiveWorkspacePath: null,
           root: null,
           activeGroupId: null,
@@ -252,24 +241,6 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
       if (!g || !trimmed || g.name === trimmed) return s;
       return {
         groupings: s.groupings.map((x) => (x === g ? { ...x, name: trimmed } : x)),
-      };
-    }),
-
-  setGroupingColor: (id, colorIndex) =>
-    set((s) => {
-      if (
-        !Number.isInteger(colorIndex) ||
-        colorIndex < 0 ||
-        colorIndex >= PROJECT_COLOR_NAMES.length
-      ) {
-        return s;
-      }
-      const grouping = s.groupings.find((item) => item.id === id);
-      if (!grouping || grouping.colorIndex === colorIndex) return s;
-      return {
-        groupings: s.groupings.map((item) =>
-          item === grouping ? { ...item, colorIndex } : item,
-        ),
       };
     }),
 
@@ -353,7 +324,6 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
         const grouping: GlobalTermGrouping = {
           id: crypto.randomUUID(),
           name: nextGroupingName(s.groupings),
-          colorIndex: nextGroupingColor(s.groupings),
           lastActiveWorkspacePath: workspacePath,
           root: next.root,
           activeGroupId: next.activeGroupId,

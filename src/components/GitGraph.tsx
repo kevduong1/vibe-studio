@@ -42,6 +42,7 @@ import {
 import { copyText } from "../lib/clipboard";
 import { statusColor } from "../lib/status";
 import { computeGraph, type GraphRow } from "../lib/graphLayout";
+import { graphRefPillPresentation } from "../lib/gitGraphRefs";
 import { ContextMenu } from "./ContextMenu";
 import { IcBranch, IcRemote, IcTag } from "./icons";
 import "./GitGraph.css";
@@ -50,7 +51,6 @@ const ROW = 24;
 const OVERSCAN = 10;
 const LANE_W = 12;
 const LANE_X0 = 7;
-const MAX_PILLS = 2;
 
 function relTime(timestamp: number): string {
   const s = Math.floor(Date.now() / 1000) - timestamp;
@@ -338,27 +338,24 @@ function Rail({ row }: { row: GraphRow }) {
 // Ref pills
 // ---------------------------------------------------------------------------
 
-const KIND_ORDER: Record<RefLabel["kind"], number> = { local: 0, remote: 1, tag: 2 };
-
 function RefPills({
   refs,
   isHead,
+  currentBranch,
   branchColors,
 }: {
   refs: RefLabel[];
   isHead: boolean;
+  currentBranch: string | undefined;
   /** Local branch name -> project color, for branches checked out somewhere. */
   branchColors: Map<string, string>;
 }) {
   if (refs.length === 0) return null;
-  const sorted =
-    refs.length > 1
-      ? refs.slice().sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
-      : refs;
-  const shown = sorted.slice(0, MAX_PILLS);
-  const extra = sorted.length - shown.length;
-  // the first local pill on the HEAD commit gets the filled style
-  const headIdx = isHead ? shown.findIndex((r) => r.kind === "local") : -1;
+  const { shown, extra, headIdx } = graphRefPillPresentation(
+    refs,
+    isHead,
+    currentBranch,
+  );
   return (
     <>
       {shown.map((r, i) => {
@@ -366,15 +363,15 @@ function RefPills({
         // falls back to --accent in CSS for every other pill.
         const tint = r.kind === "local" ? branchColors.get(r.name) : undefined;
         return (
-        <span
-          key={`${r.kind}:${r.name}`}
-          className={`gg-pill ${i === headIdx ? "head" : r.kind}`}
-          title={r.name}
-          style={tint ? ({ "--pill-accent": tint } as CSSProperties) : undefined}
-        >
-          {PILL_ICON[r.kind]}
-          <span className="truncate">{r.name}</span>
-        </span>
+          <span
+            key={`${r.kind}:${r.name}`}
+            className={`gg-pill ${i === headIdx ? "head" : r.kind}`}
+            title={r.name}
+            style={tint ? ({ "--pill-accent": tint } as CSSProperties) : undefined}
+          >
+            {PILL_ICON[r.kind]}
+            <span className="truncate">{r.name}</span>
+          </span>
         );
       })}
       {extra > 0 && <span className="gg-pill more">+{extra}</span>}
@@ -391,6 +388,7 @@ const CommitRow = memo(function CommitRow({
   top,
   expanded,
   selected,
+  currentBranch,
   branchColors,
   onSelect,
   onContext,
@@ -399,6 +397,7 @@ const CommitRow = memo(function CommitRow({
   top: number;
   expanded: boolean;
   selected: boolean;
+  currentBranch: string | undefined;
   branchColors: Map<string, string>;
   /** Plain click toggles file expansion; ⌘/shift clicks build the selection. */
   onSelect: (oid: string, e: ReactMouseEvent) => void;
@@ -417,7 +416,12 @@ const CommitRow = memo(function CommitRow({
       onContextMenu={(e) => onContext(c.oid, e)}
     >
       <Rail row={row} />
-      <RefPills refs={c.refs} isHead={c.isHead} branchColors={branchColors} />
+      <RefPills
+        refs={c.refs}
+        isHead={c.isHead}
+        currentBranch={currentBranch}
+        branchColors={branchColors}
+      />
       <span className="gg-summary truncate">{c.summary}</span>
       <span className="gg-author truncate">{c.author}</span>
       <span className="gg-time">{relTime(c.timestamp)}</span>
@@ -498,6 +502,7 @@ export default function GitGraph() {
   const loadMoreLog = useRepo((s) => s.loadMoreLog);
   const branchName = useRepo((s) => s.status?.branch.name);
   const detached = useRepo((s) => s.status?.branch.detached ?? false);
+  const currentBranch = detached ? undefined : branchName;
 
   // Linked checkouts of THIS repository, so a branch someone else is sitting
   // in shows up in that checkout's project color. Refetched with the log (the
@@ -535,9 +540,9 @@ export default function GitGraph() {
       const index = assignedProjectColorIndex(wt.path);
       if (index !== undefined) m.set(wt.branch, paletteColor(index));
     }
-    if (branchName && !detached) m.set(branchName, activeColor);
+    if (currentBranch) m.set(currentBranch, activeColor);
     return m;
-  }, [worktrees, branchName, detached, activeColor, colorsVersion]);
+  }, [worktrees, currentBranch, activeColor, colorsVersion]);
 
   // The same colors keyed by the commit each checkout sits on, for the rail:
   // a lane takes its color where it OPENS, so this only lands on branch tips.
@@ -861,6 +866,7 @@ export default function GitGraph() {
           top={top}
           expanded={it.row.commit.oid === expandedOid}
           selected={selected.has(it.row.commit.oid)}
+          currentBranch={currentBranch}
           branchColors={branchColors}
           onSelect={handleSelectClick}
           onContext={handleContext}

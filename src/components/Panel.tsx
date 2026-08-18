@@ -7,7 +7,7 @@
  * terminals live across workspace switches; "+" adds a grouping, double-click
  * renames it, right-click closes it).
  */
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   switchToProject,
@@ -33,11 +33,7 @@ import {
   type AgentRollup,
 } from "../lib/agentState";
 import { closeGlobalGrouping, openGlobalTerminal } from "../lib/agentSessions";
-import {
-  paletteColor,
-  PROJECT_COLOR_NAMES,
-  useProjectColorVar,
-} from "../lib/projectColors";
+import { useProjectColorVar } from "../lib/projectColors";
 import { projectDisplayName } from "../lib/projectNames";
 import { openWorkspaceTerminal } from "../lib/workspaceSessions";
 import TerminalPanel from "./TerminalPanel";
@@ -50,6 +46,7 @@ import {
   IcChevronDown,
   IcChevronsDown,
   IcChevronsUp,
+  IcFolder,
   IcPlus,
   IcSplit,
 } from "./icons";
@@ -135,6 +132,18 @@ function GroupActivityGlyph({
   );
 }
 
+function GroupProjectFolder({ workspacePath }: { workspacePath: string }) {
+  const color = useProjectColorVar(workspacePath);
+  return (
+    <span
+      className="panel-group-project-folder"
+      title={`${projectDisplayName(workspacePath)}\n${workspacePath}`}
+    >
+      <IcFolder style={{ color }} />
+    </span>
+  );
+}
+
 /** One grouping's panel tab: click fronts it, double-click renames inline.
  *  The right-click menu lives in PanelHeader (ContextMenu must be a sibling
  *  of the tab — its backdrop clicks would bubble into these handlers). */
@@ -172,6 +181,7 @@ function GroupingTab({
         item.activity !== null && item.activity !== "idle",
     )
     .sort((a, b) => ROLLUP_PRIORITY[b.activity] - ROLLUP_PRIORITY[a.activity]);
+  const workspacePaths = [...byWorkspace.keys()];
 
   const commit = (value: string) => {
     // renameGrouping trims and ignores empty — the old name just stays.
@@ -182,7 +192,6 @@ function GroupingTab({
   return (
     <div
       className={`panel-group-tab panel-grouping-tab ${front ? "active" : ""}`}
-      style={{ "--group-color": paletteColor(grouping.colorIndex) } as CSSProperties}
       onMouseDown={(e) => {
         if (e.button !== 0 || editing) return;
         activateGrouping(grouping.id);
@@ -221,7 +230,16 @@ function GroupingTab({
         />
       ) : (
         <>
-          <span className="panel-group-color" />
+          {workspacePaths.length > 0 && (
+            <span className="panel-group-projects">
+              {workspacePaths.map((workspacePath) => (
+                <GroupProjectFolder
+                  key={workspacePath}
+                  workspacePath={workspacePath}
+                />
+              ))}
+            </span>
+          )}
           {grouping.name}
           {activities.length > 0 && (
             <span className="panel-group-activities">
@@ -392,29 +410,6 @@ function PanelHeader({ group }: { group: PanelGroup }) {
           >
             Rename Group
           </button>
-          <div className="ctx-menu-sep" />
-          <div className="panel-color-label">Group Color</div>
-          <div className="panel-color-row">
-            {PROJECT_COLOR_NAMES.map((name, colorIndex) => {
-              const selected =
-                groupings.find((grouping) => grouping.id === groupingMenu.id)
-                  ?.colorIndex === colorIndex;
-              return (
-                <button
-                  key={name}
-                  className={`panel-color-swatch ${selected ? "selected" : ""}`}
-                  title={name}
-                  style={{ background: paletteColor(colorIndex) }}
-                  onClick={() => {
-                    useAgentTerminalsStore
-                      .getState()
-                      .setGroupingColor(groupingMenu.id, colorIndex);
-                    setGroupingMenu(null);
-                  }}
-                />
-              );
-            })}
-          </div>
           <div className="ctx-menu-sep" />
           <button
             onClick={() => {

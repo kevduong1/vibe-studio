@@ -50,23 +50,23 @@
   -webkit-user-select: none;
 }
 
-.panel-grouping-tab.active::after {
-  content: "";
-  position: absolute;
-  left: 5px;
-  right: 5px;
-  bottom: 1px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--group-color);
+.panel-group-projects {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
-.panel-group-color {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--group-color);
+.panel-group-project-folder {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
+}
+
+.panel-group-project-folder > svg {
+  width: 12px;
+  height: 12px;
 }
 
 .panel-group-activities {
@@ -102,35 +102,6 @@
   text-transform: none;
   letter-spacing: normal;
   outline: none;
-}
-
-.panel-color-label {
-  padding: 3px 8px 4px;
-  font-size: 11px;
-  color: var(--fg-faint);
-}
-
-.panel-color-row {
-  display: flex;
-  gap: 6px;
-  padding: 2px 8px 6px;
-}
-
-.panel-color-swatch {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.panel-color-swatch:hover {
-  transform: scale(1.2);
-}
-
-.panel-color-swatch.selected {
-  box-shadow:
-    0 0 0 1.5px var(--bg-overlay),
-    0 0 0 3px var(--fg-dim);
 }
 
 /* Tucked right after the grouping tabs, quieter than the action buttons. */
