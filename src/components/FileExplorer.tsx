@@ -14,8 +14,9 @@ import {
 } from "../lib/ipc";
 import { copyText } from "../lib/clipboard";
 import { basename, dirname } from "../lib/path";
-import { useEditor, useRepo, useWorkspace } from "../stores/workspaces";
+import { useEditor, useRepo, useSearch, useWorkspace } from "../stores/workspaces";
 import { ContextMenu } from "./ContextMenu";
+import SearchPanel from "./SearchPanel";
 import {
   IcChevronRight,
   IcCollapseAll,
@@ -90,6 +91,7 @@ export default function FileExplorer() {
   const openFile = useEditor((s) => s.openFile);
   const previewFile = useEditor((s) => s.previewFile);
   const activeTabId = useEditor((s) => s.activeTabId);
+  const searchActive = useSearch((s) => s.query.length > 0);
 
   const [cache, setCache] = useState<DirCache>(() => new Map());
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -958,9 +960,12 @@ export default function FileExplorer() {
         </div>
       </div>
 
+      <SearchPanel />
+
       <div
         className="fx-tree"
         ref={treeRef}
+        style={{ display: searchActive ? "none" : undefined }}
         tabIndex={0}
         onKeyDown={onKeyDown}
         onClick={(ev) => {
@@ -1086,13 +1091,13 @@ export default function FileExplorer() {
         })}
       </div>
 
-      {dragGhost && (
+      {!searchActive && dragGhost && (
         <div className="fx-drag-ghost" ref={dragGhostRef}>
           <span className="truncate">{dragGhost}</span>
         </div>
       )}
 
-      {menu &&
+      {!searchActive && menu &&
         repoPath &&
         (() => {
           const e = menu.entry;

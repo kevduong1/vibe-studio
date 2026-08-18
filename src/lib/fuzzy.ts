@@ -1,5 +1,6 @@
 /**
- * Hand-rolled fuzzy matcher for the ⌘P quick-open (no external deps).
+ * Hand-rolled fuzzy matcher shared by ⌘P Quick Open and Explorer filename
+ * search (no external deps).
  *
  * Two phases, because the caller runs this over the whole workspace file
  * list (up to 50k paths) per keystroke:

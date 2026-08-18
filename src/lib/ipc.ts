@@ -574,7 +574,7 @@ export const openUrl = (url: string): Promise<void> =>
 /**
  * All worktree files (gitignore-respected, `.git` excluded, dotfiles
  * included), capped at 50k. Cheap paths-only walk — fetched fresh per
- * quick-open, no caching/watcher involved.
+ * Quick Open or Explorer filename search, with no persistent cache.
  */
 export const listWorkspaceFiles = (repoPath: string): Promise<WorkspaceFiles> =>
   invoke("list_workspace_files", { repoPath });

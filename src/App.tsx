@@ -34,7 +34,6 @@ import Titlebar from "./components/Titlebar";
 import StatusBar from "./components/StatusBar";
 import FileExplorer from "./components/FileExplorer";
 import AgentSessionsPanel from "./components/AgentSessionsPanel";
-import SearchPanel from "./components/SearchPanel";
 import SourceControl from "./components/SourceControl";
 import MemoriesPanel from "./components/MemoriesPanel";
 import EditorArea from "./components/EditorArea";
@@ -45,7 +44,6 @@ import {
   IcBranch,
   IcFile,
   IcFolderOpen,
-  IcSearch,
   IcSparkle,
 } from "./components/icons";
 import { listenAgentNotificationActivations } from "./lib/agentInbox";
@@ -102,14 +100,6 @@ function ActivityBar() {
         onClick={() => setSidebarTab("explorer")}
       >
         <IcFile />
-      </button>}
-      {ws && <button
-        className={`activity-btn ${active("search") ? "active" : ""}`}
-        title="Search (⌘⇧F)"
-        aria-pressed={active("search")}
-        onClick={() => setSidebarTab("search")}
-      >
-        <IcSearch />
       </button>}
       {ws && <button
         className={`activity-btn ${active("scm") ? "active" : ""}`}
@@ -213,8 +203,6 @@ function WorkspaceSidebarContent({ visible }: { visible: boolean }) {
     >
       {sidebarTab === "explorer" ? (
         <FileExplorer />
-      ) : sidebarTab === "search" ? (
-        <SearchPanel />
       ) : sidebarTab === "memories" ? (
         <MemoriesPanel />
       ) : (

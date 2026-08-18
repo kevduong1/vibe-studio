@@ -300,21 +300,22 @@ Repository checks come from `.vscode/tasks.json`:
   with save-conflict protection
 - Open PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, and TIFF files in fit-to-pane,
   read-only image previews that refresh when the file changes on disk
-- **Provisional tabs** — single-clicking Explorer, search, source-control, or
+- **Provisional tabs** — single-clicking Explorer/search, source-control, or
   commit files reuses one italic tab; editing, double-clicking the file/tab,
   or **Keep Open** pins it. Pinned file/diff tabs restore on relaunch
 - Drag tabs to reorder them; middle-click closes; **⌘⇧T** reopens the most
   recently closed tab; tab menus include close-left / close-saved actions
 - **⌘P quick open** — fuzzy file matching (gitignore-aware) with match
   highlighting and recently opened files first when the query is empty
-- **⌘⇧F workspace search** — parallel Rust walk with case / whole-word /
-  regex toggles; results open at the matching line
+- **Explorer search** — one field above the file tree switches between fuzzy,
+  gitignore-aware file-name matching and full-text content results; content
+  mode has case / whole-word / regex toggles and **⌘⇧F** opens it directly
 - **⌘F find & replace** — floating VS Code-style widget in every editor
   and diff
 - **Control-G** go to line; Control-Tab / Control-Shift-Tab and
   **⌘⇧[ / ⌘⇧]** cycle tabs
-- Lazy file explorer with active-file auto-reveal and complete Left/Right tree
-  navigation; whole-app zoom (**⌘+ / ⌘− / ⌘0**)
+- Lazy file explorer with integrated search, active-file auto-reveal, and
+  complete Left/Right tree navigation; whole-app zoom (**⌘+ / ⌘− / ⌘0**)
 - Status bar cursor/selection, detected indentation, line-ending, and persisted
   word-wrap controls; optional one-second Auto Save in Settings
 - Closing a dirty tab/workspace or quitting offers native

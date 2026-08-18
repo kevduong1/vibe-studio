@@ -1,8 +1,8 @@
 /**
- * Per-workspace search store (the ⌘⇧F sidebar view). Lives on the Workspace
- * object like repo/editor/terminal, because the sidebar unmounts its content
- * on tab switches — query and results must survive both that and workspace
- * switching. Nothing to dispose: no listeners or IPC handles, just state.
+ * Per-workspace Explorer search state. The Explorer owns both fuzzy filename
+ * search and workspace-content search; only the latter needs backend result
+ * state here. Keeping the shared query/scope in the workspace means it
+ * survives activity-view and workspace switches.
  */
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { searchWorkspace, type SearchFileResult } from "../lib/ipc";
@@ -11,8 +11,10 @@ import { searchWorkspace, type SearchFileResult } from "../lib/ipc";
 const DEBOUNCE_MS = 250;
 
 export type SearchToggle = "caseSensitive" | "wholeWord" | "useRegex";
+export type SearchMode = "files" | "content";
 
 export interface SearchState {
+  mode: SearchMode;
   query: string;
   caseSensitive: boolean;
   wholeWord: boolean;
@@ -28,6 +30,7 @@ export interface SearchState {
   /** Collapsed file groups, keyed by relative path. */
   collapsed: Record<string, boolean>;
 
+  setMode: (mode: SearchMode) => void;
   setQuery: (q: string) => void;
   toggle: (k: SearchToggle) => void;
   toggleCollapsed: (file: string) => void;
@@ -45,9 +48,17 @@ export const createSearchStore = (repoPath: string): SearchStore =>
     let seq = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
+    const invalidate = () => {
+      seq++;
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
+
     const run = async () => {
+      timer = null;
       const mySeq = ++seq;
-      const { query, caseSensitive, wholeWord, useRegex } = get();
+      const { mode, query, caseSensitive, wholeWord, useRegex } = get();
+      if (mode !== "content") return;
       if (!query) {
         set({
           results: [],
@@ -88,6 +99,7 @@ export const createSearchStore = (repoPath: string): SearchStore =>
     };
 
     return {
+      mode: "files",
       query: "",
       caseSensitive: false,
       wholeWord: false,
@@ -99,13 +111,39 @@ export const createSearchStore = (repoPath: string): SearchStore =>
       error: null,
       collapsed: {},
 
+      setMode: (mode) => {
+        if (mode === get().mode) return;
+        invalidate();
+        set({
+          mode,
+          searching: mode === "content" && !!get().query,
+          error: null,
+        });
+        if (mode === "content" && get().query) schedule(0);
+      },
       setQuery: (q) => {
+        invalidate();
         set({ query: q });
-        schedule(DEBOUNCE_MS);
+        if (!q) {
+          set({
+            results: [],
+            totalMatches: 0,
+            truncated: false,
+            searching: false,
+            error: null,
+          });
+        } else if (get().mode === "content") {
+          set({ searching: true, error: null });
+          schedule(DEBOUNCE_MS);
+        }
       },
       toggle: (k) => {
+        invalidate();
         set({ [k]: !get()[k] } as Partial<SearchState>);
-        schedule(0);
+        if (get().mode === "content" && get().query) {
+          set({ searching: true, error: null });
+          schedule(0);
+        }
       },
       toggleCollapsed: (file) =>
         set((s) => ({

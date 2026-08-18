@@ -1,4 +1,5 @@
-//! Workspace file listing (⌘P quick open) and content search (⌘⇧F).
+//! Workspace file listing (Quick Open + Explorer filename search) and
+//! Explorer content search (⌘⇧F).
 //!
 //! Both commands walk the worktree with the `ignore` crate (ripgrep's
 //! walker), so .gitignore / global excludes are respected without shelling
@@ -18,7 +19,7 @@ use serde::Serialize;
 
 use crate::fsops::{BINARY_SNIFF_BYTES, MAX_TEXT_BYTES};
 
-/// Quick-open file list cap; plenty for fuzzy filtering, bounds IPC size.
+/// Workspace file-list cap; plenty for fuzzy filtering, bounds IPC size.
 const MAX_LIST_FILES: usize = 50_000;
 
 /// Global match cap across all files: bounds IPC payload and DOM size.
@@ -44,7 +45,7 @@ fn walker(root: &str) -> WalkBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// File listing (quick open)
+// File listing (Quick Open / Explorer search)
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]

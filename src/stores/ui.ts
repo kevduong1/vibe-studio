@@ -4,7 +4,6 @@ import { useWorkspacesStore } from "./workspaces";
 export type SidebarTab =
   | "sessions"
   | "explorer"
-  | "search"
   | "scm"
   | "memories";
 export type AgentSessionsView = "all" | "attention";
@@ -28,9 +27,11 @@ interface UiState {
       opening an editor tab clears it (stores/editor.ts) so the file is
       actually visible. */
   panelMaximized: boolean;
-  /** Bumped by showSearch (⌘⇧F); the active workspace's SearchPanel focuses
-      its input on change — a counter so repeat presses refocus. */
+  /** Bumped by showSearch (⌘⇧F); the active workspace's Explorer search
+      focuses its input on change — a counter so repeat presses refocus. */
   searchFocusNonce: number;
+  /** Workspace targeted by the latest search shortcut. */
+  searchFocusPath: string | null;
   /** Markdown tabs render as a preview instead of source (status-bar badge,
       shown only while the active tab is a .md file). App-wide, not per-tab:
       "reading mode" tends to be a moment, not a per-file choice. */
@@ -49,7 +50,7 @@ interface UiState {
   showAgentSessions: () => void;
   setAgentSessionsView: (view: AgentSessionsView) => void;
   toggleAgentSessionsQuiet: () => void;
-  /** ⌘⇧F: reveal the sidebar on the search tab and focus the query input.
+  /** ⌘⇧F: reveal Explorer's content-search mode and focus the query input.
       (setSidebarTab would TOGGLE the sidebar closed when already there.) */
   showSearch: () => void;
   toggleSidebar: () => void;
@@ -88,6 +89,7 @@ export const useUiStore = create<UiState>((set) => ({
   panelGroup: "terminal",
   panelMaximized: false,
   searchFocusNonce: 0,
+  searchFocusPath: null,
   markdownPreview: false,
   wordWrap: storedBool("talos:word-wrap"),
   autoSave: storedBool("talos:auto-save"),
@@ -106,12 +108,15 @@ export const useUiStore = create<UiState>((set) => ({
     set((state) => ({
       agentSessionsQuietExpanded: !state.agentSessionsQuietExpanded,
     })),
-  showSearch: () =>
+  showSearch: () => {
+    const searchFocusPath = useWorkspacesStore.getState().activePath;
     set((s) => ({
-      sidebarTab: "search",
+      sidebarTab: "explorer",
       sidebarVisible: true,
+      searchFocusPath,
       searchFocusNonce: s.searchFocusNonce + 1,
-    })),
+    }));
+  },
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, 200, 600) }),
   togglePanel: () =>
