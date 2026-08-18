@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { AgentSessionsSort } from "../lib/agentSessionsView";
 import { useWorkspacesStore } from "./workspaces";
 
 export type SidebarTab =
@@ -19,7 +20,7 @@ interface UiState {
   /** Session-only controls for the global Agent Sessions sidebar. Keeping
       them above the component preserves the view across activity-tab swaps. */
   agentSessionsView: AgentSessionsView;
-  agentSessionsQuietExpanded: boolean;
+  agentSessionsSort: AgentSessionsSort;
   panelVisible: boolean;
   panelHeight: number;
   panelGroup: PanelGroup;
@@ -48,7 +49,7 @@ interface UiState {
       behavior. Used by shortcuts and other global entry points. */
   showAgentSessions: () => void;
   setAgentSessionsView: (view: AgentSessionsView) => void;
-  toggleAgentSessionsQuiet: () => void;
+  setAgentSessionsSort: (sort: AgentSessionsSort) => void;
   /** ⌘⇧F: reveal the sidebar on the search tab and focus the query input.
       (setSidebarTab would TOGGLE the sidebar closed when already there.) */
   showSearch: () => void;
@@ -82,7 +83,7 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarVisible: true,
   sidebarWidth: 320,
   agentSessionsView: "all",
-  agentSessionsQuietExpanded: true,
+  agentSessionsSort: "repository",
   panelVisible: false,
   panelHeight: 280,
   panelGroup: "terminal",
@@ -102,10 +103,7 @@ export const useUiStore = create<UiState>((set) => ({
   showAgentSessions: () =>
     set({ sidebarTab: "sessions", sidebarVisible: true }),
   setAgentSessionsView: (agentSessionsView) => set({ agentSessionsView }),
-  toggleAgentSessionsQuiet: () =>
-    set((state) => ({
-      agentSessionsQuietExpanded: !state.agentSessionsQuietExpanded,
-    })),
+  setAgentSessionsSort: (agentSessionsSort) => set({ agentSessionsSort }),
   showSearch: () =>
     set((s) => ({
       sidebarTab: "search",

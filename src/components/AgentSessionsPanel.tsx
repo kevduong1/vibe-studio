@@ -9,7 +9,9 @@ import { focusAgentTerminal } from "../lib/agentInbox";
 import { requestAgentLaunch } from "../lib/agentLaunchRequest";
 import {
   projectAgentSessions,
+  type AgentSessionItem,
   type AgentSessionsSection,
+  type AgentSessionsSort,
 } from "../lib/agentSessionsView";
 import {
   displayAgentState,
@@ -32,15 +34,15 @@ import {
   checkStateFor,
   inboxWaitingAt,
   isInboxActionable,
-  type AgentInboxItem,
   type CheckState,
   type ReviewState,
 } from "../stores/agentTasks";
 import { useUiStore } from "../stores/ui";
 import { useWorkspacesStore } from "../stores/workspaces";
 import {
-  IcChevronRight,
+  IcBranch,
   IcDiff,
+  IcFolder,
   IcInbox,
   IcPlus,
   IcSparkle,
@@ -88,7 +90,7 @@ function AgentSessionRow({
   now,
   onOpen,
 }: {
-  item: AgentInboxItem;
+  item: AgentSessionItem;
   now: number;
   onOpen: (terminalId: string) => void;
 }) {
@@ -104,6 +106,9 @@ function AgentSessionRow({
     display,
   );
   const avatarIdentity = `${agentAvatarName(avatar.deity)} · ${AGENT_NAME[item.runtime.kind]}`;
+  const active = display === "working" || display === "starting";
+  const dormant = display === "idle" || display === "unknown";
+  const needsAttention = isInboxActionable(item);
   const checkState = item.task ? checkStateFor(item.task) : "not_run";
   // Dedicated tabs default to the project basename, so a bare title would
   // just repeat the project badge; fall back to the agent's own name instead.
@@ -119,18 +124,23 @@ function AgentSessionRow({
       className="agent-session-row accent-scope"
       style={{ "--accent": projectColor } as CSSProperties}
       onClick={() => onOpen(item.runtime.terminalId)}
-      title={`Open ${item.title} in ${item.project}\n${avatarIdentity} — ${displayLabel(display)}`}
+      title={`Open ${item.title}\nRepository: ${item.repository}\nCheckout: ${item.checkout}\n${item.branch ? `Branch: ${item.branch}\n` : ""}${item.runtime.workspacePath}\n${avatarIdentity} — ${displayLabel(display)}`}
     >
-      <span
-        className={`agent-session-avatar ${display}${avatar.subdued ? " subdued" : ""}${display === "blocked" && !item.runtime.seen ? " unseen" : ""}`}
-        role="img"
-        aria-label={`${avatarIdentity}, ${displayLabel(display)}`}
-        title={`${avatarIdentity} — ${displayLabel(display)}`}
-      >
-        <AgentAvatar
-          avatar={avatar}
-          projectColorIndex={projectColorIndex}
-        />
+      <span className="agent-session-avatar-column">
+        <span
+          className={`agent-session-avatar ${display}${active ? " active" : ""}${dormant ? " dormant" : ""}${needsAttention ? " needs-attention" : ""}${avatar.subdued ? " subdued" : ""}`}
+          role="img"
+          aria-label={`${avatarIdentity}, ${displayLabel(display)}`}
+          title={`${avatarIdentity} — ${displayLabel(display)}`}
+        >
+          <AgentAvatar
+            avatar={avatar}
+            projectColorIndex={projectColorIndex}
+          />
+        </span>
+        <span className="agent-session-avatar-name truncate">
+          {agentAvatarName(avatar.deity)}
+        </span>
       </span>
       <span className="agent-session-row-body">
         <span className="agent-session-row-top">
@@ -140,9 +150,24 @@ function AgentSessionRow({
           </span>
         </span>
         <span className="agent-session-location">
-          <span className="agent-session-project truncate">{item.project}</span>
+          <span className="agent-session-project truncate">
+            <IcFolder />
+            <span className="agent-session-meta-prefix">Repo</span>
+            {item.repository}
+          </span>
+        </span>
+        <span className="agent-session-location-details">
+          <span className="agent-session-checkout truncate">
+            Worktree · {item.checkout}
+          </span>
+          {item.branch && (
+            <span className="agent-session-branch truncate">
+              <IcBranch />
+              {item.branch}
+            </span>
+          )}
           {titleNote && (
-            <span className="agent-session-tab truncate">{titleNote}</span>
+            <span className="agent-session-tab truncate">Tab · {titleNote}</span>
           )}
         </span>
         <span className="agent-session-chips">
@@ -187,51 +212,28 @@ function AgentSessionRow({
 function AgentSessionSection({
   section,
   now,
-  quietExpanded,
-  onToggleQuiet,
   onOpen,
 }: {
   section: AgentSessionsSection;
   now: number;
-  quietExpanded: boolean;
-  onToggleQuiet: () => void;
   onOpen: (terminalId: string) => void;
 }) {
-  const quiet = section.id === "quiet";
-  const expanded = !quiet || quietExpanded;
-  const listId = `agent-session-section-${section.id}`;
-
   return (
-    <section className={`agent-session-section ${section.id}`}>
-      {quiet ? (
-        <button
-          className="agent-session-section-head collapsible"
-          aria-expanded={expanded}
-          aria-controls={listId}
-          onClick={onToggleQuiet}
-        >
-          <IcChevronRight className={expanded ? "expanded" : ""} />
-          <span>{section.label}</span>
-          <span className="agent-session-section-count">{section.items.length}</span>
-        </button>
-      ) : (
-        <div className="agent-session-section-head">
-          <span>{section.label}</span>
-          <span className="agent-session-section-count">{section.items.length}</span>
-        </div>
-      )}
-      {expanded && (
-        <div id={listId} className="agent-session-section-list">
-          {section.items.map((item) => (
-            <AgentSessionRow
-              key={item.runtime.terminalId}
-              item={item}
-              now={now}
-              onOpen={onOpen}
-            />
-          ))}
-        </div>
-      )}
+    <section className="agent-session-section">
+      <div className="agent-session-section-head">
+        <span className="truncate">{section.label}</span>
+        <span className="agent-session-section-count">{section.items.length}</span>
+      </div>
+      <div className="agent-session-section-list">
+        {section.items.map((item) => (
+          <AgentSessionRow
+            key={item.runtime.terminalId}
+            item={item}
+            now={now}
+            onOpen={onOpen}
+          />
+        ))}
+      </div>
     </section>
   );
 }
@@ -241,23 +243,17 @@ function AgentSessionSection({
 export default function AgentSessionsPanel() {
   const items = useAgentSessionItems(true);
   const view = useUiStore((state) => state.agentSessionsView);
-  const quietExpanded = useUiStore(
-    (state) => state.agentSessionsQuietExpanded,
-  );
+  const sort = useUiStore((state) => state.agentSessionsSort);
   const setView = useUiStore((state) => state.setAgentSessionsView);
-  const toggleQuiet = useUiStore((state) => state.toggleAgentSessionsQuiet);
+  const setSort = useUiStore((state) => state.setAgentSessionsSort);
   const activePath = useWorkspacesStore((state) => state.activePath);
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const routeSequence = useRef(0);
   const actionableCount = items.filter(isInboxActionable).length;
   const sections = useMemo(
-    () => projectAgentSessions(items, view),
-    [items, view],
-  );
-  const visibleSections = useMemo(
-    () => sections.filter((section) => section.items.length > 0),
-    [sections],
+    () => projectAgentSessions(items, view, sort),
+    [items, view, sort],
   );
 
   useEffect(() => {
@@ -340,6 +336,19 @@ export default function AgentSessionsPanel() {
         </button>
       </div>
 
+      <label className="agent-sessions-sort">
+        <span>Sort by</span>
+        <select
+          value={sort}
+          onChange={(event) =>
+            setSort(event.currentTarget.value as AgentSessionsSort)
+          }
+        >
+          <option value="repository">Repository</option>
+          <option value="session">Session name</option>
+        </select>
+      </label>
+
       {routingError && (
         <div className="agent-sessions-error" role="status">
           {routingError}
@@ -347,7 +356,7 @@ export default function AgentSessionsPanel() {
       )}
 
       <div className="agent-sessions-scroll">
-        {visibleSections.length === 0 ? (
+        {sections.length === 0 ? (
           <div className="agent-sessions-empty">
             <span className="agent-sessions-empty-icon" aria-hidden="true">
               {view === "attention" ? <IcInbox /> : <IcSparkle />}
@@ -364,13 +373,11 @@ export default function AgentSessionsPanel() {
             </span>
           </div>
         ) : (
-          visibleSections.map((section) => (
+          sections.map((section) => (
             <AgentSessionSection
               key={section.id}
               section={section}
               now={now}
-              quietExpanded={quietExpanded}
-              onToggleQuiet={toggleQuiet}
               onOpen={openSession}
             />
           ))

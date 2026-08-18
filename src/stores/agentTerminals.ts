@@ -29,6 +29,10 @@ export interface AgentTerminal {
   title: string;
   /** Project binding: spawn cwd, badge label, click-to-switch target. */
   workspacePath: string;
+  /** Session-only Git-family presentation metadata captured while the source
+   * workspace is open, so disconnected global sessions stay grouped. */
+  repositoryId?: string;
+  repository?: string;
   /** Global docks can hold plain shells as well as either supported agent. */
   kind: TerminalKind;
   /** macOS notification + sound on attention onset (lib/agentNotifications).
@@ -79,7 +83,14 @@ export interface AgentTerminalsState {
    */
   newTerminal: (
     workspacePath: string,
-    opts?: { groupingId?: string; groupId?: string; title?: string; kind?: TerminalKind },
+    opts?: {
+      groupingId?: string;
+      groupId?: string;
+      title?: string;
+      kind?: TerminalKind;
+      repositoryId?: string;
+      repository?: string;
+    },
   ) => string;
   /** Structural removal only — go through closeAgentTerminal() from UI. */
   closeTerminal: (id: string) => void;
@@ -308,6 +319,8 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
         id,
         title: opts?.title?.trim() || dedupedTitle(workspacePath, s.terminals),
         workspacePath,
+        ...(opts?.repositoryId && { repositoryId: opts.repositoryId }),
+        ...(opts?.repository && { repository: opts.repository }),
         kind: opts?.kind ?? "shell",
       };
       const target =

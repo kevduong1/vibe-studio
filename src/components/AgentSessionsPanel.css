@@ -91,6 +91,39 @@
   color: var(--warning);
 }
 
+.agent-sessions-sort {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 9px 8px;
+  color: var(--fg-faint);
+  font-size: var(--font-size-sm);
+}
+
+.agent-sessions-sort select {
+  flex: 1;
+  min-width: 0;
+  height: 25px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--bg-input);
+  color: var(--fg-dim);
+  font: inherit;
+}
+
+.agent-sessions-sort select:hover {
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.agent-sessions-sort select:focus-visible {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring);
+}
+
 .agent-sessions-error {
   flex-shrink: 0;
   margin: 0 7px 7px;
@@ -127,26 +160,6 @@
   letter-spacing: 0.04em;
   text-align: left;
   text-transform: uppercase;
-}
-
-.agent-session-section-head.collapsible {
-  border-radius: var(--radius-sm);
-}
-
-.agent-session-section-head.collapsible:hover {
-  color: var(--fg);
-  background: var(--bg-hover);
-}
-
-.agent-session-section-head svg {
-  width: 13px;
-  height: 13px;
-  color: var(--fg-faint);
-  transition: transform 0.12s ease;
-}
-
-.agent-session-section-head svg.expanded {
-  transform: rotate(90deg);
 }
 
 .agent-session-section-count {
@@ -231,6 +244,15 @@
   background: var(--bg-selected);
 }
 
+.agent-session-avatar-column {
+  width: 80px;
+  min-width: 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
 .agent-session-avatar {
   position: relative;
   isolation: isolate;
@@ -274,8 +296,13 @@
   );
 }
 
-.agent-session-avatar.working {
+.agent-session-avatar.active {
   border-color: color-mix(in srgb, var(--accent) 56%, var(--border-subtle));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
+    inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  animation: agent-avatar-active-ring 1.8s ease-in-out infinite;
 }
 
 .agent-session-avatar.done {
@@ -292,13 +319,28 @@
   user-select: none;
 }
 
-.agent-session-avatar.blocked.unseen {
-  animation: agent-avatar-blocked 1.25s ease-in-out infinite;
+.agent-session-avatar.dormant {
+  border-color: color-mix(in srgb, var(--fg-faint) 45%, var(--border-subtle));
+  background: color-mix(in srgb, var(--bg-active) 86%, var(--theme-canvas));
 }
+
+.agent-session-avatar.dormant canvas {
+  filter: grayscale(0.72);
+  opacity: 0.62;
+}
+
+.agent-session-avatar.needs-attention {
+  border-color: var(--warning);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
+    inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--warning) 34%, transparent);
+  animation: agent-avatar-attention-ring 0.9s steps(1, end) infinite;
+}
+
 .agent-session-avatar.subdued {
   border-style: dashed;
   background: var(--bg-active);
-  animation: none;
 }
 
 .agent-session-avatar.subdued::before {
@@ -322,21 +364,40 @@
   transform: rotate(-38deg);
 }
 
-@keyframes agent-avatar-blocked {
+@keyframes agent-avatar-active-ring {
   0%,
   100% {
     box-shadow:
       inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
       inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
-      0 0 0 0 color-mix(in srgb, var(--warning) 0%, transparent);
+      0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
   }
 
   50% {
+    border-color: var(--accent);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
+      inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
+      0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+}
+
+@keyframes agent-avatar-attention-ring {
+  0%,
+  48% {
     border-color: var(--warning);
     box-shadow:
       inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
       inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
-      0 0 0 2px color-mix(in srgb, var(--warning) 22%, transparent);
+      0 0 0 3px color-mix(in srgb, var(--warning) 34%, transparent);
+  }
+
+  49%,
+  100% {
+    border-color: color-mix(in srgb, var(--warning) 24%, var(--border-subtle));
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
+      inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent);
   }
 }
 
@@ -344,6 +405,15 @@
   .agent-session-avatar {
     animation: none !important;
   }
+}
+
+.agent-session-avatar-name {
+  width: 100%;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
 }
 
 .agent-session-row-body {
@@ -391,6 +461,9 @@
   min-width: 0;
   max-width: 100%;
   flex-shrink: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   padding: 0 6px;
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   border-radius: var(--radius-xl);
@@ -401,10 +474,41 @@
   line-height: 15px;
 }
 
-/* Terminal tab name, shown only when it repeats neither headline nor project. */
+.agent-session-project svg,
+.agent-session-branch svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
+.agent-session-meta-prefix {
+  color: color-mix(in srgb, var(--accent) 68%, var(--fg-dim));
+  font-weight: 400;
+}
+
+.agent-session-location-details {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 6px;
+  row-gap: 1px;
+  color: var(--fg-faint);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.agent-session-checkout,
+.agent-session-branch,
 .agent-session-tab {
   min-width: 0;
   flex-shrink: 2;
+}
+
+.agent-session-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .agent-session-chips {
