@@ -69,13 +69,6 @@
   height: 12px;
 }
 
-.panel-group-activities {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-}
-
 .panel-group-activity-glyph {
   display: inline-flex;
   align-items: center;

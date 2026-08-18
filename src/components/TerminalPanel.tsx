@@ -8,6 +8,7 @@
  * the workspace closes.
  */
 import { memo, useEffect, useRef, useState } from "react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { type WorkspaceTerminal } from "../stores/terminal";
 import { useTerminal, useWorkspace } from "../stores/workspaces";
 import { getSession } from "../lib/termSessions";
@@ -16,6 +17,7 @@ import { copyText } from "../lib/clipboard";
 import { agentPaneTitle } from "../lib/agentPaneTitle";
 import { basename } from "../lib/path";
 import { projectDisplayName } from "../lib/projectNames";
+import { terminalCloseConfirmation } from "../lib/terminalCloseGuard";
 import {
   setAgentPaneVisibility,
   useAgentRuntimeStore,
@@ -225,6 +227,23 @@ export default function TerminalPanel() {
   const enabled = tabMenu
     ? ws.terminal.getState().terminals[tabMenu.id]?.notificationsEnabled === true
     : false;
+  const closeTerminalSafely = async (terminalId: string) => {
+    const terminal = ws.terminal.getState().terminals[terminalId];
+    if (!terminal) return;
+    const warning = terminalCloseConfirmation(
+      "workspace",
+      terminal,
+      useAgentRuntimeStore.getState().states[terminalId],
+    );
+    if (
+      warning &&
+      !(await confirm(warning.message, {
+        title: warning.title,
+        kind: "warning",
+      }))
+    ) return;
+    closeWorkspaceTerminal(ws.terminal, terminalId);
+  };
   return (
     <>
       <Dock
@@ -243,7 +262,7 @@ export default function TerminalPanel() {
           event.preventDefault();
           setTabMenu({ id: terminal.id, x: event.clientX, y: event.clientY });
         }}
-        closeTerminal={(id) => closeWorkspaceTerminal(ws.terminal, id)}
+        closeTerminal={(id) => void closeTerminalSafely(id)}
       />
       {tabMenu && (
         <ContextMenu x={tabMenu.x} y={tabMenu.y} onClose={() => setTabMenu(null)}>

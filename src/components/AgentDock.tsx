@@ -11,6 +11,7 @@
  * enabled tabs wear a bell next to the activity glyph.
  */
 import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   agentTitleBase,
   groupingDockStore,
@@ -39,6 +40,7 @@ import { copyText } from "../lib/clipboard";
 import { useProjectColorVar } from "../lib/projectColors";
 import { basename } from "../lib/path";
 import { agentPaneTitle } from "../lib/agentPaneTitle";
+import { terminalCloseConfirmation } from "../lib/terminalCloseGuard";
 import { Dock, type DockPaneProps } from "./Dock";
 import { ContextMenu } from "./ContextMenu";
 import { AgentSubagents } from "./AgentSubagents";
@@ -337,6 +339,23 @@ export default function AgentDock({ groupingId }: { groupingId: string }) {
     x: number;
     y: number;
   } | null>(null);
+  const closeTerminalSafely = async (terminalId: string) => {
+    const terminal = useAgentTerminalsStore.getState().terminals[terminalId];
+    if (!terminal) return;
+    const warning = terminalCloseConfirmation(
+      "global",
+      terminal,
+      useAgentRuntimeStore.getState().states[terminalId],
+    );
+    if (
+      warning &&
+      !(await confirm(warning.message, {
+        title: warning.title,
+        kind: "warning",
+      }))
+    ) return;
+    closeAgentTerminal(terminalId);
+  };
   return (
     <>
       <Dock
@@ -362,7 +381,7 @@ export default function AgentDock({ groupingId }: { groupingId: string }) {
           )
             setTabMenu({ id: t.id, x: e.clientX, y: e.clientY });
         }}
-        closeTerminal={closeAgentTerminal}
+        closeTerminal={(id) => void closeTerminalSafely(id)}
       />
       {/* Sibling, not child: ContextMenu is position:fixed and its backdrop
           must sit outside the tab's event handlers (Titlebar pattern). */}

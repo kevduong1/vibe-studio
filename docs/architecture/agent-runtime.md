@@ -20,13 +20,24 @@ state are all session-only. After an app restart, both terminal docks start
 closed and empty; terminals exist only after an explicit user or task action.
 Global grouping state owns its name, navigation memory, and dock tree, but no
 independent presentation color. The panel derives one project-colored folder
-glyph per distinct terminal `workspacePath` in the grouping, including a
-project whose workspace is currently closed but whose global terminal remains
-live.
+glyph per distinct terminal `workspacePath` in the grouping while that
+project has no non-idle semantic rollup (idle, unknown, or absent). A non-idle
+rollup replaces that same folder slot with its Working, Needs Input, or Done
+activity glyph, so project identity and activity never appear as duplicate
+icons. This includes a project whose workspace is currently closed but whose
+global terminal remains live.
 Each global terminal snapshots the source workspace's credential-free
 Git-family ID and derived repository label at creation. That metadata is
 presentation-only and session-only, but lets Agent Sessions keep a global
 terminal in its repository/worktree family after the source workspace closes.
+
+User-initiated close buttons confirm before removing any global terminal tab,
+any dedicated project-agent tab, or a plain project shell that currently has a
+discovered agent occupant. Closing a non-agent project shell stays immediate.
+Global grouping tabs also confirm before stopping their member processes.
+These guards live above the disposal helpers: normal process exit, task
+cleanup, and other intentional lifecycle transitions remain automatic and do
+not open a dialog.
 
 ## State model
 
