@@ -1,11 +1,11 @@
 //! Workspace file listing (⌘P quick open) and content search (⌘⇧F).
 //!
-//! Both commands walk the worktree with the `ignore` crate (ripgrep's
-//! walker), so .gitignore / global excludes are respected without shelling
-//! out. Listing is a cheap serial walk (paths only); content search uses the
-//! parallel walker because it reads file bodies, and quits early once the
-//! global match cap is hit. All blocking work runs on the blocking pool so
-//! it never stalls the async runtime that also serves terminal IPC.
+//! Both commands walk the workspace with the `ignore` crate (ripgrep's
+//! walker), so .gitignore / global excludes are respected when present
+//! without shelling out. Listing is a cheap serial walk (paths only); content
+//! search uses the parallel walker because it reads file bodies, and quits
+//! early once the global match cap is hit. All blocking work runs on the
+//! blocking pool so it never stalls the async runtime that also serves terminal IPC.
 
 use std::io::Read;
 use std::path::Path;
@@ -50,7 +50,7 @@ fn walker(root: &str) -> WalkBuilder {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceFiles {
-    /// Repo-root-relative POSIX paths, sorted.
+    /// Workspace-root-relative POSIX paths, sorted.
     files: Vec<String>,
     truncated: bool,
 }
@@ -103,7 +103,7 @@ pub struct SearchMatch {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchFileResult {
-    /// Repo-root-relative POSIX path.
+    /// Workspace-root-relative POSIX path.
     file: String,
     matches: Vec<SearchMatch>,
 }

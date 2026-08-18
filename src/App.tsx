@@ -10,7 +10,7 @@ import { useStore } from "zustand";
 import { message, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  getRecentRepos,
+  getRecentWorkspaces,
   restoreSession,
   useActiveEditorTabCount,
   useActiveWorkspace,
@@ -144,11 +144,11 @@ function ChangeCountBadge({ ws }: { ws: Workspace }) {
 
 function Welcome() {
   const openWorkspace = useWorkspacesStore((s) => s.openWorkspace);
-  const [recent] = useState(getRecentRepos);
+  const [recent] = useState(getRecentWorkspaces);
 
   // window.alert is a silent no-op in WKWebView — use the dialog plugin.
   const showOpenError = (e: unknown) =>
-    void message(`Not a git repository:\n${e}`, {
+    void message(`Could not open folder:\n${e}`, {
       title: "Cannot open folder",
       kind: "error",
     });
@@ -172,10 +172,10 @@ function Welcome() {
         </div>
         <div className="welcome-kicker">Talos</div>
         <h1>Build with focus.</h1>
-        <p>Open a Git repository and pick up exactly where you left off.</p>
+        <p>Open a folder or Git repository and pick up exactly where you left off.</p>
         <button className="open-btn" onClick={pickFolder}>
           <IcFolderOpen />
-          Open Repository…
+          Open Folder…
         </button>
         {recent.length > 0 && (
           <div className="recent">
@@ -186,7 +186,7 @@ function Welcome() {
                 title={p}
                 onClick={() => void openWorkspace(p).catch(showOpenError)}
               >
-                <IcBranch />
+                <IcFolderOpen />
                 <span className="truncate">{p}</span>
               </button>
             ))}
@@ -393,7 +393,7 @@ export default function App() {
       const parent = useWorkspacesStore
         .getState()
         .workspaces.find((workspace) => workspace.path === detail.workspacePath);
-      if (parent) setProfileWorktree({ parent, profile: detail.profile });
+      if (parent?.isGitRepository) setProfileWorktree({ parent, profile: detail.profile });
     };
     window.addEventListener("talos:new-worktree-agent", onWorktree);
     const onNewTask = (event: Event) => {
@@ -401,7 +401,7 @@ export default function App() {
       const parent = useWorkspacesStore
         .getState()
         .workspaces.find((workspace) => workspace.path === detail.workspacePath);
-      if (parent) setNewTaskWorkspace(parent);
+      if (parent?.isGitRepository) setNewTaskWorkspace(parent);
     };
     window.addEventListener("talos:new-isolated-task", onNewTask);
     return () => {

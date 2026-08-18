@@ -6,6 +6,7 @@ import {
   gitCreateBranch,
   gitDiscard,
   gitFetch,
+  gitInit,
   gitLog,
   gitPull,
   gitPush,
@@ -26,6 +27,7 @@ import {
   type CheckoutKind,
   type CommitInfo,
   type ResetMode,
+  type RepoInfo,
   type StatusResult,
   type StashInfo,
 } from "../lib/ipc";
@@ -39,6 +41,9 @@ export interface RepoState {
   /** Workdir root this store is bound to; fixed for the store's lifetime. */
   repoPath: string;
   repoName: string;
+  /** False for an ordinary folder until Git is initialized in place. */
+  isGitRepository: boolean;
+  initializing: boolean;
   status: StatusResult | null;
   commits: CommitInfo[];
   hasMoreLog: boolean;
@@ -52,6 +57,8 @@ export interface RepoState {
 
   /** Wire the change watcher + first refresh. Called once per workspace. */
   init: () => Promise<void>;
+  /** Initialize Git in an ordinary folder and enable repository features. */
+  initialize: () => Promise<boolean>;
   /** Unhook the watcher; in-flight results are dropped. */
   dispose: () => void;
   /** Refresh status (+ log/stashes unless `statusOnly`). */
@@ -108,11 +115,15 @@ export type RepoStore = StoreApi<RepoState>;
 const watchOwners = new Map<string, object>();
 
 /**
- * Per-workspace repository store. One instance per open repo, created (and
- * `init`ed / `dispose`d) by the workspaces store — components reach it via
- * the workspace context hooks in stores/workspaces.ts.
+ * Per-workspace optional repository store. One instance per open folder,
+ * created (and `init`ed / `dispose`d) by the workspaces store — components
+ * reach it via the workspace context hooks in stores/workspaces.ts.
  */
-export const createRepoStore = (root: string): RepoStore => {
+export const createRepoStore = (
+  root: string,
+  isGitRepository: boolean,
+  onInitialized: (info: RepoInfo) => void,
+): RepoStore => {
   /** Set by dispose(); async results arriving afterwards are dropped. */
   let disposed = false;
   /** This store's watch-ownership token (see watchOwners). */
@@ -151,6 +162,8 @@ export const createRepoStore = (root: string): RepoStore => {
     return {
       repoPath: root,
       repoName: root.split("/").filter(Boolean).pop() ?? root,
+      isGitRepository,
+      initializing: false,
       status: null,
       commits: [],
       hasMoreLog: false,
@@ -167,6 +180,9 @@ export const createRepoStore = (root: string): RepoStore => {
         // The listener sees events for every watched repo — only ours matter.
         const unlisten = await onRepoChanged((change) => {
           if (disposed || change.repoPath !== root) return;
+          // The shared workspace watcher still drives explorer/editor reloads
+          // for ordinary folders; only repository refreshes are conditional.
+          if (!get().isGitRepository) return;
           if (Date.now() - lastExplicitRefresh < POST_MUTATION_QUIET_MS) return;
           // Coalesce with any pending refresh; plain file edits skip the
           // log/stash round trip (statusOnly).
@@ -197,7 +213,26 @@ export const createRepoStore = (root: string): RepoStore => {
           }
           return;
         }
-        await get().refresh();
+        if (get().isGitRepository) await get().refresh();
+      },
+
+      initialize: async () => {
+        if (get().isGitRepository) return true;
+        if (get().initializing || disposed) return false;
+        set({ initializing: true, error: null });
+        try {
+          const info = await gitInit(root);
+          if (disposed) return false;
+          set({ isGitRepository: true, error: null });
+          onInitialized(info);
+          await get().refresh();
+          return true;
+        } catch (error) {
+          if (!disposed) set({ error: String(error) });
+          return false;
+        } finally {
+          if (!disposed) set({ initializing: false });
+        }
       },
 
       dispose: () => {
@@ -217,6 +252,7 @@ export const createRepoStore = (root: string): RepoStore => {
       },
 
       refresh: async (opts) => {
+        if (!get().isGitRepository) return;
         const { commits, logFilter } = get();
         try {
           if (opts?.statusOnly) {

@@ -61,6 +61,54 @@
   background: var(--bg-sidebar);
 }
 
+.sc-init {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 24px 20px;
+  text-align: center;
+  color: var(--fg-dim);
+}
+
+.sc-init-icon {
+  display: flex;
+  color: var(--fg-faint);
+}
+
+.sc-init-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.sc-init-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.sc-init p {
+  max-width: 260px;
+  margin: 0 0 4px;
+  font-size: var(--font-size);
+  line-height: 1.45;
+}
+
+.sc-init .primary-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sc-init-error {
+  max-width: 280px;
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
 /* ------------------------------------------------------------------ */
 /* panel header                                                        */
 /* ------------------------------------------------------------------ */

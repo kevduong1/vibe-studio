@@ -15,7 +15,7 @@ AI coding agents — in a fast, minimal, native macOS app.
 </div>
 
 Like VS Code without all the extra stuff: source control you can see, real
-terminals, a proper diff viewer, and multi-repo workspaces built around
+terminals, a proper diff viewer, and multi-folder workspaces built around
 agent-driven development. Built with [Tauri 2](https://tauri.app) — native
 WKWebView, no bundled Chromium — so it stays light on CPU and RAM.
 
@@ -30,11 +30,12 @@ across launches.
 
 ## Features
 
-### 🗂 Multi-repo workspaces
+### 🗂 Multi-folder workspaces
 
-- Every open repo is a tab in the titlebar with its own editor, terminals,
-  search, and source control — all workspaces stay alive, so switching is
-  instant and nothing reloads
+- Open any folder, whether or not it is already a Git repository. Every folder
+  is a titlebar tab with its own editor, terminals, search, and optional source
+  control — all workspaces stay alive, so switching is instant and nothing
+  reloads
 - Jump with **⌘1–9**, double-click a tab to rename it, right-click to pick a
   **per-project accent color** that tints the whole app
 - Session restore brings workspaces and editor tabs back on relaunch, while
@@ -42,6 +43,9 @@ across launches.
 
 ### 🌱 Source control
 
+- In an ordinary folder, Source Control offers **Initialize Repository**;
+  initialization happens in place and immediately enables changes, commits,
+  the commit graph, and worktrees
 - Stage / unstage / discard, commit (+ amend, commit & push), stash
   (save / apply / pop / drop), fetch / pull / push using your existing git
   auth and credential helpers
@@ -109,7 +113,7 @@ rail; Explorer, Search, Source Control, and Memories remain workspace-specific
 below it, with Worktrees available as a tab inside Source Control.
 
 - Open it from the top activity icon, the top-right titlebar shortcut, or with
-  **⌘⇧I**. It remains available with no repository open. **Attention** shows
+  **⌘⇧I**. It remains available with no workspace open. **Attention** shows
   actionable agents; **All** includes active, idle, accepted, and unavailable
   sessions.
 - Actionable items keep the strict urgency order: **Needs Input**, conflicts or
@@ -264,7 +268,7 @@ Repository checks come from `.vscode/tasks.json`:
 
 ### ⌨️ Project terminals
 
-- Opening or restoring a repository never starts a shell. The terminal panel
+- Opening or restoring a workspace never starts a shell. The terminal panel
   stays closed and empty until an explicit terminal, task, check, or recipe
   action needs it.
 - Real PTYs running your login shell, Claude Code, or Codex, with tabs,
@@ -282,7 +286,7 @@ Repository checks come from `.vscode/tasks.json`:
   and compare the repository before/after execution, rerunning once when a
   formatter changes the tree rather than certifying untested edits
 - Settings can save user-owned commands as per-project terminal recipes.
-  Recipes are always manual and never run merely because a repository opens or
+  Recipes are always manual and never run merely because a workspace opens or
   is restored.
 
 ### ✍️ Editor & navigation

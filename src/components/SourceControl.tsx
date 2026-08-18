@@ -821,11 +821,47 @@ function SourceControlChanges() {
 
 type SourceControlView = "changes" | "worktrees";
 
+function InitializeRepository() {
+  const ws = useWorkspace();
+  const { initializing, error } = useRepo(
+    useShallow((state) => ({
+      initializing: state.initializing,
+      error: state.error,
+    })),
+  );
+
+  return (
+    <div className="source-control-shell">
+      <div className="sc-header">
+        <span className="sc-header-title truncate">Source Control</span>
+      </div>
+      <div className="sc-init">
+        <span className="sc-init-icon" aria-hidden="true"><IcBranch /></span>
+        <div className="sc-init-title">No Git repository</div>
+        <p>
+          Initialize Git in this folder to track changes, commit, and use worktrees.
+        </p>
+        <button
+          className="primary-btn"
+          disabled={initializing}
+          onClick={() => void ws.repo.getState().initialize()}
+        >
+          {initializing ? <IcSpinner className="activity-busy" /> : <IcBranch />}
+          {initializing ? "Initializing…" : "Initialize Repository"}
+        </button>
+        {error && <div className="sc-init-error" role="alert">{error}</div>}
+      </div>
+    </div>
+  );
+}
+
 /** Source Control owns Git changes and repository worktrees as sibling tabs.
  * Both panes stay mounted so draft commit messages, filters, and expanded task
  * cards survive tab switches. */
 export default function SourceControl() {
+  const isGitRepository = useRepo((state) => state.isGitRepository);
   const [view, setView] = useState<SourceControlView>("changes");
+  if (!isGitRepository) return <InitializeRepository />;
   return (
     <div className="source-control-shell">
       <div className="sc-view-tabs" role="tablist" aria-label="Source Control views">

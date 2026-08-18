@@ -54,7 +54,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_exit,
             // git
+            git::workspace_open,
             git::git_open,
+            git::git_init,
             git::git_worktree_list,
             git::git_worktree_open,
             git::git_worktree_create,

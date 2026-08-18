@@ -233,6 +233,13 @@ export interface RepoInfo {
   tabGroupId: string;
 }
 
+export interface WorkspaceInfo {
+  /** Canonical folder root; paths inside Git resolve to the repository root. */
+  root: string;
+  /** Null for an ordinary folder that does not yet have Git metadata. */
+  repo: RepoInfo | null;
+}
+
 export interface GitWorktree {
   path: string;
   head: string | null;
@@ -275,7 +282,7 @@ export interface ImageContent {
 // ---------------------------------------------------------------------------
 
 export interface WorkspaceFiles {
-  /** Repo-root-relative POSIX paths, sorted. */
+  /** Workspace-root-relative POSIX paths, sorted. */
   files: string[];
   truncated: boolean;
 }
@@ -293,7 +300,7 @@ export interface SearchMatch {
 }
 
 export interface SearchFileResult {
-  /** Repo-root-relative POSIX path. */
+  /** Workspace-root-relative POSIX path. */
   file: string;
   matches: SearchMatch[];
 }
@@ -309,9 +316,17 @@ export interface SearchResult {
 // Git commands
 // ---------------------------------------------------------------------------
 
+/** Validate and open any folder, with optional Git capability metadata. */
+export const workspaceOpen = (path: string): Promise<WorkspaceInfo> =>
+  invoke("workspace_open", { path });
+
 /** Validate + open a repository (any path inside it works). */
 export const gitOpen = (path: string): Promise<RepoInfo> =>
   invoke("git_open", { path });
+
+/** Initialize Git in an existing workspace folder. */
+export const gitInit = (path: string): Promise<RepoInfo> =>
+  invoke("git_init", { path });
 
 export const gitWorktreeList = (repoPath: string): Promise<GitWorktree[]> =>
   invoke("git_worktree_list", { repoPath });
@@ -572,15 +587,15 @@ export const openUrl = (url: string): Promise<void> =>
 // ---------------------------------------------------------------------------
 
 /**
- * All worktree files (gitignore-respected, `.git` excluded, dotfiles
- * included), capped at 50k. Cheap paths-only walk — fetched fresh per
+ * All workspace files (gitignore-respected when applicable, `.git` excluded,
+ * dotfiles included), capped at 50k. Cheap paths-only walk — fetched fresh per
  * quick-open, no caching/watcher involved.
  */
 export const listWorkspaceFiles = (repoPath: string): Promise<WorkspaceFiles> =>
   invoke("list_workspace_files", { repoPath });
 
 /**
- * Content search over the worktree (parallel walk; binary/oversized files
+ * Content search over the workspace (parallel walk; binary/oversized files
  * skipped with the editor's rules; 2000-match global cap). Rejects with the
  * regex error message when `regex` is set and the pattern is invalid.
  */
@@ -594,7 +609,7 @@ export const searchWorkspace = (
   invoke("search_workspace", { repoPath, query, caseSensitive, wholeWord, regex });
 
 // ---------------------------------------------------------------------------
-// Repo watcher
+// Workspace watcher (legacy repo-shaped IPC/event names)
 // ---------------------------------------------------------------------------
 
 export interface RepoChanged {
@@ -607,10 +622,10 @@ export interface RepoChanged {
 }
 
 /**
- * Starts a debounced recursive watcher over the repo workdir (+ the real git
- * dir, including linked worktrees). Emits "repo-changed" with a RepoChanged
- * payload. One watch per repo root; re-watching a root replaces its watcher.
- * Listeners receive events for EVERY watched repo — filter by `repoPath`.
+ * Starts a debounced recursive watcher over the workspace root (+ the real
+ * Git dir for linked worktrees when available). Emits "repo-changed" with a
+ * RepoChanged payload. One watch per root; re-watching replaces its watcher.
+ * Listeners receive events for EVERY watched workspace — filter by `repoPath`.
  */
 export const watchRepo = (repoPath: string): Promise<void> =>
   invoke("watch_repo", { repoPath });

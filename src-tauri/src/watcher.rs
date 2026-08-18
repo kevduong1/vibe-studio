@@ -1,7 +1,8 @@
-//! Debounced repository watcher.
+//! Debounced workspace watcher (the IPC/event names retain `repo` for wire
+//! compatibility).
 //!
-//! Watches the repo workdir recursively (plus the real git dir for linked
-//! worktrees) and emits a single "repo-changed" event per burst of activity.
+//! Watches the workspace root recursively (plus the real git dir for linked
+//! worktrees when available) and emits one "repo-changed" event per burst.
 //! The payload tells the frontend whether git metadata (HEAD / index / refs)
 //! changed, so it can skip re-fetching the commit log for plain file edits.
 //!
@@ -26,7 +27,7 @@ pub struct ActiveWatch {
     _watcher: RecommendedWatcher,
 }
 
-/// One watcher per open repository, keyed by workdir root.
+/// One watcher per open workspace, keyed by its canonical root.
 #[derive(Default)]
 pub struct WatcherState {
     active: Mutex<HashMap<String, ActiveWatch>>,

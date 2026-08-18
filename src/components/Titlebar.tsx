@@ -442,6 +442,8 @@ function ActiveRepoControls({ ws }: { ws: Workspace }) {
   const syncing = useStore(ws.repo, (s) => s.syncing);
   const branch = status?.branch ?? null;
 
+  if (!ws.isGitRepository) return null;
+
   return (
     <>
       {branch && (
@@ -497,7 +499,7 @@ export default function Titlebar() {
     try {
       await openWorkspace(dir);
     } catch (e) {
-      await message(String(e), { title: "Open Repository", kind: "error" });
+      await message(String(e), { title: "Open Folder", kind: "error" });
     }
   };
 
@@ -560,7 +562,7 @@ export default function Titlebar() {
         )}
         <button
           className="icon-btn ws-tab-add"
-          title="Open repository or create worktree"
+          title="Open folder or create worktree"
           onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             setAddMenu({ x: rect.left, y: rect.bottom });
@@ -591,9 +593,9 @@ export default function Titlebar() {
       {addMenu && (
         <ContextMenu x={addMenu.x} y={addMenu.y} onClose={() => setAddMenu(null)}>
           <button onClick={() => { setAddMenu(null); void pickFolder(); }}>
-            Open Repository…
+            Open Folder…
           </button>
-          {active && (
+          {active?.isGitRepository && (
             <>
               <div className="ctx-menu-sep" />
               <button onClick={() => { setWorktreeDialog({ parent: active, mode: "create" }); setAddMenu(null); }}>
