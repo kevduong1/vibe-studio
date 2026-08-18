@@ -1,5 +1,5 @@
 use super::{PreviewBounds, PreviewExternalEvent, PreviewLoadEvent};
-use crate::preview::url::{is_loopback_url, normalize_loopback_url};
+use crate::preview::url::normalize_loopback_url;
 use tauri::{
     webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
     AppHandle, Emitter, EventTarget, LogicalPosition, LogicalSize, Manager, Position, Rect, Size,
@@ -70,11 +70,18 @@ fn emit_external(app: &AppHandle, id: &str, url: &url::Url) {
     );
 }
 
-fn is_allowed_top_level_url(url: &url::Url) -> bool {
-    matches!(url.scheme(), "http" | "https")
-        && is_loopback_url(url)
+/// Page-initiated browser navigation may leave localhost (OAuth is the common
+/// case), while the toolbar and IPC entry points remain loopback-only. Preview
+/// webviews match no Tauri capability, so remote content still has no IPC.
+fn is_allowed_browser_url(url: &url::Url) -> bool {
+    (matches!(url.scheme(), "http" | "https")
         && url.username().is_empty()
-        && url.password().is_none()
+        && url.password().is_none())
+        // OAuth clients sometimes reserve a popup synchronously and navigate
+        // it after awaiting configuration. WebKit reports that first request
+        // as about:blank; allowing only this exact about URL keeps that flow's
+        // opener relationship intact without admitting arbitrary about pages.
+        || url.as_str() == "about:blank"
 }
 
 fn hide_or_rollback(
@@ -112,12 +119,11 @@ pub(crate) fn preview_create(
     let navigation_id = id.clone();
     let new_window_app = app.clone();
     let new_window_id = id.clone();
-    let new_window_label = label.clone();
     let load_app = app.clone();
     let load_id = id.clone();
     let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         .on_navigation(move |url| {
-            if is_allowed_top_level_url(url) {
+            if is_allowed_browser_url(url) {
                 true
             } else {
                 emit_external(&navigation_app, &navigation_id, url);
@@ -125,10 +131,11 @@ pub(crate) fn preview_create(
             }
         })
         .on_new_window(move |url, _features| {
-            if is_allowed_top_level_url(&url) {
-                if let Some(webview) = new_window_app.get_webview(&new_window_label) {
-                    let _ = webview.navigate(url);
-                }
+            if is_allowed_browser_url(&url) {
+                // Wry creates a native app window using the requesting
+                // WKWebView's configuration. That preserves cookies,
+                // window.opener and postMessage for popup-based auth flows.
+                return NewWindowResponse::Allow;
             } else {
                 emit_external(&new_window_app, &new_window_id, &url);
             }
@@ -333,23 +340,27 @@ mod tests {
     }
 
     #[test]
-    fn allows_only_credential_free_loopback_http_urls_for_top_level_navigation() {
+    fn allows_credential_free_web_urls_and_oauth_popup_bootstrap() {
         for allowed in [
             "http://localhost:3000/app",
             "https://127.0.0.1:4443/path",
             "http://[::1]:8081/",
+            "https://accounts.example.com/oauth/authorize?client_id=talos",
+            "about:blank",
         ] {
             let url = url::Url::parse(allowed).unwrap();
-            assert!(is_allowed_top_level_url(&url), "{allowed}");
+            assert!(is_allowed_browser_url(&url), "{allowed}");
         }
 
         for rejected in [
             "tauri://localhost/app",
             "ftp://localhost/app",
             "http://user:pass@localhost:3000/app",
+            "https://user:pass@accounts.example.com/oauth",
+            "about:srcdoc",
         ] {
             let url = url::Url::parse(rejected).unwrap();
-            assert!(!is_allowed_top_level_url(&url), "{rejected}");
+            assert!(!is_allowed_browser_url(&url), "{rejected}");
         }
     }
 }

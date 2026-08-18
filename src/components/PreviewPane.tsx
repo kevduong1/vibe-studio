@@ -51,7 +51,7 @@ const validDimension = (value: string): number | null => {
 };
 
 /**
- * Native external-navigation events are app-wide, so they deliberately have
+ * Native non-web navigation events are app-wide, so they deliberately have
  * one module-level listener rather than one listener per mounted preview.
  * The native id is treated as untrusted/stale until a current workspace tab
  * proves that the preview is still owned by the app.
@@ -66,7 +66,7 @@ const handlePreviewExternal = ({ id, url }: { id: string; url: string }) => {
     );
   if (!owned) return;
   void openUrl(url).catch((error) =>
-    console.error(`Failed to open external preview URL for ${id}`, error),
+    console.error(`Failed to open external preview protocol for ${id}`, error),
   );
 };
 
