@@ -23,7 +23,7 @@ import {
   sendEditorContextToAgent,
 } from "../lib/editorAgentContext";
 import { message } from "@tauri-apps/plugin-dialog";
-import { isMarkdownPath } from "../lib/path";
+import { isImagePath, isMarkdownPath } from "../lib/path";
 import { ContextMenu } from "./ContextMenu";
 import PreviewPane from "./PreviewPane";
 import PreviewPicker from "./PreviewPicker";
@@ -33,6 +33,7 @@ import {
   IcClose,
   IcDiff,
   IcFile,
+  IcImage,
   IcPlus,
   IcSparkle,
 } from "./icons";
@@ -40,6 +41,7 @@ import "./EditorArea.css";
 
 const Editor = lazy(() => import("./Editor"));
 const DiffViewer = lazy(() => import("./DiffViewer"));
+const ImagePreview = lazy(() => import("./ImagePreview"));
 const MarkdownPreview = lazy(() => import("./MarkdownPreview"));
 const MemoryPreview = lazy(() => import("./MemoryPreview"));
 
@@ -104,7 +106,7 @@ function TabItem({
     >
       <span className="tab-icon">
         {tab.kind === "file" ? (
-          <IcFile />
+          isImagePath(tab.path) ? <IcImage /> : <IcFile />
         ) : tab.kind === "memory" ? (
           <IcBrain />
         ) : tab.kind === "preview" ? (
@@ -222,18 +224,22 @@ function TabMenu({
       {tab.kind === "file" && (
         <>
           <div className="ctx-menu-sep" />
-          <button
-            onClick={() => {
-              const selection = currentEditorSelection(ws.path, tab.id);
-              if (selection) sendContext({ kind: "selection", selection });
-              else {
-                onClose();
-                void message("Select text in the editor first.", { title: "Send Selection to Agent" });
-              }
-            }}
-          >
-            Send Selection to Agent
-          </button>
+          {!isImagePath(tab.path) && (
+            <button
+              onClick={() => {
+                const selection = currentEditorSelection(ws.path, tab.id);
+                if (selection) sendContext({ kind: "selection", selection });
+                else {
+                  onClose();
+                  void message("Select text in the editor first.", {
+                    title: "Send Selection to Agent",
+                  });
+                }
+              }}
+            >
+              Send Selection to Agent
+            </button>
+          )}
           <button onClick={() => sendContext({ kind: "file", path: tab.path })}>
             Send File to Agent
           </button>
@@ -454,7 +460,9 @@ export default function EditorArea({
           <div className="editor-content">
             <Suspense fallback={<div className="editor-msg dim">Loading…</div>}>
               {active?.kind === "file" &&
-                (markdownPreview && isMarkdownPath(active.path) ? (
+                (isImagePath(active.path) ? (
+                  <ImagePreview key={active.id} tab={active} />
+                ) : markdownPreview && isMarkdownPath(active.path) ? (
                   <MarkdownPreview key={active.id} tab={active} />
                 ) : (
                   <Editor key={active.id} tab={active} />

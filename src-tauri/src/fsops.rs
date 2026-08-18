@@ -8,6 +8,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -26,10 +27,20 @@ pub struct FileContent {
     truncated: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageContent {
+    data_url: String,
+}
+
 /// Files larger than this are truncated (on a char boundary) before being
 /// sent to the webview. Workspace search (search.rs) skips such files
 /// entirely so its notion of "searchable" matches the editor's "editable".
 pub(crate) const MAX_TEXT_BYTES: usize = 5 * 1024 * 1024;
+
+/// Bound base64 expansion and JSON transfer cost so a mistaken giant raster
+/// cannot monopolize the webview IPC channel.
+const MAX_IMAGE_BYTES: usize = 25 * 1024 * 1024;
 
 /// Number of leading bytes inspected for NUL to classify a file as binary.
 pub(crate) const BINARY_SNIFF_BYTES: usize = 8000;
@@ -131,6 +142,44 @@ fn read_file_impl(path: &str) -> Result<FileContent, String> {
             }
         }
     }
+}
+
+#[tauri::command]
+pub async fn fs_read_image(path: String) -> Result<ImageContent, String> {
+    tauri::async_runtime::spawn_blocking(move || read_image_impl(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn image_mime(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" | "apng" => Some("image/png"),
+        "jpg" | "jpeg" | "jfif" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        "avif" => Some("image/avif"),
+        "tif" | "tiff" => Some("image/tiff"),
+        _ => None,
+    }
+}
+
+fn read_image_impl(path: &str) -> Result<ImageContent, String> {
+    let path = Path::new(path);
+    let mime = image_mime(path).ok_or_else(|| "unsupported image format".to_string())?;
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(MAX_IMAGE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("image is larger than the 25 MB preview limit".to_string());
+    }
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(ImageContent {
+        data_url: format!("data:{mime};base64,{encoded}"),
+    })
 }
 
 #[tauri::command]
@@ -366,4 +415,33 @@ pub async fn open_url(url: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn image_preview_uses_an_allowlisted_case_insensitive_mime() {
+        assert_eq!(image_mime(Path::new("preview.PNG")), Some("image/png"));
+        assert_eq!(image_mime(Path::new("photo.JpEg")), Some("image/jpeg"));
+        assert_eq!(image_mime(Path::new("active.svg")), None);
+    }
+
+    #[test]
+    fn image_preview_encodes_a_data_url() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "talos-fsops-image-{}-{nonce}.png",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"png").unwrap();
+        let result = read_image_impl(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_file(path);
+        assert_eq!(result.data_url, "data:image/png;base64,cG5n");
+    }
 }

@@ -19,10 +19,11 @@ terminals, a proper diff viewer, and multi-repo workspaces built around
 agent-driven development. Built with [Tauri 2](https://tauri.app) — native
 WKWebView, no bundled Chromium — so it stays light on CPU and RAM.
 
-The interface uses a modern, layered dark workspace: rounded inset surfaces,
-matching editor/diff and terminal canvases, project-tinted accents, and
-elevated command overlays keep dense repository, editor, and terminal workflows
-easy to scan. Pick Midnight, Charcoal, Soft
+The interface uses a modern, layered dark workspace: an icon-only activity rail
+rests directly on the global canvas, while rounded inset content surfaces,
+matching editor/diff and terminal canvases, project-tinted accents, and elevated
+command overlays keep dense repository, editor, and terminal workflows easy to
+scan. Pick Midnight, Charcoal, Soft
 Gray, Slate, or one of 18 additional neutral, cool, warm, earth, and jewel
 palettes in **Settings → Appearance**; the app remembers the background palette
 across launches.
@@ -262,6 +263,8 @@ Repository checks come from `.vscode/tasks.json`:
 - CodeMirror 6 tabs with on-demand language loading, unsaved-draft
   recovery, preserved LF/CRLF/CR line endings, and external-change reload
   with save-conflict protection
+- Open PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, and TIFF files in fit-to-pane,
+  read-only image previews that refresh when the file changes on disk
 - **Provisional tabs** — single-clicking Explorer, search, source-control, or
   commit files reuses one italic tab; editing, double-clicking the file/tab,
   or **Keep Open** pins it. Pinned file/diff tabs restore on relaunch

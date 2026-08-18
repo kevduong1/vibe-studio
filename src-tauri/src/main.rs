@@ -97,6 +97,7 @@ fn main() {
             // fs
             fsops::fs_read_dir,
             fsops::fs_read_file,
+            fsops::fs_read_image,
             fsops::fs_write_file,
             fsops::fs_create_file,
             fsops::fs_create_dir,

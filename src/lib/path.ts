@@ -14,3 +14,8 @@ export const dirname = (p: string): string => {
     editor for MarkdownPreview when it's on). */
 export const isMarkdownPath = (p: string): boolean =>
   /\.(md|markdown|mdown|mkd)$/i.test(p);
+
+/** Raster formats rendered by ImagePreview. SVG stays in the text editor so
+    active content is never introduced through the image preview path. */
+export const isImagePath = (p: string): boolean =>
+  /\.(png|apng|jpe?g|jfif|gif|webp|bmp|ico|avif|tiff?)$/i.test(p);

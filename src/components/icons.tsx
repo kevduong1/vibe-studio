@@ -141,6 +141,13 @@ export const IcFile = (props: IconProps) => (
     <path d="M9.5 1.5v3h3" />
   </Svg>
 );
+export const IcImage = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="1.5" y="2.5" width="13" height="11" rx="1.2" />
+    <circle cx="5" cy="6" r="1.2" />
+    <path d="m2 12 3.6-3.5 2.2 2 2.2-2.2 4 3.7" />
+  </Svg>
+);
 export const IcFolder = (props: IconProps) => (
   <Svg {...props}>
     <path d="M1.5 4a1 1 0 0 1 1-1h3.2l1.6 1.8h6.2a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V4z" />

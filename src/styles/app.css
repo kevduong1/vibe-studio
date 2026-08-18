@@ -15,7 +15,7 @@
 }
 
 /* Transparent column: the editor and the terminal panel are their own cards
-   (same treatment as the sidebar/activity bar), separated by the shell gap. */
+   (same treatment as the content sidebar), separated by the shell gap. */
 .app-center {
   display: flex;
   flex-direction: column;
@@ -84,7 +84,7 @@
   border-radius: inherit;
 }
 
-/* activity bar (slim icon strip on the far left) */
+/* Activity rail: icons sit directly on the global app canvas. */
 .activity-bar {
   width: 48px;
   flex-shrink: 0;
@@ -93,10 +93,7 @@
   align-items: center;
   padding-top: 7px;
   gap: 4px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-inset);
+  background: transparent;
 }
 
 .activity-divider {

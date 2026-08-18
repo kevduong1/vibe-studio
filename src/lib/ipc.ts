@@ -265,6 +265,11 @@ export interface FileContent {
   truncated: boolean;
 }
 
+export interface ImageContent {
+  /** CSP-safe data URL for a supported raster image. */
+  dataUrl: string;
+}
+
 // ---------------------------------------------------------------------------
 // Search types
 // ---------------------------------------------------------------------------
@@ -523,6 +528,10 @@ export const fsReadDir = (path: string): Promise<DirEntry[]> =>
 /** Reads a UTF-8 text file. Files > 5 MB are truncated; binaries flagged. */
 export const fsReadFile = (path: string): Promise<FileContent> =>
   invoke("fs_read_file", { path });
+
+/** Reads a supported raster image (up to 25 MB) for a read-only preview. */
+export const fsReadImage = (path: string): Promise<ImageContent> =>
+  invoke("fs_read_image", { path });
 
 export const fsWriteFile = (path: string, text: string): Promise<void> =>
   invoke("fs_write_file", { path, text });
