@@ -20,7 +20,6 @@ import {
 import { useAgentRuntimeStore } from "../stores/agentRuntime";
 import {
   rollupAgentStates,
-  ROLLUP_PRIORITY,
   type AgentRollup,
 } from "../lib/agentState";
 import { closeGlobalGrouping, openGlobalTerminal } from "../lib/agentSessions";
@@ -50,7 +49,7 @@ async function closeGroupingSafely(groupingId: string): Promise<void> {
   if (
     count === 0 ||
     (await confirm(
-      `Close "${g.name}" and its ${count} terminal${count === 1 ? "" : "s"}?`,
+      `Close "${g.name}" and its ${count} terminal${count === 1 ? "" : "s"}?\n\nThis will stop every process in the group.`,
       { title: "Close Terminal Group", kind: "warning" },
     ))
   ) {
@@ -66,29 +65,31 @@ const activateGrouping = (groupingId: string): void => {
   useUiStore.getState().setPanelVisible(true);
 };
 
-interface GroupingWorkspaceActivity {
+interface GroupingWorkspaceStatus {
   workspacePath: string;
-  activity: Exclude<AgentRollup, "idle">;
+  activity: AgentRollup | null;
 }
 
 function GroupActivityGlyph({
-  item,
+  workspacePath,
+  activity,
 }: {
-  item: GroupingWorkspaceActivity;
+  workspacePath: string;
+  activity: Exclude<AgentRollup, "idle">;
 }) {
-  const color = useProjectColorVar(item.workspacePath);
+  const color = useProjectColorVar(workspacePath);
   const state =
-    item.activity === "blocked"
+    activity === "blocked"
       ? "Needs Input"
-      : item.activity === "done"
+      : activity === "done"
         ? "Done"
         : "Working";
   return (
     <span
       className="panel-group-activity-glyph"
-      title={`${projectDisplayName(item.workspacePath)} — ${state}`}
+      title={`${projectDisplayName(workspacePath)} — ${state}`}
     >
-      <ActivityGlyph activity={item.activity} idle={null} color={color} />
+      <ActivityGlyph activity={activity} idle={null} color={color} />
     </span>
   );
 }
@@ -102,6 +103,21 @@ function GroupProjectFolder({ workspacePath }: { workspacePath: string }) {
     >
       <IcFolder style={{ color }} />
     </span>
+  );
+}
+
+function GroupProjectStatus({
+  item,
+}: {
+  item: GroupingWorkspaceStatus;
+}) {
+  return item.activity && item.activity !== "idle" ? (
+    <GroupActivityGlyph
+      workspacePath={item.workspacePath}
+      activity={item.activity}
+    />
+  ) : (
+    <GroupProjectFolder workspacePath={item.workspacePath} />
   );
 }
 
@@ -132,17 +148,12 @@ function GroupingTab({
     if (!workspacePath) continue;
     byWorkspace.set(workspacePath, [...(byWorkspace.get(workspacePath) ?? []), id]);
   }
-  const activities: GroupingWorkspaceActivity[] = [...byWorkspace]
-    .map(([workspacePath, ids]) => ({
+  const workspaceStatuses: GroupingWorkspaceStatus[] = [...byWorkspace].map(
+    ([workspacePath, ids]) => ({
       workspacePath,
       activity: rollupAgentStates(ids.map((id) => runtimeStates[id])),
-    }))
-    .filter(
-      (item): item is GroupingWorkspaceActivity =>
-        item.activity !== null && item.activity !== "idle",
-    )
-    .sort((a, b) => ROLLUP_PRIORITY[b.activity] - ROLLUP_PRIORITY[a.activity]);
-  const workspacePaths = [...byWorkspace.keys()];
+    }),
+  );
 
   const commit = (value: string) => {
     // renameGrouping trims and ignores empty — the old name just stays.
@@ -191,24 +202,17 @@ function GroupingTab({
         />
       ) : (
         <>
-          {workspacePaths.length > 0 && (
+          {workspaceStatuses.length > 0 && (
             <span className="panel-group-projects">
-              {workspacePaths.map((workspacePath) => (
-                <GroupProjectFolder
-                  key={workspacePath}
-                  workspacePath={workspacePath}
+              {workspaceStatuses.map((item) => (
+                <GroupProjectStatus
+                  key={item.workspacePath}
+                  item={item}
                 />
               ))}
             </span>
           )}
           {grouping.name}
-          {activities.length > 0 && (
-            <span className="panel-group-activities">
-              {activities.map((item) => (
-                <GroupActivityGlyph key={item.workspacePath} item={item} />
-              ))}
-            </span>
-          )}
         </>
       )}
     </div>

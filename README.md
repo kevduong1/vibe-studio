@@ -69,10 +69,12 @@ app session:
 - Global terminals are pinned to a **project**, not a window — they keep
   running when their workspace closes, and clicking one jumps straight to
   its project
-- Each global terminal-group tab shows a folder for every distinct project
-  represented in that group, using the project's color; groups have no
-  separate tab color or color picker. Switching group tabs never changes the
-  active workspace; selecting a terminal is the explicit jump to its project
+- Each global terminal-group tab shows one project-colored icon for every
+  distinct project represented in that group: a folder while idle, replaced
+  in place by the Working / Needs Input / Done activity icon when applicable;
+  groups have no separate tab color or color picker. Switching group tabs
+  never changes the active workspace; selecting a terminal is the explicit
+  jump to its project
 - Semantic **Working / Needs Input / Done / No Agent** state distinguishes a
   live agent from the shell it returns to, with accessible text, icons, and
   priority rollups across the dock, titlebar tabs, and status bar; each leaf
@@ -106,7 +108,9 @@ app session:
   count/summary chip without making an otherwise input-ready session look
   Working
 - Drag & drop tabs into splits; the layout survives workspace switches during
-  the current app session, and a relaunch starts with an empty dock
+  the current app session, and a relaunch starts with an empty dock. Closing a
+  global terminal, a global group with terminals, or an agent-occupied project
+  terminal asks for confirmation before stopping its processes
 - Drop a file or image from Finder onto a pane to paste its path — image
   drops work with Claude Code out of the box
 

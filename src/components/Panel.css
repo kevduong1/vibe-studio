@@ -41,8 +41,8 @@
   border-color: var(--border);
   box-shadow: var(--shadow-sm), var(--shadow-inset);
 }
-/* Global-grouping tabs are divs (they host an inline rename input), unlike
-   the fixed Project Terminals button — give them the button feel back. */
+/* Grouping tabs are divs because they host an inline rename input; give them
+   the same button feel as the rest of the panel chrome. */
 .panel-grouping-tab {
   position: relative;
   cursor: default;
@@ -67,13 +67,6 @@
 .panel-group-project-folder > svg {
   width: 12px;
   height: 12px;
-}
-
-.panel-group-activities {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
 }
 
 .panel-group-activity-glyph {

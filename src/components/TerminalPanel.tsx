@@ -8,6 +8,7 @@
  * the workspace closes.
  */
 import { memo, useEffect, useRef, useState } from "react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { type WorkspaceTerminal } from "../stores/terminal";
 import { useTerminal, useWorkspace } from "../stores/workspaces";
 import { useUiStore } from "../stores/ui";
@@ -17,6 +18,7 @@ import { copyText } from "../lib/clipboard";
 import { agentPaneTitle } from "../lib/agentPaneTitle";
 import { basename } from "../lib/path";
 import { projectDisplayName } from "../lib/projectNames";
+import { terminalCloseConfirmation } from "../lib/terminalCloseGuard";
 import {
   setAgentPaneVisibility,
   useAgentRuntimeStore,
@@ -73,9 +75,9 @@ const TerminalPane = memo(function TerminalPane({
   }, [terminal.id]);
 
   // Acknowledge on REAL visibility (see AgentDock's twin): the dock-tab flag
-  // ignores a hidden/maximized panel, an inactive workspace, and the other
-  // panel group — all display:none, all offsetParent null. The host's
-  // ResizeObserver fires on the actual reveal.
+  // ignores a hidden lower-sidebar dock or inactive workspace — both are
+  // display:none with offsetParent null. The host's ResizeObserver fires on
+  // the actual reveal.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -229,6 +231,23 @@ export default function TerminalPanel() {
   const enabled = tabMenu
     ? ws.terminal.getState().terminals[tabMenu.id]?.notificationsEnabled === true
     : false;
+  const closeTerminalSafely = async (terminalId: string) => {
+    const terminal = ws.terminal.getState().terminals[terminalId];
+    if (!terminal) return;
+    const warning = terminalCloseConfirmation(
+      "workspace",
+      terminal,
+      useAgentRuntimeStore.getState().states[terminalId],
+    );
+    if (
+      warning &&
+      !(await confirm(warning.message, {
+        title: warning.title,
+        kind: "warning",
+      }))
+    ) return;
+    closeWorkspaceTerminal(ws.terminal, terminalId);
+  };
   return (
     <div className="project-terminal-dock">
       <div className="project-terminal-header">
@@ -277,7 +296,7 @@ export default function TerminalPanel() {
             event.preventDefault();
             setTabMenu({ id: terminal.id, x: event.clientX, y: event.clientY });
           }}
-          closeTerminal={(id) => closeWorkspaceTerminal(ws.terminal, id)}
+          closeTerminal={(id) => void closeTerminalSafely(id)}
         />
       </div>
       {createMenu && (
