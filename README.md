@@ -114,11 +114,27 @@ workspace-specific below it.
   failed checks, then completed/unreviewed/stale approvals. Active and quiet
   rows keep stable registration order so normal status ticks do not move the
   session you were about to select.
-- Every row includes agent identity, terminal/topic title, project, elapsed
-  time, textual lifecycle state, and separate review/check evidence. Row
-  highlights and accent-colored states match the source project's color, even
-  when another workspace is active. Detected child agent processes appear as a
-  bounded count, not as invented conversation history.
+- Every row includes a state-aware pixel-art terrarium, agent identity,
+  terminal/topic title, project, elapsed time, textual lifecycle state, and
+  separate review/check evidence. The avatar character follows the source
+  project's editable color and the detected agent: Blue uses Athena/Zeus,
+  Purple Hera/Hades, Green Artemis/Demeter, and Orange Hermes/Hephaestus for
+  Claude/Codex respectively; Pink uses Aphrodite, Cyan Poseidon, Yellow Apollo,
+  and Red Ares for either agent. Each large 80px box contains a code-rendered
+  stick figure whose four-pose loop shows starting, working, input,
+  completion, sleeping, or uncertain connection state. Working is deliberately
+  not one repeated typing loop: Aphrodite tends roses, Apollo plays a lyre,
+  Ares drills with a sword, Artemis fires a bow, Athena weaves, Demeter
+  harvests, Hades summons shades, Hephaestus works an anvil, Hera directs her
+  peacock, Hermes runs a delivery, Poseidon calls the tide, and Zeus hurls
+  lightning. Shared non-working poses keep lifecycle state readable.
+  Reduced-motion users receive a descriptive static pose; **No Agent** is an
+  explicitly empty, desaturated box and never animates. Idle agents actually
+  sleep in an identity-specific setting such as Zeus's cloud, Demeter's wheat,
+  or Hades's underworld rest.
+  Detected child
+  agent processes appear as a bounded count, not as invented conversation
+  history.
 - Opening an item activates the exact project, panel side, dock grouping, tab,
   and terminal. Closed global-terminal projects are reopened when possible.
   **⌘⌥↓** and **⌘⌥↑** cycle through actionable agents.

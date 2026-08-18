@@ -207,8 +207,8 @@
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  gap: 7px;
-  padding: 7px;
+  gap: 10px;
+  padding: 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: var(--fg-dim);
@@ -231,20 +231,68 @@
   background: var(--bg-selected);
 }
 
-.agent-session-icon {
-  width: 18px;
-  height: 18px;
+.agent-session-avatar {
+  position: relative;
+  width: 80px;
+  height: 80px;
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   margin-top: 1px;
-  color: var(--accent);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border-subtle));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-active));
 }
 
-.agent-session-icon svg {
-  width: 16px;
-  height: 16px;
+.agent-session-avatar canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  image-rendering: pixelated;
+  user-select: none;
+}
+
+.agent-session-avatar.blocked.unseen {
+  animation: agent-avatar-blocked 1.25s ease-in-out infinite;
+}
+.agent-session-avatar.subdued {
+  border-style: dashed;
+  background: var(--bg-active);
+  animation: none;
+}
+
+.agent-session-avatar.subdued canvas {
+  filter: grayscale(1);
+  opacity: 0.42;
+  animation: none;
+}
+
+.agent-session-avatar.subdued::after {
+  content: "";
+  position: absolute;
+  width: 29px;
+  height: 1px;
+  background: var(--fg-faint);
+  transform: rotate(-38deg);
+}
+
+@keyframes agent-avatar-blocked {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 0%, transparent);
+  }
+
+  50% {
+    border-color: var(--warning);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 22%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-session-avatar {
+    animation: none !important;
+  }
 }
 
 .agent-session-row-body {

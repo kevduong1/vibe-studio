@@ -282,6 +282,37 @@
   --project-6: #e7b75b;
   --project-7: #f27676;
 
+  /* Code-rendered Agent Sessions terrariums. Canvas pixels cannot consume CSS
+     tokens directly, so AgentAvatar.tsx resolves this palette before drawing. */
+  --agent-avatar-background: color-mix(in srgb, var(--theme-canvas) 82%, var(--theme-chrome));
+  --agent-avatar-wall: color-mix(in srgb, var(--theme-border) 82%, var(--theme-editor));
+  --agent-avatar-floor: color-mix(in srgb, var(--theme-border) 72%, var(--fg-faint));
+  --agent-avatar-figure: var(--fg);
+  --agent-avatar-aphrodite-effect: #ff78b4;
+  --agent-avatar-aphrodite-detail: #ffd0e4;
+  --agent-avatar-apollo-effect: #ffca55;
+  --agent-avatar-apollo-detail: #fff1a8;
+  --agent-avatar-ares-effect: #f05a55;
+  --agent-avatar-ares-detail: #ffc06b;
+  --agent-avatar-artemis-effect: #a7ebd4;
+  --agent-avatar-artemis-detail: #d9e6ff;
+  --agent-avatar-athena-effect: #78a7ff;
+  --agent-avatar-athena-detail: #d7e4ff;
+  --agent-avatar-demeter-effect: #7fcf69;
+  --agent-avatar-demeter-detail: #e4c45b;
+  --agent-avatar-hades-effect: #a878ff;
+  --agent-avatar-hades-detail: #e1d0ff;
+  --agent-avatar-hephaestus-effect: #ff8a4d;
+  --agent-avatar-hephaestus-detail: #ffd070;
+  --agent-avatar-hera-effect: #cf8bff;
+  --agent-avatar-hera-detail: #70d7cf;
+  --agent-avatar-hermes-effect: #f4be50;
+  --agent-avatar-hermes-detail: #e8f5ff;
+  --agent-avatar-poseidon-effect: #55d7f0;
+  --agent-avatar-poseidon-detail: #b6f5ff;
+  --agent-avatar-zeus-effect: #ffd24d;
+  --agent-avatar-zeus-detail: #f5f7ff;
+
   /* commit graph lane palette (cycled by lane index) */
   --graph-0: #7c6ff2;
   --graph-1: #b476f4;

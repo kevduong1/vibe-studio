@@ -16,7 +16,14 @@ import {
   displayLabel,
   type AgentKind,
 } from "../lib/agentState";
-import { useProjectColorVar } from "../lib/projectColors";
+import {
+  agentAvatarName,
+  selectAgentAvatar,
+} from "../lib/agentAvatars";
+import {
+  paletteColor,
+  useProjectColorIndex,
+} from "../lib/projectColors";
 import {
   selectAgentSubagents,
   useAgentRuntimeStore,
@@ -33,13 +40,12 @@ import { useUiStore } from "../stores/ui";
 import { useWorkspacesStore } from "../stores/workspaces";
 import {
   IcChevronRight,
-  IcClaude,
-  IcCodex,
   IcDiff,
   IcInbox,
   IcPlus,
   IcSparkle,
 } from "./icons";
+import { AgentAvatar } from "./AgentAvatar";
 import { useAgentSessionItems } from "./useAgentSessionItems";
 import "./AgentSessionsPanel.css";
 
@@ -86,11 +92,18 @@ function AgentSessionRow({
   now: number;
   onOpen: (terminalId: string) => void;
 }) {
-  const projectColor = useProjectColorVar(item.runtime.workspacePath);
+  const projectColorIndex = useProjectColorIndex(item.runtime.workspacePath);
+  const projectColor = paletteColor(projectColorIndex);
   const childCount = useAgentRuntimeStore(
     (state) => selectAgentSubagents(state, item.runtime.terminalId).length,
   );
   const display = displayAgentState(item.runtime);
+  const avatar = selectAgentAvatar(
+    projectColorIndex,
+    item.runtime.kind,
+    display,
+  );
+  const avatarIdentity = `${agentAvatarName(avatar.deity)} · ${AGENT_NAME[item.runtime.kind]}`;
   const checkState = item.task ? checkStateFor(item.task) : "not_run";
   // Dedicated tabs default to the project basename, so a bare title would
   // just repeat the project badge; fall back to the agent's own name instead.
@@ -106,10 +119,18 @@ function AgentSessionRow({
       className="agent-session-row accent-scope"
       style={{ "--accent": projectColor } as CSSProperties}
       onClick={() => onOpen(item.runtime.terminalId)}
-      title={`Open ${item.title} in ${item.project}`}
+      title={`Open ${item.title} in ${item.project}\n${avatarIdentity} — ${displayLabel(display)}`}
     >
-      <span className="agent-session-icon" aria-hidden="true">
-        {item.runtime.kind === "claude" ? <IcClaude /> : <IcCodex />}
+      <span
+        className={`agent-session-avatar ${display}${avatar.subdued ? " subdued" : ""}${display === "blocked" && !item.runtime.seen ? " unseen" : ""}`}
+        role="img"
+        aria-label={`${avatarIdentity}, ${displayLabel(display)}`}
+        title={`${avatarIdentity} — ${displayLabel(display)}`}
+      >
+        <AgentAvatar
+          avatar={avatar}
+          projectColorIndex={projectColorIndex}
+        />
       </span>
       <span className="agent-session-row-body">
         <span className="agent-session-row-top">

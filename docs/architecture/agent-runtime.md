@@ -335,11 +335,57 @@ docks; workspace-scoped Explorer, Worktrees, Search, Source Control, and
 Memories live below a divider. The view remains available with no workspace
 open, preserves stable live-session sections, routes to the exact
 workspace/group/tab/session, and projects review state beside (never into)
-lifecycle state. An attention filter and badge reuse the strict semantic
-ordering, while active and quiet rows retain stable registration order. The
-titlebar shortcut and ⌘⇧I reveal this view; detailed review/check controls remain
-available through its review action. Task ownership, review evidence, checks,
-and context-peek privacy are specified in
+lifecycle state. Each row also resolves a large 80px pixel-art terrarium
+through the pure `agentAvatars.ts` personality/state model and the
+`AgentAvatar.tsx` Canvas renderer. Character identity is a pure function of the
+project's current palette index and the *detected* runtime kind (not the tab's
+requested/default kind), so changing a project's color updates visible rows
+immediately:
+
+| Project color | Claude | Codex |
+|---|---|---|
+| Blue (0) | Athena | Zeus |
+| Purple (1) | Hera | Hades |
+| Green (2) | Artemis | Demeter |
+| Orange (3) | Hermes | Hephaestus |
+| Pink (4) | Aphrodite | Aphrodite |
+| Cyan (5) | Poseidon | Poseidon |
+| Yellow (6) | Apollo | Apollo |
+| Red (7) | Ares | Ares |
+
+The derived display state selects a four-pose `starting`, `working`, `blocked`,
+`done`, `idle`, or `unknown` stick-figure loop. Starting, blocked, done, idle,
+and unknown own shared readable lifecycle postures—walking in, shrugging,
+celebrating, sleeping, or inspecting a fault. Working is definition-owned:
+each of the twelve deity personalities declares a unique activity and the
+renderer supplies a matching pose, prop, and motion instead of a shared typing
+pose or workstation. The shipped set is rose tending, lyre playing, sword
+drill, archery, weaving, harvesting, summoning shades, smithing, a royal
+peacock audience, courier running, tide calling, and storm calling. Greek
+silhouettes such as a crown, crested helmet, laurel, robe, beard, or winged
+helm keep identity visible throughout. Idle gods recline in identity-specific
+resting places such as Zeus's cloud, Demeter's wheat, or Hades's underworld
+rest. Scenes draw on a
+40×40 integer pixel grid and scale to 80px with nearest-neighbor rendering.
+Scene colors resolve from `theme.css` tokens, so changing the app palette
+redraws the Canvas without embedding component-local colors. A single
+module-level `requestAnimationFrame` clock serves only rows intersecting the
+viewport, and each Canvas redraws only when its four-pose frame actually
+changes; offscreen rows freeze on the state's descriptive pose.
+Only an unseen blocked prompt adds a CSS attention-ring pulse, while an
+acknowledged prompt keeps its waiting loop without the ring. `absent` draws an
+empty, desaturated, slashed, non-animated terrarium next to the explicit **No
+Agent** chip; it must never imply a live quiet agent. `prefers-reduced-motion`
+freezes the most descriptive pose for the state and does not subscribe that
+row to the animation clock. Avatar identity and state are exposed through
+title/ARIA while the textual lifecycle chip remains the authoritative
+non-visual presentation.
+
+An attention filter and badge reuse the strict semantic ordering, while active
+and quiet rows retain stable registration order. The titlebar shortcut and
+⌘⇧I reveal this view; detailed review/check controls remain available through
+its review action. Task ownership, review evidence, checks, and context-peek
+privacy are specified in
 [`attention-review.md`](attention-review.md).
 
 The frontend synchronizes this same privacy-bounded semantic snapshot into
