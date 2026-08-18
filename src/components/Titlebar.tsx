@@ -546,7 +546,9 @@ export default function Titlebar() {
                 expandedGroupId === group.id ||
                 group.workspaces.some(
                   (workspace) =>
-                    workspace.path === renamingPath || workspace.path === tabMenu?.path,
+                    workspace.path === activePath ||
+                    workspace.path === renamingPath ||
+                    workspace.path === tabMenu?.path,
                 )
               }
               onExpandedChange={(expanded) =>
