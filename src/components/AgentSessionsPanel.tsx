@@ -11,7 +11,11 @@ import {
   projectAgentSessions,
   type AgentSessionsSection,
 } from "../lib/agentSessionsView";
-import { displayAgentState, displayLabel } from "../lib/agentState";
+import {
+  displayAgentState,
+  displayLabel,
+  type AgentKind,
+} from "../lib/agentState";
 import { useProjectColorVar } from "../lib/projectColors";
 import {
   selectAgentSubagents,
@@ -31,6 +35,7 @@ import {
   IcChevronRight,
   IcClaude,
   IcCodex,
+  IcDiff,
   IcInbox,
   IcPlus,
   IcSparkle,
@@ -54,6 +59,13 @@ const CHECK_LABEL: Record<CheckState, string> = {
   failed: "Checks Failed",
   cancelled: "Checks Cancelled",
   stale: "Checks Stale",
+};
+
+/** Fallback headline when a session has neither a topic nor a tab title that
+ * says anything the project badge does not already say. */
+const AGENT_NAME: Record<AgentKind, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
 };
 
 function elapsed(since: number, now: number): string {
@@ -80,7 +92,14 @@ function AgentSessionRow({
   );
   const display = displayAgentState(item.runtime);
   const checkState = item.task ? checkStateFor(item.task) : "not_run";
-  const primary = item.topic || item.title;
+  // Dedicated tabs default to the project basename, so a bare title would
+  // just repeat the project badge; fall back to the agent's own name instead.
+  const primary =
+    item.topic ||
+    (item.title !== item.project ? item.title : AGENT_NAME[item.runtime.kind]);
+  const titleNote =
+    item.title !== primary && item.title !== item.project ? item.title : null;
+  const changedFiles = item.task?.latestSnapshot?.changedFiles.length ?? 0;
 
   return (
     <button
@@ -99,8 +118,11 @@ function AgentSessionRow({
             {elapsed(inboxWaitingAt(item), now)}
           </span>
         </span>
-        <span className="agent-session-location truncate">
-          {item.topic ? `${item.title} · ${item.project}` : item.project}
+        <span className="agent-session-location">
+          <span className="agent-session-project truncate">{item.project}</span>
+          {titleNote && (
+            <span className="agent-session-tab truncate">{titleNote}</span>
+          )}
         </span>
         <span className="agent-session-chips">
           <span className={`agent-session-chip lifecycle ${display}`}>
@@ -109,6 +131,17 @@ function AgentSessionRow({
           {item.task && (
             <span className={`agent-session-chip review ${item.task.reviewState}`}>
               {REVIEW_LABEL[item.task.reviewState]}
+            </span>
+          )}
+          {changedFiles > 0 && (
+            <span
+              className="agent-session-chip changes"
+              title={`${changedFiles} changed ${
+                changedFiles === 1 ? "file" : "files"
+              } since this agent started`}
+            >
+              <IcDiff />
+              {changedFiles} {changedFiles === 1 ? "file" : "files"}
             </span>
           )}
           {!!item.task?.latestSnapshot?.conflictedFiles.length && (

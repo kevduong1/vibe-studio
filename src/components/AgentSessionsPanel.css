@@ -276,10 +276,34 @@
 }
 
 .agent-session-location {
-  display: block;
-  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   color: var(--fg-faint);
   font-size: var(--font-size-sm);
+}
+
+/* Project badge: the row's most scannable label, tinted with the project
+   accent the row already scopes (.accent-scope on .agent-session-row). */
+.agent-session-project {
+  min-width: 0;
+  max-width: 100%;
+  flex-shrink: 1;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+}
+
+/* Terminal tab name, shown only when it repeats neither headline nor project. */
+.agent-session-tab {
+  min-width: 0;
+  flex-shrink: 2;
 }
 
 .agent-session-chips {
@@ -297,6 +321,21 @@
   color: var(--fg-dim);
   font-size: 10px;
   line-height: 16px;
+}
+
+/* Changed-file magnitude sits beside the review chip's state, so it stays
+   neutral rather than borrowing a review/lifecycle color. */
+.agent-session-chip.changes {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--bg-active);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-session-chip.changes svg {
+  width: 10px;
+  height: 10px;
 }
 
 .agent-session-chip.lifecycle.blocked,

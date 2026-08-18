@@ -39,6 +39,29 @@ describe("agent pane titles", () => {
     ).toBe("Fix launch titles | Tasks 2/3");
   });
 
+  it("removes Codex's context-remaining status item", () => {
+    expect(
+      agentPaneTitle("codex", "⠹ Context 54% left | europe-trip-2026", [
+        "europe-trip-2026",
+      ]),
+    ).toBe("");
+    expect(agentPaneTitle("codex", "Context 9% left | Fix titles"))
+      .toBe("Fix titles");
+    expect(agentPaneTitle("codex", "context 100% LEFT | Fix titles"))
+      .toBe("Fix titles");
+  });
+
+  it("removes Claude's sparkle glyph and default product-name title", () => {
+    expect(agentPaneTitle("claude", "✳ Claude Code")).toBe("");
+    expect(agentPaneTitle("claude", "✳ Claude Code", ["minimal-ide"])).toBe("");
+    expect(agentPaneTitle("claude", "Claude Code")).toBe("");
+    expect(agentPaneTitle("claude", "✻ Fixing agent titles"))
+      .toBe("Fixing agent titles");
+    expect(agentPaneTitle("claude", "· Fixing agent titles"))
+      .toBe("Fixing agent titles");
+    expect(agentPaneTitle("claude", "✽ minimal-ide", ["minimal-ide"])).toBe("");
+  });
+
   it("keeps nonredundant Codex metadata and Claude topics", () => {
     expect(agentPaneTitle("codex", "⠋ model: gpt-5", ["project"]))
       .toBe("model: gpt-5");
