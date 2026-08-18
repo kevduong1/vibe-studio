@@ -109,10 +109,11 @@ runtime/task/check stores.
 ## Agent Sessions and navigation
 
 The top, global activity-rail item opens a persistent Agent Sessions sidebar
-that aggregates registered live sessions from both docks, including while no
-workspace is open. The activity rail separates this global item from
-workspace-scoped views with a divider. **All** groups actionable, active, and
-quiet rows; active/quiet rows retain stable registration order so normal
+that fills the resizable sidebar width and aggregates registered live sessions
+from both docks, including while no workspace is open. The activity rail
+separates this global item from workspace-scoped views with a divider. **All**
+groups actionable, active, and quiet rows; active/quiet rows retain stable
+registration order so normal
 activity does not move the user's target. **Attention** contains only
 actionable items and uses the strict queue order: Needs Input;
 conflicts/current failed checks;
