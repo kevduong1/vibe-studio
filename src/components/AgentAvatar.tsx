@@ -13,7 +13,6 @@ import {
   type AgentAvatarSelection,
   type AgentAvatarState,
 } from "../lib/agentAvatars";
-import { useAppTheme } from "../lib/appTheme";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
@@ -77,8 +76,7 @@ function useCanvasVisibility(
 
 type SpritePalette = Partial<Record<AgentAvatarPaletteKey, string>>;
 
-/** Theme tokens are read once per effect run (deity/project/theme are effect
- * deps), never per animation frame. */
+/** Theme tokens are read once per effect run, never per animation frame. */
 function resolvePalette(
   canvas: HTMLCanvasElement,
   deity: AgentAvatarDeity,
@@ -173,7 +171,6 @@ export function AgentAvatar({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const reducedMotion = useReducedMotion();
   const visible = useCanvasVisibility(canvasRef);
-  const theme = useAppTheme((state) => state.theme);
   const deityOffset = AGENT_AVATAR_DEITIES.indexOf(avatar.deity) * 137;
 
   useEffect(() => {
@@ -213,7 +210,6 @@ export function AgentAvatar({
     deityOffset,
     projectColorIndex,
     reducedMotion,
-    theme,
     visible,
   ]);
 

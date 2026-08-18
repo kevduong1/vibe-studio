@@ -19,14 +19,11 @@ terminals, a proper diff viewer, and multi-folder workspaces built around
 agent-driven development. Built with [Tauri 2](https://tauri.app) — native
 WKWebView, no bundled Chromium — so it stays light on CPU and RAM.
 
-The interface uses a modern, layered dark workspace: an icon-only activity rail
-rests directly on the global canvas, while rounded inset content surfaces,
+The interface uses a modern, layered Granite workspace: an icon-only activity
+rail rests directly on the global canvas, while rounded inset content surfaces,
 matching editor/diff and terminal canvases, project-tinted accents, and elevated
 command overlays keep dense repository, editor, and terminal workflows easy to
-scan. Pick Midnight, Charcoal, Soft
-Gray, Slate, or one of 18 additional neutral, cool, warm, earth, and jewel
-palettes in **Settings → Appearance**; the app remembers the background palette
-across launches.
+scan. Settings are organized into focused categories instead of one long list.
 
 ## Features
 
