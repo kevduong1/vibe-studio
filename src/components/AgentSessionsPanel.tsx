@@ -32,6 +32,7 @@ import {
   useAgentRuntimeStore,
 } from "../stores/agentRuntime";
 import {
+  agentAttentionRingActive,
   checkStateFor,
   inboxWaitingAt,
   isInboxActionable,
@@ -110,7 +111,7 @@ function AgentSessionRow({
   const avatarIdentity = `${agentAvatarName(avatar.deity)} · ${AGENT_NAME[item.runtime.kind]}`;
   const active = display === "working" || display === "starting";
   const dormant = display === "idle" || display === "unknown";
-  const needsAttention = isInboxActionable(item);
+  const needsAttention = agentAttentionRingActive(item.runtime, item.task);
   const checkState = item.task ? checkStateFor(item.task) : "not_run";
   // Dedicated tabs default to the project basename, so a bare title would
   // just repeat the project badge; fall back to the agent's own name instead.

@@ -3,6 +3,7 @@ import type { GitReviewSnapshot } from "../lib/ipc";
 import type { AgentRuntimeState } from "../lib/agentState";
 import {
   acceptAgentTask,
+  agentAttentionRingActive,
   beginCheckRun,
   checkStateFor,
   changedReviewPaths,
@@ -270,5 +271,15 @@ describe("agent inbox ordering", () => {
     const working = item("active", "working", "unreviewed");
     expect(inboxTier(working)).toBe(4);
     expect(isInboxActionable(working)).toBe(false);
+  });
+
+  it("stops pulsing an acknowledged blocked prompt without removing it from Attention", () => {
+    const unseen = item("blocked", "blocked", "clean", false);
+    const acknowledged = item("blocked", "blocked", "clean", true);
+
+    expect(isInboxActionable(unseen)).toBe(true);
+    expect(agentAttentionRingActive(unseen.runtime, unseen.task)).toBe(true);
+    expect(isInboxActionable(acknowledged)).toBe(true);
+    expect(agentAttentionRingActive(acknowledged.runtime, acknowledged.task)).toBe(false);
   });
 });

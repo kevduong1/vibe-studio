@@ -134,9 +134,12 @@ below it, with Worktrees available as a tab inside Source Control.
   known, elapsed time, textual lifecycle state, and separate
   background/review/check evidence. Idle Claude sessions with live background
   tasks remain safely promptable and read, for example, **Idle · 1 shell
-  running**. The avatar's deity name is printed below the portrait. Working and
-  starting portraits pulse an accent-colored square ring, actionable sessions
-  blink a warning ring, and idle/unknown portraits are partially desaturated.
+  running**. The avatar's deity name is printed below the portrait. A bright
+  accent runner races around working portraits with a fading perimeter trail;
+  starting portraits pulse their square ring, and unacknowledged Needs Input
+  alerts blink in the portrait's own accent color. Acknowledgement stops that
+  blink even while the textual state remains actionable. Idle/unknown portraits
+  are partially desaturated.
   The avatar character follows the source
   project's editable color and the detected agent: Blue uses Athena/Zeus,
   Purple Hera/Hades, Green Artemis/Demeter, and Orange Hermes/Hephaestus for

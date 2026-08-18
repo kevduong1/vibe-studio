@@ -148,10 +148,14 @@ accent-derived selection, focus, and state styling uses that terminal's
 path-keyed project color rather than the currently active workspace's color;
 the selected review detail inherits the same project scope. Sidebar rows show
 the repository, exact checkout/worktree, current branch when known, and deity
-name alongside the topic/tab title. Working/starting avatar tiles pulse a
-project-accent ring, actionable rows blink a warning ring, and idle/unknown
-tiles are partially desaturated; reduced motion freezes those animations while
-preserving their static state styling.
+name alongside the topic/tab title. Working avatar tiles send a bright accent
+head and fading trail around the square perimeter, starting tiles pulse their
+accent ring, and unacknowledged blocked prompts blink in that same tile accent.
+Navigation acknowledgement stops the blink while leaving Needs Input in the
+Attention projection until newer terminal evidence clears the blocked state.
+Other actionable review/check states retain their accent blink until resolved;
+idle/unknown tiles are partially desaturated. Reduced motion freezes those
+animations while preserving their static state styling.
 
 Rows also show Claude's live background-task summary as an orthogonal chip.
 Idle-with-background reads `Idle · 1 shell running`, stays in the normal quiet

@@ -798,6 +798,15 @@ export function inboxTier(item: AgentInboxItem): number {
 
 export const isInboxActionable = (item: AgentInboxItem): boolean => inboxTier(item) <= 3;
 
+/** Attention membership persists while a prompt still semantically blocks,
+ * but its animated alert is acknowledged as soon as the user reaches it. */
+export const agentAttentionRingActive = (
+  runtime: AgentRuntimeState,
+  task?: AgentTask,
+): boolean =>
+  agentAttentionTier(runtime, task) <= 3 &&
+  !(displayAgentState(runtime) === "blocked" && runtime.seen);
+
 export const inboxWaitingAt = (item: AgentInboxItem): number => {
   const tier = inboxTier(item);
   if (tier === 1 || (tier === 3 && displayAgentState(item.runtime) === "done")) {

@@ -445,9 +445,13 @@ module-level `requestAnimationFrame` clock serves only rows intersecting the
 viewport, each Canvas redraws only when its four-frame index actually changes,
 and a per-deity phase offset keeps rows from blinking in lockstep; offscreen
 rows freeze on the state's descriptive frame.
-Working/starting tiles add a slow project-accent square-ring pulse. Any row the
-review model currently considers actionable (blocked/Done/conflict/check/review
-attention) uses a faster blinking warning ring instead, while idle/unknown
+Working tiles run a bright project-accent head around the square perimeter in
+under a second, followed by a continuously fading tail; starting tiles keep the
+slow square-ring pulse. Unacknowledged blocked prompts use a faster blink in the
+tile's project accent; navigation acknowledgement stops that animation without
+lying about the still-blocked lifecycle or removing the row from Attention.
+Other actionable Done/conflict/check/review states retain their accent blink
+until their underlying state is resolved, while idle/unknown
 portraits are partially desaturated. `absent` draws an empty, desaturated,
 slashed tile next to the explicit **No Agent** chip; it must never imply a live
 quiet agent. `prefers-reduced-motion` freezes the most descriptive pose, does

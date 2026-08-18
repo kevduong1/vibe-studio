@@ -302,7 +302,50 @@
     inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
     inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
     0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
-  animation: agent-avatar-active-ring 1.8s ease-in-out infinite;
+}
+
+.agent-session-avatar.starting {
+  animation: agent-avatar-starting-ring 1.8s ease-in-out infinite;
+}
+
+@property --agent-avatar-flow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.agent-session-avatar.working {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border-subtle));
+}
+
+.agent-session-avatar.working::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  padding: 2px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--agent-avatar-flow-angle),
+    transparent 0deg,
+    transparent 246deg,
+    color-mix(in srgb, var(--accent) 7%, transparent) 262deg,
+    color-mix(in srgb, var(--accent) 24%, transparent) 292deg,
+    color-mix(in srgb, var(--accent) 58%, transparent) 330deg,
+    color-mix(in srgb, var(--fg) 58%, var(--accent)) 356deg,
+    var(--accent) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent) 62%, transparent));
+  animation: agent-avatar-working-flow 0.95s linear infinite;
 }
 
 .agent-session-avatar.done {
@@ -330,12 +373,16 @@
 }
 
 .agent-session-avatar.needs-attention {
-  border-color: var(--warning);
+  border-color: var(--accent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
     inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
-    0 0 0 3px color-mix(in srgb, var(--warning) 34%, transparent);
+    0 0 0 3px color-mix(in srgb, var(--accent) 34%, transparent);
   animation: agent-avatar-attention-ring 0.9s steps(1, end) infinite;
+}
+
+.agent-session-avatar.needs-attention::after {
+  content: none;
 }
 
 .agent-session-avatar.subdued {
@@ -364,7 +411,7 @@
   transform: rotate(-38deg);
 }
 
-@keyframes agent-avatar-active-ring {
+@keyframes agent-avatar-starting-ring {
   0%,
   100% {
     box-shadow:
@@ -382,19 +429,25 @@
   }
 }
 
+@keyframes agent-avatar-working-flow {
+  to {
+    --agent-avatar-flow-angle: 360deg;
+  }
+}
+
 @keyframes agent-avatar-attention-ring {
   0%,
   48% {
-    border-color: var(--warning);
+    border-color: var(--accent);
     box-shadow:
       inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
       inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent),
-      0 0 0 3px color-mix(in srgb, var(--warning) 34%, transparent);
+      0 0 0 3px color-mix(in srgb, var(--accent) 34%, transparent);
   }
 
   49%,
   100% {
-    border-color: color-mix(in srgb, var(--warning) 24%, var(--border-subtle));
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--border-subtle));
     box-shadow:
       inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
       inset 0 -14px 24px color-mix(in srgb, var(--theme-canvas) 28%, transparent);
@@ -402,7 +455,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-session-avatar {
+  .agent-session-avatar,
+  .agent-session-avatar::after {
     animation: none !important;
   }
 }
