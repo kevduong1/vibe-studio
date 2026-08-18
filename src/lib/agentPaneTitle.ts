@@ -31,10 +31,19 @@ const CODEX_RUN_STATES = new Set([
   "awaiting approval",
 ]);
 
+/** Claude Code prefixes its OSC 0/2 title with one frame of its brand/spinner
+ * glyph family. Talos already renders a Claude icon beside the topic, so the
+ * glyph would only double the sparkle. */
+const CLAUDE_TITLE_GLYPHS = new Set(["·", "✢", "✳", "✶", "✻", "✽"]);
+
+/** Claude Code's title text when the session has no topic yet: the product
+ * name, which says nothing a Claude-labelled pane does not already say. */
+const CLAUDE_DEFAULT_TITLE = "claude code";
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Rendered forms of Codex's `context-remaining` / `context-used` title
  * fields. They are useful meters in the TUI but not a conversation topic. */
-const CODEX_CONTEXT_METER = /^Context (?:100|[0-9]{1,2})% (?:left|used)$/i;
+const CODEX_CONTEXT_METER = /^context\s+(?:100|[0-9]{1,2})%\s+(?:left|used)$/i;
 
 function stripCodexActivityFrame(title: string): string {
   const chars = [...title];
@@ -53,6 +62,16 @@ function stripCodexActivityFrame(title: string): string {
   return before && after ? `${before} | ${after}` : before || after;
 }
 
+/** Only a leading glyph separated by whitespace is Claude's marker; the same
+ * characters inside prose belong to the topic the user is reading. */
+function stripClaudeTitleGlyph(title: string): string {
+  const chars = [...title];
+  if (chars.length < 2) return title;
+  if (!CLAUDE_TITLE_GLYPHS.has(chars[0])) return title;
+  if (!/\s/u.test(chars[1])) return title;
+  return chars.slice(1).join("").trimStart();
+}
+
 export function agentPaneTitle(
   kind: AgentKind,
   rawTitle: string,
@@ -60,11 +79,16 @@ export function agentPaneTitle(
 ): string {
   let title = rawTitle.trim();
   if (!title) return "";
+  const redundant = new Set(
+    redundantTitles.map((candidate) => candidate?.trim()).filter(Boolean),
+  );
+  if (kind === "claude") {
+    title = stripClaudeTitleGlyph(title).trim();
+    if (!title || title.toLowerCase() === CLAUDE_DEFAULT_TITLE) return "";
+    if (redundant.has(title)) return "";
+  }
   if (kind === "codex") {
     title = stripCodexActivityFrame(title);
-    const redundant = new Set(
-      redundantTitles.map((candidate) => candidate?.trim()).filter(Boolean),
-    );
     // Codex joins configured terminal-title items with ` | `. Keep useful
     // metadata (a named thread, branch, model, task progress), but remove
     // values Talos already owns, context meters, and the UUID fallback of an
