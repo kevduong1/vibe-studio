@@ -108,6 +108,11 @@ launch call itself, not from `changedAt`) to reach exec before a clean
 no-match snapshot may declare it an ordinary shell — bookkeeping updates and
 query outages during that window must not shorten it. Dedicated Codex tabs
 deliberately default to `--yolo` in both docks so they start fully autonomous.
+Built-in Codex invocations also receive a launch-scoped
+`tui.terminal_title = ["activity", "thread-title", "task-progress"]` override.
+It makes Talos-owned topics deterministic without rewriting the user's global
+Codex configuration; custom definitions and agents launched manually in a
+shell retain their own title configuration.
 The launch sheet exposes explicit permission/sandbox choices but preserves
 this initial default unless the product decision changes explicitly.
 
@@ -308,10 +313,11 @@ when it differs, state, reason, authority, transition time, and matched rule
 ID. Codex's terminal-title `activity` item continues to feed generic activity
 detection, but presentation removes its braille spinner and blinking
 action-required phases, configured run-state and project duplicates, and the
-UUID fallback of an unnamed thread; any nonredundant thread name, branch,
-model, or task metadata normally remains visible. OSC title strings carry no
-field identity, so a user-authored value that is itself an exact filtered
-run-state or UUID is intentionally treated as generated noise.
+context-remaining/context-used meters and UUID fallback of an unnamed thread;
+any nonredundant thread name, branch, model, or task metadata normally remains
+visible. OSC title strings carry no field identity, so a user-authored value
+that is itself an exact filtered run-state, context meter, or UUID is
+intentionally treated as generated noise.
 Claude's contextual title is retained verbatim. Titles are presentation-only
 and never override process/screen lifecycle authority.
 Workspace tabs, workspace families,

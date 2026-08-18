@@ -31,7 +31,8 @@ and **Compare Changes** actions. For Codex, Rust queries the newest local Codex
 state database read-only and returns only opaque IDs/timestamps whose exact cwd,
 branch, launch boundary, terminal, and live occupant generation match. Talos
 stores a reference only when exactly one candidate exists. Restore validates exact cwd and unarchived state,
-asks first, then launches `codex --yolo resume <id>` in a terminal shell. An
+asks first, then launches `codex --yolo resume <id>` with Talos's scoped
+topic-title configuration in a terminal shell. An
 invalid, absent, or ambiguous reference opens a fresh shell with an explanation;
 the app never scrapes output, guesses, or uses `--last`.
 
@@ -224,7 +225,8 @@ sandbox, environment, extra arguments, and folder choice. Conversation restore
 is an explicit isolated-task action, not an unused launch-profile promise.
 
 The built-in Codex definition visibly retains `codex --yolo` as its initial
-default. Choosing explicit permission or sandbox controls replaces `--yolo`.
+default and adds the same launch-scoped topic-title configuration as ordinary
+Codex tabs. Choosing explicit permission or sandbox controls replaces `--yolo`.
 The launch sheet resolves executables through the login-shell PATH; Integrations
 shows a bounded version probe, health, and capabilities. Custom commands get
 stable IDs, and their exact executable basenames participate in runtime

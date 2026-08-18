@@ -1,9 +1,9 @@
 /**
  * The Global Terminals flavor of the generic Dock: panes attach registry
  * sessions spawned in their bound project's directory (TERM_PROGRAM
- * masquerade + activity tracking), wear a session-summary badge (the live
- * OSC 0/2 title — Claude Code's auto-generated topic — hidden until one is
- * set; tabs rename via the Dock's double-click), highlight when their
+ * masquerade + activity tracking), wear a session-topic badge (the cleaned
+ * live OSC 0/2 title, hidden until one is useful; tabs rename via the Dock's
+ * double-click), highlight when their
  * project is the active workspace, and clicking them switches the app to
  * that project (reopening it if it was closed → "disconnected" ⊘ until
  * then). Right-click a tab for the per-terminal notifications toggle
@@ -57,7 +57,7 @@ const useConnected = (workspacePath: string): boolean =>
   useWorkspacesStore((s) => s.workspaces.some((w) => w.path === workspacePath));
 
 // ---------------------------------------------------------------------------
-// Badge overlay (live session summary — hidden until the agent sets a title)
+// Badge overlay (live session topic — hidden until the agent sets a title)
 // ---------------------------------------------------------------------------
 
 function AgentBadge({
@@ -68,15 +68,15 @@ function AgentBadge({
   connected: boolean;
 }) {
   const projectColor = useProjectColorVar(terminal.workspacePath);
-  // The session's live OSC 0/2 title — Claude Code's auto-generated topic
-  // summary. No title yet (fresh shell, agent not running) = no badge; the
+  // The session's cleaned live OSC 0/2 topic. No title yet (fresh shell,
+  // agent not running) = no badge; the
   // tab keeps the stable project name. Clicks fall through to the pane
   // (focus + switch-to-project), so the badge is display-only.
-  const rawSummary = useAgentTerminalsStore((s) => s.paneTitle[terminal.id]);
+  const rawTopic = useAgentTerminalsStore((s) => s.paneTitle[terminal.id]);
   const runtime = useAgentRuntimeStore((s) => s.states[terminal.id]);
-  const summary = agentPaneTitle(
+  const topic = agentPaneTitle(
     runtime?.kind ?? (terminal.kind === "shell" ? "claude" : terminal.kind),
-    rawSummary ?? "",
+    rawTopic ?? "",
     [terminal.title, agentTitleBase(terminal.workspacePath), basename(terminal.workspacePath)],
   );
   const display = displayAgentState(runtime);
@@ -84,19 +84,19 @@ function AgentBadge({
     display === "working" || display === "starting" || display === "blocked" || display === "done"
       ? displayLabel(display)
       : "";
-  if (!summary && !semantic) return null;
+  if (!topic && !semantic) return null;
 
   return (
     <div
       className="agent-badge"
       // Project identity: a soft project-tinted outline (softened in CSS).
       style={{ "--project-color": projectColor } as CSSProperties}
-      title={`${runtime ? agentStateTooltip(runtime) : "No Agent"}${summary ? `\nSummary: ${summary}` : ""}\n${terminal.workspacePath}${connected ? "" : " — project not open"}`}
+      title={`${runtime ? agentStateTooltip(runtime) : "No Agent"}${topic ? `\nTopic: ${topic}` : ""}\n${terminal.workspacePath}${connected ? "" : " — project not open"}`}
     >
       {!connected && <IcDisconnected className="agent-badge-disconnected" />}
       <span className="agent-badge-state">{semantic}</span>
-      {semantic && summary && <span className="agent-badge-separator">·</span>}
-      {summary && <span className="truncate">{summary}</span>}
+      {semantic && topic && <span className="agent-badge-separator">·</span>}
+      {topic && <span className="truncate">{topic}</span>}
     </div>
   );
 }

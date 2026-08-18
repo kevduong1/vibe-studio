@@ -32,6 +32,9 @@ const CODEX_RUN_STATES = new Set([
 ]);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Rendered forms of Codex's `context-remaining` / `context-used` title
+ * fields. They are useful meters in the TUI but not a conversation topic. */
+const CODEX_CONTEXT_METER = /^Context (?:100|[0-9]{1,2})% (?:left|used)$/i;
 
 function stripCodexActivityFrame(title: string): string {
   const chars = [...title];
@@ -64,7 +67,8 @@ export function agentPaneTitle(
     );
     // Codex joins configured terminal-title items with ` | `. Keep useful
     // metadata (a named thread, branch, model, task progress), but remove
-    // values Talos already owns plus the UUID fallback of an unnamed thread.
+    // values Talos already owns, context meters, and the UUID fallback of an
+    // unnamed thread.
     // Splitting only on whitespace-padded pipes leaves ordinary prose alone.
     title = title
       .split(/\s+\|\s+/)
@@ -74,6 +78,7 @@ export function agentPaneTitle(
           item &&
           !redundant.has(item) &&
           !UUID.test(item) &&
+          !CODEX_CONTEXT_METER.test(item) &&
           !CODEX_ACTION_REQUIRED.has(item.toLowerCase()) &&
           !CODEX_RUN_STATES.has(item.toLowerCase()),
       )

@@ -22,6 +22,7 @@ import {
   combineAgentPreludes,
   isolatedTaskAgentPrelude,
 } from "./agentLaunchProgram";
+import { codexCliCommand } from "./codexTerminalTitle";
 import { isolatedTaskForPath } from "../stores/isolatedTasks";
 
 /** The (possibly already-running) session for a workspace terminal. */
@@ -54,8 +55,9 @@ export function getOrCreateWorkspaceSession(
 
 const AGENT_COMMAND = {
   claude: "claude",
-  // Intentional product default: dedicated Codex tabs start fully autonomous.
-  codex: "codex --yolo",
+  // Intentional product default: dedicated Codex tabs start fully autonomous;
+  // the launch-scoped title list keeps the badge focused on conversation topic.
+  codex: codexCliCommand("--yolo"),
 } as const;
 
 /** Create a project-bound shell or agent terminal and start the selected

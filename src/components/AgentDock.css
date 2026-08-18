@@ -1,4 +1,4 @@
-/* Agent-dock flavor styling: session-summary badge + active-project
+/* Agent-dock flavor styling: session-topic badge + active-project
    highlight. (Generic dock chrome lives in Dock.css.) */
 
 /* Solid accent ring = this terminal's project is the active workspace;
@@ -26,7 +26,7 @@
   flex-shrink: 0;
 }
 
-/* --- session-summary badge (live OSC title; absent until one is set) ---- */
+/* --- session-topic badge (live OSC title; absent until one is set) ---- */
 
 .agent-badge {
   position: absolute;

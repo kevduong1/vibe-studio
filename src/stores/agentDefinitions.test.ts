@@ -15,7 +15,11 @@ describe("agent launch profiles", () => {
   it("keeps codex --yolo as the visible initial default", () => {
     const definition = BUILTIN_AGENT_DEFINITIONS.find((item) => item.id === "builtin.codex")!;
     const profile = BUILTIN_LAUNCH_PROFILES.find((item) => item.id === "builtin.codex.yolo")!;
-    expect(launchCommand(definition, profile).command).toContain("'--yolo'");
+    const command = launchCommand(definition, profile).command;
+    expect(command).toContain("'--yolo'");
+    expect(command).toContain(
+      `'tui.terminal_title=["activity","thread-title","task-progress"]'`,
+    );
   });
 
   it("replaces yolo when the visible profile chooses explicit controls", () => {
@@ -76,6 +80,8 @@ describe("agent launch profiles", () => {
     const registry = buildAgentDetectionRegistry([custom]);
     expect(registry.kindByExecutable.get("acme-codex")).toBe("codex");
     expect(registry.executableNames).toEqual(expect.arrayContaining(["claude", "codex", "acme-codex"]));
+    expect(launchCommand(custom, BUILTIN_LAUNCH_PROFILES[1]).command)
+      .not.toContain("tui.terminal_title");
   });
 
   it("fails closed for ambiguous custom names without disabling canonical names", () => {

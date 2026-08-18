@@ -44,6 +44,7 @@ export {
   MAX_REVIEW_FEEDBACK_COMMENT_CHARS,
 } from "./isolatedTaskSafety";
 import { quoteShellArgument } from "./agentLaunchProgram";
+import { codexCliCommand } from "./codexTerminalTitle";
 import { basename, dirname } from "./path";
 import {
   withWorktreePathsLocked,
@@ -659,7 +660,7 @@ export async function restoreTaskConversation(task: IsolatedTask): Promise<void>
         task.worktreePath,
         "codex",
         undefined,
-        `codex --yolo resume ${quoteShellArgument(ref.id)}`,
+        codexCliCommand("--yolo", "resume", ref.id),
       );
       useIsolatedTasksStore.getState().patchTask(task.id, { agentTerminalId: terminalId });
       return;
@@ -742,7 +743,7 @@ export async function dispatchTaskPlanStep(
         ? `${prompt}\n\nThis is Best-of-N candidate ${candidate} of ${step.candidateCount}; do not coordinate with sibling candidates.`
         : prompt;
       const agentCommand = kind === "codex"
-        ? `codex --yolo ${quoteShellArgument(candidatePrompt)}`
+        ? codexCliCommand("--yolo", candidatePrompt)
         : `claude ${quoteShellArgument(candidatePrompt)}`;
       const child = await createIsolatedTask({
         name,

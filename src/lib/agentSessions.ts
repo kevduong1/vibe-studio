@@ -21,6 +21,7 @@ import {
   combineAgentPreludes,
   isolatedTaskAgentPrelude,
 } from "./agentLaunchProgram";
+import { codexCliCommand } from "./codexTerminalTitle";
 import { isolatedTaskForPath } from "../stores/isolatedTasks";
 
 /** The (possibly already-running) session for an agent terminal. */
@@ -77,8 +78,9 @@ export function closeGlobalGrouping(groupingId: string): void {
  *  leaves a normal shell in the project root. */
 const AGENT_COMMAND: Record<Exclude<TerminalKind, "shell">, string> = {
   claude: "claude",
-  // Intentional product default: dedicated Codex tabs start fully autonomous.
-  codex: "codex --yolo",
+  // Intentional product default: dedicated Codex tabs start fully autonomous;
+  // the launch-scoped title list keeps the badge focused on conversation topic.
+  codex: codexCliCommand("--yolo"),
 };
 
 /**

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AgentKind } from "../lib/agentState";
 import { AGENT_PROFILES } from "../lib/agentProfiles";
+import { codexTerminalTitleArguments } from "../lib/codexTerminalTitle";
 
 const STORAGE_KEY = "talos:agent-definitions";
 
@@ -311,15 +312,18 @@ export function launchCommand(
   definition: AgentDefinition,
   profile: AgentLaunchProfile,
 ): { command: string; environmentPrelude: string | null } {
-  const args = definition.defaultArguments.filter(
-    (argument) =>
-      !(
-        argument === "--yolo" &&
-        definition.detectionProfile === "codex" &&
-        ((profile.permissionMode && definition.capabilities.permissions) ||
-          (profile.sandbox && definition.capabilities.sandbox))
-      ),
-  );
+  const args = [
+    ...(definition.id === "builtin.codex" ? codexTerminalTitleArguments() : []),
+    ...definition.defaultArguments.filter(
+      (argument) =>
+        !(
+          argument === "--yolo" &&
+          definition.detectionProfile === "codex" &&
+          ((profile.permissionMode && definition.capabilities.permissions) ||
+            (profile.sandbox && definition.capabilities.sandbox))
+        ),
+    ),
+  ];
   if (profile.model && definition.capabilities.models) args.push("--model", profile.model);
   if (
     profile.reasoning &&

@@ -118,7 +118,7 @@ const TerminalPane = memo(function TerminalPane({
       {agentPresent && (semantic || topic) && (
         <div
           className="agent-badge"
-          title={`${runtime ? agentStateTooltip(runtime) : "No Agent"}${topic ? `\nSummary: ${topic}` : ""}`}
+          title={`${runtime ? agentStateTooltip(runtime) : "No Agent"}${topic ? `\nTopic: ${topic}` : ""}`}
         >
           {semantic && <span className="agent-badge-state">{semantic}</span>}
           {semantic && topic && <span className="agent-badge-separator">·</span>}

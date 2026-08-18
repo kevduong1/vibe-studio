@@ -28,6 +28,20 @@ describe("agent pane titles", () => {
     ).toBe("");
   });
 
+  it("removes Codex context meters without swallowing ordinary topic prose", () => {
+    expect(
+      agentPaneTitle(
+        "codex",
+        "Ready | 01a01178-b445-74c2-bc06-10a8dd0a97cf | Context 100% left",
+      ),
+    ).toBe("");
+    expect(agentPaneTitle("codex", "Fix titles | Context 42% left | Tasks 1/3"))
+      .toBe("Fix titles | Tasks 1/3");
+    expect(agentPaneTitle("codex", "Context 12% used")).toBe("");
+    expect(agentPaneTitle("codex", "Explain Context 100% left in the screenshot"))
+      .toBe("Explain Context 100% left in the screenshot");
+  });
+
   it("removes both phases of Codex's activity action-required title", () => {
     expect(agentPaneTitle("codex", "[ ! ] Action Required | minimal-ide", ["minimal-ide"]))
       .toBe("");
