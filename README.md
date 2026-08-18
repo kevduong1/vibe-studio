@@ -364,6 +364,10 @@ Repository checks come from `.vscode/tasks.json`:
   preserving their responsive CSS dimensions
 - The toolbar also supports back/forward, reload, address changes, and opening
   the page externally
+- Sign-in redirects stay inside the isolated preview. Popup-based sign-in opens
+  an app-owned WebKit window that shares the preview's cookies and can return
+  its result to the localhost page; the explicit external button still opens
+  the current page in your default browser
 - Expo projects must run their web target (for example,
   `npx expo start --web`) before they can appear as an interactive preview;
   native-only app behavior still requires Apple Simulator or a physical device

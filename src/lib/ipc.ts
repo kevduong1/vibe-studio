@@ -52,6 +52,7 @@ export interface PreviewLoadEvent {
 
 export interface PreviewExternalEvent {
   id: string;
+  /** Non-browser protocol rejected by the isolated preview webview. */
   url: string;
 }
 
