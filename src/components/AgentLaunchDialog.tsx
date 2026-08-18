@@ -26,6 +26,11 @@ export default function AgentLaunchDialog({
 }) {
   useNativeOverlay();
   const customProfiles = useAgentDefinitionsStore((state) => state.customProfiles);
+  const isGitRepository = useWorkspacesStore(
+    (state) => state.workspaces.find(
+      (workspace) => workspace.path === request.workspacePath,
+    )?.isGitRepository ?? false,
+  );
   const profiles = useMemo(() => allLaunchProfiles(), [customProfiles]);
   const initial =
     profiles.find(
@@ -46,6 +51,8 @@ export default function AgentLaunchDialog({
     : null;
   const built = definition && draft ? launchCommand(definition, draft) : null;
   const invalidEnvironment = invalidEnvironmentLines(environmentText);
+  const worktreeUnavailable =
+    draft?.folderChoice === "new-worktree" && !isGitRepository;
 
   useEffect(() => {
     if (selected) {
@@ -84,6 +91,7 @@ export default function AgentLaunchDialog({
       !built ||
       detectionConflict ||
       health !== "available" ||
+      worktreeUnavailable ||
       invalidEnvironment.length > 0
     ) return;
     launched.current = true;
@@ -141,7 +149,9 @@ export default function AgentLaunchDialog({
               <label>Folder
                 <select value={draft.folderChoice} onChange={(event) => patch({ folderChoice: event.target.value as AgentLaunchProfile["folderChoice"] })}>
                   <option value="current">Current workspace</option>
-                  <option value="new-worktree">New isolated worktree…</option>
+                  <option value="new-worktree" disabled={!isGitRepository}>
+                    New isolated worktree…
+                  </option>
                 </select>
               </label>
             </div>
@@ -158,13 +168,16 @@ export default function AgentLaunchDialog({
             {invalidEnvironment.length > 0 && <div className="agent-launch-error">
               Invalid environment assignment on {invalidEnvironment.length === 1 ? "line" : "lines"} {invalidEnvironment.join(", ")}.
             </div>}
+            {worktreeUnavailable && <div className="agent-launch-error">
+              Initialize Git in Source Control before launching into an isolated worktree.
+            </div>}
             <div className="agent-launch-command"><code>{built?.command}</code></div>
             <label>Save edited profile as<input value={rememberName} placeholder="Optional profile name" onChange={(event) => setRememberName(event.target.value)} /></label>
           </>
         )}
         <div className="agent-launch-actions">
           <button onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={!definition || Boolean(detectionConflict) || health !== "available" || invalidEnvironment.length > 0} onClick={launch}>Launch</button>
+          <button className="primary" disabled={!definition || Boolean(detectionConflict) || health !== "available" || worktreeUnavailable || invalidEnvironment.length > 0} onClick={launch}>Launch</button>
         </div>
       </div>
     </div>

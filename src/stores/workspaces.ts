@@ -1,9 +1,9 @@
 /**
- * Workspace registry: one workspace per open repository, each owning its own
- * repo/editor/terminal store instances. Components inside a workspace's tree
- * reach "their" stores via WorkspaceContext (useWorkspace / useRepo /
- * useEditor / useTerminal); global chrome (titlebar, status bar) follows the
- * active workspace via useActiveWorkspace.
+ * Workspace registry: one workspace per open folder, each owning its own
+ * optional-repo/editor/terminal/search store instances. Components inside a
+ * workspace's tree reach "their" stores via WorkspaceContext (useWorkspace /
+ * useRepo / useEditor / useTerminal); global chrome (titlebar, status bar)
+ * follows the active workspace via useActiveWorkspace.
  *
  * Invariant: activePath is always a member of `workspaces` while the list is
  * non-empty, and null when it is empty.
@@ -11,7 +11,7 @@
 import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
 import { create, useStore } from "zustand";
 import { message } from "@tauri-apps/plugin-dialog";
-import { gitOpen } from "../lib/ipc";
+import { workspaceOpen } from "../lib/ipc";
 import { disposePreviewsWithFallback } from "../lib/previewDisposal";
 import { projectDisplayName } from "../lib/projectNames";
 import { disposeWorkspaceLsp, setActiveLspWorkspace } from "../lib/lsp/servers";
@@ -38,9 +38,11 @@ const RECENT_KEY = "talos:recent-repos";
 const SESSION_KEY = "talos:workspaces";
 
 export interface Workspace {
-  /** Workdir root (canonical, from git_open). Doubles as the workspace id.
+  /** Canonical folder root (or discovered Git workdir root). Workspace id.
    *  Display names come from lib/projectNames (basename, user-renameable). */
   path: string;
+  /** Whether Git-backed source control/worktree features are available. */
+  isGitRepository: boolean;
   /** Header-tab presentation only; never used as workspace identity. */
   tabGroupId: string;
   repo: RepoStore;
@@ -54,8 +56,9 @@ interface WorkspacesState {
   activePath: string | null;
 
   /**
-   * Open a repo as a workspace (validating it first; throws if not a repo).
-   * Re-opening an already-open repo just activates its workspace.
+   * Open a folder as a workspace (validating it first). Paths within an
+   * existing repo resolve to its workdir root; ordinary folders stay rooted
+   * at the selected path. Re-opening a workspace just activates it.
    * `activate: false` (session restore) never steals the current selection —
    * it only sets the active workspace when none is active yet.
    */
@@ -65,7 +68,7 @@ interface WorkspacesState {
   setActive: (path: string) => void;
 }
 
-export const getRecentRepos = (): string[] => {
+export const getRecentWorkspaces = (): string[] => {
   try {
     return JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
   } catch {
@@ -73,8 +76,8 @@ export const getRecentRepos = (): string[] => {
   }
 };
 
-const pushRecentRepo = (path: string) => {
-  const list = [path, ...getRecentRepos().filter((p) => p !== path)].slice(0, 8);
+const pushRecentWorkspace = (path: string) => {
+  const list = [path, ...getRecentWorkspaces().filter((p) => p !== path)].slice(0, 8);
   localStorage.setItem(RECENT_KEY, JSON.stringify(list));
 };
 
@@ -176,20 +179,40 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
   activePath: null,
 
   openWorkspace: async (path, activate = true) => {
-    const info = await gitOpen(path); // throws if not a repo
+    const info = await workspaceOpen(path);
     const root = info.root;
     // No awaits between this check and set(): concurrent opens of the same
-    // repo (StrictMode dev double-mount) cannot both pass it.
+    // folder (StrictMode dev double-mount) cannot both pass it.
     const existing = get().workspaces.find((w) => w.path === root);
     if (existing) {
       if (activate) get().setActive(root);
-      pushRecentRepo(root);
+      pushRecentWorkspace(root);
       return;
     }
+    const repo = createRepoStore(root, info.repo !== null, (repoInfo) => {
+      set((state) => {
+        if (!state.workspaces.some((workspace) => workspace.path === root)) return state;
+        const next = {
+          ...state,
+          workspaces: state.workspaces.map((workspace) =>
+            workspace.path === root
+              ? {
+                  ...workspace,
+                  isGitRepository: true,
+                  tabGroupId: repoInfo.tabGroupId,
+                }
+              : workspace,
+          ),
+        };
+        saveSession(next);
+        return next;
+      });
+    });
     const ws: Workspace = {
       path: root,
-      tabGroupId: info.tabGroupId,
-      repo: createRepoStore(root),
+      isGitRepository: info.repo !== null,
+      tabGroupId: info.repo?.tabGroupId ?? `folder:${root}`,
+      repo,
       editor: createEditorStore(pendingEditorSessions.get(root)),
       terminal: createTerminalStore(),
       search: createSearchStore(root),
@@ -205,7 +228,7 @@ export const useWorkspacesStore = create<WorkspacesState>((set, get) => ({
       saveSession(next);
       return next;
     });
-    pushRecentRepo(root);
+    pushRecentWorkspace(root);
     editorSessionUnsubscribers.set(
       ws.editor,
       ws.editor.subscribe(() => saveSession(get())),
@@ -323,8 +346,8 @@ useWorkspacesStore.subscribe((s, prev) => {
 
 /**
  * Agent-terminal navigation: activate the terminal's project, reopening it
- * if it was closed (a disconnected terminal's repo may even be gone — open
- * failures surface via dialog, since no repo store exists to carry the
+ * if it was closed (a disconnected terminal's folder may even be gone — open
+ * failures surface via dialog, since no workspace store exists to carry the
  * error for an unopened path).
  */
 export async function switchToProject(path: string): Promise<void> {
@@ -354,7 +377,7 @@ export async function switchToProject(path: string): Promise<void> {
  */
 export async function restoreSession(): Promise<void> {
   const session = startupSession;
-  const paths = session ? session.paths : getRecentRepos().slice(0, 1);
+  const paths = session ? session.paths : getRecentWorkspaces().slice(0, 1);
   const store = useWorkspacesStore;
 
   // The restore itself only ever activates from the empty state (null →
@@ -368,7 +391,7 @@ export async function restoreSession(): Promise<void> {
     }
   });
 
-  /** The activation the restore itself caused (first repo opened into an
+  /** The activation the restore itself caused (first folder opened into an
    *  empty app), as opposed to one the user made meanwhile. */
   let autoActivated: string | null = null;
   try {
@@ -430,7 +453,7 @@ export function useSearch<T>(selector: (s: SearchState) => T): T {
 
 /**
  * The active workspace, for chrome living outside the workspace trees
- * (titlebar, status bar, activity bar). Null only when no repo is open.
+ * (titlebar, status bar, activity bar). Null only when no folder is open.
  */
 export function useActiveWorkspace(): Workspace | null {
   return useWorkspacesStore(
@@ -439,7 +462,7 @@ export function useActiveWorkspace(): Workspace | null {
 }
 
 /**
- * Open editor-tab count of the ACTIVE workspace (0 when no repo is open), for
+ * Open editor-tab count of the ACTIVE workspace (0 when no folder is open), for
  * chrome that sizes itself around the editor card (App.tsx / Panel.tsx).
  * Subscribed by hand rather than through `useStore` because the store to watch
  * changes with the active workspace and can be absent entirely.

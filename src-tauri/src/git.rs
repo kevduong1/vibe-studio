@@ -43,6 +43,16 @@ pub struct RepoInfo {
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceInfo {
+    /// Canonical folder root. Paths inside an existing repository retain the
+    /// historical behavior of opening that repository's workdir root.
+    pub root: String,
+    /// Git capability is optional: ordinary folders remain valid workspaces.
+    pub repo: Option<RepoInfo>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileStatus {
     pub path: String,
     pub orig_path: Option<String>,
@@ -167,6 +177,57 @@ pub struct GitWorktreeCreateResult {
 
 fn open_repo(path: &str) -> Result<Repository, String> {
     Repository::discover(path).map_err(|e| e.to_string())
+}
+
+fn repo_info(repo: &Repository) -> Result<RepoInfo, String> {
+    let wd = repo
+        .workdir()
+        .ok_or_else(|| "repository has no working directory (bare repo)".to_string())?;
+    let mut root = wd.to_string_lossy().into_owned();
+    while root.len() > 1 && root.ends_with('/') {
+        root.pop();
+    }
+    Ok(RepoInfo {
+        root,
+        tab_group_id: repo_tab_group_id(repo),
+    })
+}
+
+fn open_workspace(path: &str) -> Result<WorkspaceInfo, String> {
+    let requested = PathBuf::from(path)
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !requested.is_dir() {
+        return Err(format!("not a directory: {}", requested.to_string_lossy()));
+    }
+
+    match open_repo(requested.to_string_lossy().as_ref()) {
+        Ok(repo) => {
+            let info = repo_info(&repo)?;
+            Ok(WorkspaceInfo {
+                root: info.root.clone(),
+                repo: Some(info),
+            })
+        }
+        Err(_) => {
+            let mut root = requested.to_string_lossy().into_owned();
+            while root.len() > 1 && root.ends_with('/') {
+                root.pop();
+            }
+            Ok(WorkspaceInfo { root, repo: None })
+        }
+    }
+}
+
+fn init_repo(path: &str) -> Result<RepoInfo, String> {
+    let root = PathBuf::from(path)
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !root.is_dir() {
+        return Err(format!("not a directory: {}", root.to_string_lossy()));
+    }
+    let repo = Repository::init(&root).map_err(|error| error.to_string())?;
+    repo_info(&repo)
 }
 
 fn common_dir_id(repo: &Repository) -> String {
@@ -701,21 +762,22 @@ fn checkpoint_tree_once(repo_path: &str) -> Result<String, String> {
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Open any folder as a workspace. Existing repositories keep resolving to
+/// their workdir root; folders outside Git are returned with no repo metadata.
+#[tauri::command]
+pub async fn workspace_open(path: String) -> Result<WorkspaceInfo, String> {
+    blocking(move || open_workspace(&path)).await
+}
+
 #[tauri::command]
 pub async fn git_open(path: String) -> Result<RepoInfo, String> {
-    blocking(move || {
-        let repo = open_repo(&path)?;
-        let wd = repo
-            .workdir()
-            .ok_or_else(|| "repository has no working directory (bare repo)".to_string())?;
-        let mut root = wd.to_string_lossy().into_owned();
-        while root.len() > 1 && root.ends_with('/') {
-            root.pop();
-        }
-        let tab_group_id = repo_tab_group_id(&repo);
-        Ok(RepoInfo { root, tab_group_id })
-    })
-    .await
+    blocking(move || repo_info(&open_repo(&path)?)).await
+}
+
+/// Add Git capability to an already-open ordinary folder.
+#[tauri::command]
+pub async fn git_init(path: String) -> Result<RepoInfo, String> {
+    blocking(move || init_repo(&path)).await
 }
 
 /// List every checkout that shares this repository's common Git directory.
@@ -2566,6 +2628,44 @@ mod tests {
         ));
         let repo = Repository::init(&path).unwrap();
         (path, repo)
+    }
+
+    #[test]
+    fn ordinary_folder_opens_without_git_and_can_be_initialized() {
+        let (path, repo) = temp_repo();
+        drop(repo);
+        std::fs::remove_dir_all(path.join(".git")).unwrap();
+        std::fs::write(path.join("notes.txt"), b"plain workspace\n").unwrap();
+        let canonical = path.canonicalize().unwrap().to_string_lossy().into_owned();
+
+        let workspace = open_workspace(path.to_str().unwrap()).unwrap();
+        assert_eq!(workspace.root, canonical);
+        assert!(workspace.repo.is_none());
+
+        let initialized = init_repo(path.to_str().unwrap()).unwrap();
+        assert_eq!(initialized.root, canonical);
+        assert!(path.join(".git").is_dir());
+        assert!(open_workspace(path.to_str().unwrap())
+            .unwrap()
+            .repo
+            .is_some());
+
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn folder_inside_repository_keeps_opening_the_repository_root() {
+        let (path, repo) = temp_repo();
+        let nested = path.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let canonical = path.canonicalize().unwrap().to_string_lossy().into_owned();
+
+        let workspace = open_workspace(nested.to_str().unwrap()).unwrap();
+        assert_eq!(workspace.root, canonical);
+        assert!(workspace.repo.is_some());
+
+        drop(repo);
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     fn commit_file(repo: &Repository, path: &Path, content: &[u8], message: &str) -> Oid {
