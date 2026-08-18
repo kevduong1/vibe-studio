@@ -78,6 +78,9 @@ export interface AgentTask {
   updatedAt: number;
   lastRefreshedAt: number | null;
   attentionSince: number;
+  /** Exact current review/check attention identity acknowledged by navigation.
+   * Acknowledgement silences its ring without resolving the underlying work. */
+  acknowledgedAttentionKey: string | null;
   baseHead: string | null;
   baseHeadCaptured: boolean;
   baseline: "capturing" | "ready" | "failed";
@@ -108,10 +111,42 @@ interface AgentTasksState {
 
 export const useAgentTasksStore = create<AgentTasksState>(() => ({ tasks: {} }));
 
-const replaceTask = (task: AgentTask): void =>
+/** Stable identity for the task-owned evidence that currently needs
+ * attention. It deliberately excludes age and refresh bookkeeping: no-op
+ * refreshes must not restart a ring the user already acknowledged. */
+export function agentTaskAttentionKey(task?: AgentTask): string | null {
+  if (!task) return null;
+  const conflicts = Boolean(task.latestSnapshot?.conflictedFiles.length);
+  const checkState = checkStateFor(task);
+  const failedRun = checkState === "failed"
+    ? [...task.checkRuns]
+        .reverse()
+        .find((run) => run.pipelineLabel === task.selectedPipeline)
+    : undefined;
+  const review = task.reviewState === "unreviewed" ||
+    task.reviewState === "reviewed" ||
+    task.reviewState === "stale";
+  if (!conflicts && !failedRun && !review) return null;
+
+  return JSON.stringify({
+    conflicts: conflicts ? task.latestFingerprint : null,
+    failedCheck: failedRun
+      ? [failedRun.id, failedRun.status, failedRun.fingerprint]
+      : null,
+    review: review ? [task.reviewState, task.latestFingerprint] : null,
+  });
+}
+
+const replaceTask = (task: AgentTask): void => {
+  const attentionKey = agentTaskAttentionKey(task);
+  const next = task.acknowledgedAttentionKey === null ||
+    task.acknowledgedAttentionKey === attentionKey
+    ? task
+    : { ...task, acknowledgedAttentionKey: null };
   useAgentTasksStore.setState((state) => ({
-    tasks: { ...state.tasks, [task.terminalId]: task },
+    tasks: { ...state.tasks, [task.terminalId]: next },
   }));
+};
 
 export function removeAgentTask(terminalId: string): void {
   refreshSequences.delete(terminalId);
@@ -336,6 +371,7 @@ export function createAgentTask(meta: {
     updatedAt: now,
     lastRefreshedAt: null,
     attentionSince: now,
+    acknowledgedAttentionKey: null,
     baseHead: null,
     baseHeadCaptured: false,
     baseline: "capturing",
@@ -798,14 +834,27 @@ export function inboxTier(item: AgentInboxItem): number {
 
 export const isInboxActionable = (item: AgentInboxItem): boolean => inboxTier(item) <= 3;
 
-/** Attention membership persists while a prompt still semantically blocks,
- * but its animated alert is acknowledged as soon as the user reaches it. */
+/** Remember only the current task-owned alert. The review/check item remains
+ * actionable, while a later evidence identity is free to ring again. */
+export function acknowledgeAgentTaskAttention(terminalId: string): void {
+  const task = useAgentTasksStore.getState().tasks[terminalId];
+  const key = agentTaskAttentionKey(task);
+  if (!task || !key || task.acknowledgedAttentionKey === key) return;
+  replaceTask({ ...task, acknowledgedAttentionKey: key });
+}
+
+/** Attention membership persists until the underlying prompt/review/check is
+ * resolved, but navigation acknowledgement silences its current alert. */
 export const agentAttentionRingActive = (
   runtime: AgentRuntimeState,
   task?: AgentTask,
-): boolean =>
-  agentAttentionTier(runtime, task) <= 3 &&
-  !(displayAgentState(runtime) === "blocked" && runtime.seen);
+): boolean => {
+  const display = displayAgentState(runtime);
+  if (display === "blocked" || display === "done") return !runtime.seen;
+  if (display !== "idle" && display !== "absent") return false;
+  const key = agentTaskAttentionKey(task);
+  return Boolean(key && key !== task?.acknowledgedAttentionKey);
+};
 
 export const inboxWaitingAt = (item: AgentInboxItem): number => {
   const tier = inboxTier(item);

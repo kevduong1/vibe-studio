@@ -229,10 +229,18 @@ is an explicit isolated-task action, not an unused launch-profile promise.
 The built-in Codex definition visibly retains `codex --yolo` as its initial
 default and adds the same launch-scoped topic-title configuration as ordinary
 Codex tabs. Choosing explicit permission or sandbox controls replaces `--yolo`.
-The launch sheet resolves executables through the login-shell PATH; Integrations
-shows a bounded version probe, health, and capabilities. Custom commands get
-stable IDs, and their exact executable basenames participate in runtime
-detection under the selected Claude/Codex screen profile. Duplicate names for
-one profile coalesce; conflicting profile assignments are shown as errors and
-cannot launch. A profile whose definition is missing is disabled rather than
-coerced to another agent.
+The launch sheet makes agent identity and any currently open project the primary
+choices. Its project selector determines the actual terminal cwd and the parent
+repository for a new-worktree launch; switching to a non-Git folder disables
+that worktree choice. A project-dock launch also activates its selected project
+after creating the terminal so the new agent is never left in a hidden dock;
+global-dock launches do not change the active project. Profiles,
+model/reasoning/permission/sandbox controls, environment, extra arguments,
+command preview, and profile saving remain available inside a collapsed
+Advanced section. The sheet resolves executables through the login-shell PATH;
+Integrations shows a bounded version probe, health, and capabilities. Custom
+commands get stable IDs, and their exact executable basenames participate in
+runtime detection under the selected Claude/Codex screen profile. Duplicate
+names for one profile coalesce; conflicting profile assignments are shown as
+errors and cannot launch. A profile whose definition is missing is shown as
+unavailable rather than coerced to another agent.

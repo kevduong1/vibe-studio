@@ -3,6 +3,7 @@ import type { GitReviewSnapshot } from "../lib/ipc";
 import type { AgentRuntimeState } from "../lib/agentState";
 import {
   acceptAgentTask,
+  acknowledgeAgentTaskAttention,
   agentAttentionRingActive,
   beginCheckRun,
   checkStateFor,
@@ -49,6 +50,7 @@ const task = (state: AgentTask["reviewState"], updatedAt = 10): AgentTask => ({
   updatedAt,
   lastRefreshedAt: null,
   attentionSince: updatedAt,
+  acknowledgedAttentionKey: null,
   baseHead: "base",
   baseHeadCaptured: true,
   baseline: "ready",
@@ -281,5 +283,31 @@ describe("agent inbox ordering", () => {
     expect(agentAttentionRingActive(unseen.runtime, unseen.task)).toBe(true);
     expect(isInboxActionable(acknowledged)).toBe(true);
     expect(agentAttentionRingActive(acknowledged.runtime, acknowledged.task)).toBe(false);
+  });
+
+  it("acknowledges task attention without resolving it and rings for new evidence", () => {
+    const completed = item("review", "idle", "unreviewed", false);
+    const reviewTask = {
+      ...completed.task!,
+      latestSnapshot: snapshot(),
+      latestFingerprint: "fp",
+    };
+    useAgentTasksStore.setState({ tasks: { review: reviewTask } });
+
+    expect(agentAttentionRingActive(completed.runtime, reviewTask)).toBe(true);
+    acknowledgeAgentTaskAttention("review");
+
+    const acknowledgedTask = useAgentTasksStore.getState().tasks.review;
+    const seenIdle = { ...completed.runtime, seen: true };
+    expect(isInboxActionable({ ...completed, runtime: seenIdle, task: acknowledgedTask })).toBe(true);
+    expect(agentAttentionRingActive(seenIdle, acknowledgedTask)).toBe(false);
+
+    const newerTask = {
+      ...acknowledgedTask,
+      latestSnapshot: snapshot({ fingerprint: "fp-2" }),
+      latestFingerprint: "fp-2",
+    };
+    expect(agentAttentionRingActive(seenIdle, newerTask)).toBe(true);
+    useAgentTasksStore.setState({ tasks: {} });
   });
 });

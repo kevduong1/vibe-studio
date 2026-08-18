@@ -42,6 +42,7 @@ import { trackActivity, type ActivityTracker } from "./terminalActivity";
 import { trackedCommandProgram } from "./trackedCommand";
 import { terminalPromptInput } from "./terminalPrompt";
 import {
+  acknowledgeAgentTaskAttention,
   noteAgentPromptOutput,
   settleAgentPromptTurn,
 } from "../stores/agentTasks";
@@ -651,7 +652,10 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     ? term.onWriteParsed(() => inspectSemanticScreen())
     : null;
   const onWindowFocus = () => {
-    if (el.offsetParent !== null) acknowledgeAgentRuntime(id);
+    if (el.offsetParent !== null) {
+      acknowledgeAgentRuntime(id);
+      acknowledgeAgentTaskAttention(id);
+    }
   };
   if (semanticEnabled) window.addEventListener("focus", onWindowFocus);
 
@@ -870,6 +874,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     acknowledge() {
       tracker?.acknowledge();
       acknowledgeAgentRuntime(id);
+      acknowledgeAgentTaskAttention(id);
     },
 
     dispose() {

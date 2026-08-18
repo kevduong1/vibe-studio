@@ -150,12 +150,14 @@ the selected review detail inherits the same project scope. Sidebar rows show
 the repository, exact checkout/worktree, current branch when known, and deity
 name alongside the topic/tab title. Working avatar tiles send a bright accent
 head and fading trail around the square perimeter, starting tiles pulse their
-accent ring, and unacknowledged blocked prompts blink in that same tile accent.
-Navigation acknowledgement stops the blink while leaving Needs Input in the
-Attention projection until newer terminal evidence clears the blocked state.
-Other actionable review/check states retain their accent blink until resolved;
-idle/unknown tiles are partially desaturated. Reduced motion freezes those
-animations while preserving their static state styling.
+accent ring, and unacknowledged blocked, completion, review, conflict, and
+failed-check alerts blink in that same tile accent. Navigation acknowledgement
+stops the current blink while leaving the underlying item in the Attention
+projection until it is resolved. Task-owned acknowledgement records the exact
+current review/check evidence identity, so a later conflict, failure, or review
+state can blink again without no-op refreshes resurrecting an acknowledged
+alert. Idle/unknown tiles are partially desaturated. Reduced motion freezes
+those animations while preserving their static state styling.
 
 Rows also show Claude's live background-task summary as an orthogonal chip.
 Idle-with-background reads `Idle · 1 shell running`, stays in the normal quiet

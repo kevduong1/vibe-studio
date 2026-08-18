@@ -136,10 +136,11 @@ below it, with Worktrees available as a tab inside Source Control.
   tasks remain safely promptable and read, for example, **Idle · 1 shell
   running**. The avatar's deity name is printed below the portrait. A bright
   accent runner races around working portraits with a fading perimeter trail;
-  starting portraits pulse their square ring, and unacknowledged Needs Input
-  alerts blink in the portrait's own accent color. Acknowledgement stops that
-  blink even while the textual state remains actionable. Idle/unknown portraits
-  are partially desaturated.
+  starting portraits pulse their square ring, and unacknowledged Needs Input,
+  completion, review, conflict, and failed-check alerts blink in the portrait's
+  own accent color. Navigating to the session acknowledges the current alert
+  and stops that blink even while its textual state remains actionable; new
+  evidence can alert again. Idle/unknown portraits are partially desaturated.
   The avatar character follows the source
   project's editable color and the detected agent: Blue uses Athena/Zeus,
   Purple Hera/Hades, Green Artemis/Demeter, and Orange Hermes/Hephaestus for
@@ -254,10 +255,11 @@ or was approved.
   gets the first dirty/locked-removal refusal; force requires confirmation; live
   global terminals block removal; successful cleanup forgets deleted checkout
   paths in global terminal groups; branches are never deleted implicitly.
-- Agent buttons open a launch sheet for each definition's supported model,
-  reasoning, permission, and sandbox controls, plus validated environment,
-  one-argument-per-line extras, and current/worktree folder choice. Conversation
-  restore remains an explicit archived-task action. The initial Codex profile remains
+- Agent buttons open a streamlined launch sheet with Claude/Codex cards and a
+  dropdown for any open project. Profiles, model/reasoning/permission/sandbox
+  controls, validated environment, one-argument-per-line extras, and
+  project-root/worktree choice remain under **Advanced**. Conversation restore
+  remains an explicit archived-task action. The initial Codex profile remains
   `codex --yolo`. Integrations reports
   executable health/version/capabilities and supports stable-ID custom commands;
   each custom executable basename participates in semantic detection under its
