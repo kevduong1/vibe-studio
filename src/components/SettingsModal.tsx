@@ -1,7 +1,7 @@
 /**
  * ⌘, settings: centered modal overlay (QuickOpen/TaskPicker shell — backdrop
- * click-catcher, owns the keyboard while open). Sections are plain blocks so
- * future non-LSP settings can be appended.
+ * click-catcher, owns the keyboard while open). A category sidebar keeps the
+ * large set of controls focused without turning the modal into one long page.
  *
  * The Language Servers section shows live per-server status for the ACTIVE
  * workspace (servers are per workspace × language); with no workspace open
@@ -20,12 +20,6 @@ import {
   type BannerMode,
 } from "../lib/agentNotifications";
 import { copyText } from "../lib/clipboard";
-import {
-  APP_THEME_GROUPS,
-  APP_THEMES,
-  setAppTheme,
-  useAppTheme,
-} from "../lib/appTheme";
 import { agentControlInfo, executableVersion, lspResolve } from "../lib/ipc";
 import { useNativeOverlay } from "../lib/nativeOverlays";
 import { AGENT_PROFILES } from "../lib/agentProfiles";
@@ -60,45 +54,55 @@ import {
   runTerminalRecipe,
   useTerminalRecipesStore,
 } from "../stores/terminalRecipes";
-import { IcClose, IcPlay, IcRefresh } from "./icons";
+import {
+  IcBell,
+  IcBrain,
+  IcClose,
+  IcFile,
+  IcGear,
+  IcPlay,
+  IcRefresh,
+  IcRows,
+  IcSparkle,
+  IcTerminal,
+} from "./icons";
 import "./SettingsModal.css";
 
-function AppearanceSettings() {
-  const theme = useAppTheme((state) => state.theme);
+const SETTINGS_PAGES = [
+  { id: "editor", label: "Editor", icon: IcFile },
+  { id: "languages", label: "Language Services", icon: IcSparkle },
+  { id: "agents", label: "Agents", icon: IcBrain },
+  { id: "terminal", label: "Terminal", icon: IcTerminal },
+  { id: "notifications", label: "Notifications", icon: IcBell },
+  { id: "usage", label: "Usage", icon: IcRows },
+  { id: "advanced", label: "Advanced", icon: IcGear },
+] as const;
 
+type SettingsPageId = (typeof SETTINGS_PAGES)[number]["id"];
+
+function SettingsPane({
+  id,
+  title,
+  description,
+  children,
+}: {
+  id: SettingsPageId;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="settings-theme-library">
-      {APP_THEME_GROUPS.map((group) => (
-        <div
-          className="settings-theme-group"
-          role="group"
-          aria-labelledby={`settings-theme-${group.id}`}
-          key={group.id}
-        >
-          <div className="settings-theme-group-name" id={`settings-theme-${group.id}`}>
-            {group.label}
-          </div>
-          <div className="settings-theme-grid">
-            {APP_THEMES.filter((option) => option.group === group.id).map((option) => (
-              <button
-                key={option.id}
-                className={`settings-theme-option${theme === option.id ? " active" : ""}`}
-                data-theme={option.id}
-                aria-pressed={theme === option.id}
-                onClick={() => setAppTheme(option.id)}
-              >
-                <span className="settings-theme-preview" aria-hidden="true">
-                  <span className="settings-theme-preview-app" />
-                  <span className="settings-theme-preview-sidebar" />
-                  <span className="settings-theme-preview-editor" />
-                </span>
-                <span className="settings-theme-name">{option.label}</span>
-                <span className="settings-theme-description">{option.description}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
+    <div
+      className="settings-pane"
+      id={`settings-pane-${id}`}
+      role="tabpanel"
+      aria-labelledby={`settings-nav-${id}`}
+    >
+      <header className="settings-pane-header">
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </header>
+      {children}
     </div>
   );
 }
@@ -672,6 +676,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const modeOn = useLspMode() === "dynamic";
   useLspStatusVersionValue(); // re-render rows on any server status change
   const panelRef = useRef<HTMLDivElement>(null);
+  const [activePage, setActivePage] = useState<SettingsPageId>("editor");
 
   // The modal owns the keyboard while open (picker rule) — no input to
   // focus, so the panel itself takes focus for key events.
@@ -713,39 +718,53 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  return (
-    <div className="settings-backdrop" onMouseDown={onClose}>
-      <div
-        ref={panelRef}
-        className="settings"
-        tabIndex={-1}
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={onKeyDown}
-      >
-        <div className="settings-header">
-          <span className="settings-title">Settings</span>
-          <button className="icon-btn" title="Close" onClick={onClose}>
-            <IcClose />
-          </button>
-        </div>
-        <div className="settings-content">
-          <section className="settings-section">
-            <h3>Appearance</h3>
-            <p className="settings-hint">
-              Choose from 22 dark background palettes across neutral, cool,
-              warm, earth, and jewel tones. The app, editor, and terminals
-              update immediately, and your choice is saved for the next launch.
-            </p>
-            <AppearanceSettings />
-          </section>
-          <section className="settings-section">
-            <h3>Language Servers</h3>
-            <p className="settings-hint">
-              Diagnostics, hover info, completions and go-to-definition in the
-              editor. Off at every launch — enable below (or via the status-bar
-              LSP button) for this session; servers then run per workspace and
-              start when a matching file opens.
-            </p>
+  const selectPage = (page: SettingsPageId, focus = false) => {
+    setActivePage(page);
+    if (focus) {
+      requestAnimationFrame(() => {
+        document.getElementById(`settings-nav-${page}`)?.focus();
+      });
+    }
+  };
+
+  const onNavKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+      nextIndex = (index + 1) % SETTINGS_PAGES.length;
+    } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+      nextIndex = (index - 1 + SETTINGS_PAGES.length) % SETTINGS_PAGES.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = SETTINGS_PAGES.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    selectPage(SETTINGS_PAGES[nextIndex].id, true);
+  };
+
+  const page = (() => {
+    switch (activePage) {
+      case "editor":
+        return (
+          <SettingsPane
+            id="editor"
+            title="Editor"
+            description="Choose how files behave while you work. These preferences are saved across launches."
+          >
+            <EditorSettings />
+          </SettingsPane>
+        );
+      case "languages":
+        return (
+          <SettingsPane
+            id="languages"
+            title="Language Services"
+            description="Enable diagnostics, hover information, completions, and go-to-definition for this session."
+          >
             <div className="settings-row">
               <div className="settings-row-main">
                 <span className="settings-row-name">Language services</span>
@@ -762,86 +781,152 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 onClick={() => setLspMode(modeOn ? "disabled" : "dynamic")}
               />
             </div>
-            {LSP_LANGUAGES.map((l) => (
+            {LSP_LANGUAGES.map((language) => (
               <ServerRow
-                key={l.id}
-                lang={l.id}
-                label={l.label}
-                installHint={l.installHint}
+                key={language.id}
+                lang={language.id}
+                label={language.label}
+                installHint={language.installHint}
                 ws={ws}
-                enabled={enabled[l.id]}
+                enabled={enabled[language.id]}
                 modeOn={modeOn}
               />
             ))}
-          </section>
-          <section className="settings-section">
-            <h3>Editor</h3>
-            <p className="settings-hint">
-              Lightweight editing preferences are saved across launches.
-            </p>
-            <EditorSettings />
-          </section>
-          <section className="settings-section">
-            <h3>Agent Integrations</h3>
-            <p className="settings-hint">
-              Executable health, version, detection identity, and structured capabilities used by the launch sheet. Claude and Codex remain terminal-native; custom commands select an existing screen profile as fallback detection.
-            </p>
+          </SettingsPane>
+        );
+      case "agents":
+        return (
+          <SettingsPane
+            id="agents"
+            title="Agents"
+            description="Check installed coding agents and add terminal-native integrations."
+          >
             <AgentIntegrations />
-          </section>
-          <section className="settings-section">
-            <h3>Agent Detection Diagnostics</h3>
-            <p className="settings-hint">
-              Internal explain view for versioned screen profiles and current semantic matches. No terminal text, commands, arguments, environment, or prompts are retained here.
-            </p>
-            <AgentDetectionDiagnostics />
-          </section>
-          <section className="settings-section">
-            <h3>Workspace Terminal Recipes</h3>
-            <p className="settings-hint">
-              Local, user-owned commands for {ws?.path ?? "the active project"}. Recipes run only when you press Run; opening or restoring a project never starts one.
-            </p>
+          </SettingsPane>
+        );
+      case "terminal":
+        return (
+          <SettingsPane
+            id="terminal"
+            title="Terminal"
+            description={`Save commands for ${ws?.path ?? "the active project"}. Recipes only run when you choose Run.`}
+          >
             <TerminalRecipes ws={ws} />
-          </section>
-          <section className="settings-section">
-            <h3>Local Agent Control</h3>
-            <p className="settings-hint">
-              The bundled talos-agent CLI supports semantic snapshots, ordered events, isolated starts, generation-pinned prompts, focus, waits, cancellation, and short-lived project capabilities.
-            </p>
-            <AgentControlInfo />
-          </section>
-          <section className="settings-section">
-            <h3>Agent Notifications</h3>
-            <p className="settings-hint">
-              Alerts for agent terminals with notifications enabled
-              (right-click an agent tab in Global Terminals). The sound is played by
-              the app itself — Focus modes and notification settings don't
-              silence it. Banners need a bundled build and OS permission;
-              "Show banners" decides whether they also appear while the app
-              is focused.
-            </p>
+          </SettingsPane>
+        );
+      case "notifications":
+        return (
+          <SettingsPane
+            id="notifications"
+            title="Notifications"
+            description="Choose how enabled agent terminals alert you when work finishes or needs input."
+          >
             <AttentionSoundRow />
             <BannerModeRow />
-          </section>
-          <section className="settings-section">
-            <h3>Claude Usage</h3>
-            <p className="settings-hint">
-              Shows your Claude subscription rate-limit gauges (the 5-hour and
-              weekly windows) in the status bar. Reuses the login token Claude
-              Code already stored on this machine — read-only, so it never
-              affects that login. The first read may prompt for keychain
-              access. Off by default.
+            <p className="settings-note">
+              Sounds play directly from Talos. Banners require notification
+              permission in a bundled build.
             </p>
-            <ClaudeUsageRow />
-          </section>
-          <section className="settings-section">
-            <h3>Codex Usage</h3>
-            <p className="settings-hint">
-              Shows Codex's 5-hour and weekly rate-limit gauges in the status
-              bar. The installed Codex CLI reads and refreshes its own login;
-              this app never accesses the token. Off by default.
-            </p>
-            <CodexUsageRow />
-          </section>
+          </SettingsPane>
+        );
+      case "usage":
+        return (
+          <SettingsPane
+            id="usage"
+            title="Usage"
+            description="Show optional subscription rate-limit gauges in the status bar."
+          >
+            <section className="settings-group">
+              <h3>Claude</h3>
+              <p className="settings-hint">
+                Uses the existing Claude Code login read-only. The first check
+                may prompt for keychain access.
+              </p>
+              <ClaudeUsageRow />
+            </section>
+            <section className="settings-group">
+              <h3>Codex</h3>
+              <p className="settings-hint">
+                The installed Codex CLI reads and refreshes its own login;
+                Talos never accesses the token.
+              </p>
+              <CodexUsageRow />
+            </section>
+          </SettingsPane>
+        );
+      case "advanced":
+        return (
+          <SettingsPane
+            id="advanced"
+            title="Advanced"
+            description="Inspect agent detection and local automation details."
+          >
+            <section className="settings-group">
+              <h3>Agent detection</h3>
+              <p className="settings-hint">
+                Versioned screen profiles and current semantic matches. Talos
+                does not retain terminal text, arguments, environment, or prompts here.
+              </p>
+              <AgentDetectionDiagnostics />
+            </section>
+            <section className="settings-group">
+              <h3>Local agent control</h3>
+              <p className="settings-hint">
+                Authenticated paths for the bundled control CLI and agent skill.
+              </p>
+              <AgentControlInfo />
+            </section>
+          </SettingsPane>
+        );
+    }
+  })();
+
+  return (
+    <div className="settings-backdrop" onMouseDown={onClose}>
+      <div
+        ref={panelRef}
+        className="settings"
+        tabIndex={-1}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
+      >
+        <div className="settings-header">
+          <span className="settings-title">Settings</span>
+          <button className="icon-btn" title="Close settings" onClick={onClose}>
+            <IcClose />
+          </button>
+        </div>
+        <div className="settings-body">
+          <nav
+            className="settings-nav"
+            aria-label="Settings categories"
+            role="tablist"
+            aria-orientation="vertical"
+          >
+            {SETTINGS_PAGES.map((item, index) => {
+              const Icon = item.icon;
+              const selected = item.id === activePage;
+              return (
+                <button
+                  key={item.id}
+                  id={`settings-nav-${item.id}`}
+                  className={`settings-nav-item${selected ? " active" : ""}`}
+                  role="tab"
+                  aria-selected={selected}
+                  aria-controls={`settings-pane-${item.id}`}
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => selectPage(item.id)}
+                  onKeyDown={(event) => onNavKeyDown(event, index)}
+                >
+                  <Icon />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+          <div className="settings-content">
+            {page}
+          </div>
         </div>
       </div>
     </div>

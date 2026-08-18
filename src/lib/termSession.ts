@@ -45,7 +45,6 @@ import {
   noteAgentPromptOutput,
   settleAgentPromptTurn,
 } from "../stores/agentTasks";
-import { onAppThemeChange } from "./appTheme";
 import "@xterm/xterm/css/xterm.css";
 
 /** Resolve CSS tokens for xterm's canvas renderer. */
@@ -56,8 +55,7 @@ const themeColor = (token: string, fallback: string): string => {
     .trim() || fallback;
 };
 
-/** Terminal colors mirroring theme.css. Called again on palette changes so
- *  already-running terminal canvases update without losing their buffers. */
+/** Terminal colors mirroring the fixed Granite palette in theme.css. */
 export const xtermTheme = () => ({
   background: themeColor("--bg-panel", "#0f1218"),
   foreground: themeColor("--fg", "#e3e6ed"),
@@ -398,10 +396,6 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     scrollback: 5000,
     allowProposedApi: true,
     theme: xtermTheme(),
-  });
-
-  const unTheme = onAppThemeChange(() => {
-    term.options.theme = xtermTheme();
   });
 
   const fit = new FitAddon();
@@ -888,7 +882,6 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
       if (semanticEnabled) window.removeEventListener("focus", onWindowFocus);
       unRuntime?.();
       clearSemanticTimer();
-      unTheme();
       if (tracker) {
         tracker.dispose();
         tracker = null;

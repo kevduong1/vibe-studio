@@ -1,25 +1,22 @@
-import { describe, expect, it } from "vitest";
-import { APP_THEME_GROUPS, APP_THEMES, normalizeAppTheme } from "./appTheme";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { APP_THEME, initAppTheme } from "./appTheme";
 
-describe("app themes", () => {
-  it("keeps every published theme id", () => {
-    for (const theme of APP_THEMES) {
-      expect(normalizeAppTheme(theme.id)).toBe(theme.id);
-    }
+describe("app theme", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("uses Granite as the fixed app palette", () => {
+    expect(APP_THEME).toBe("granite");
   });
 
-  it("falls back to Midnight for missing or stale persisted values", () => {
-    expect(normalizeAppTheme(null)).toBe("midnight");
-    expect(normalizeAppTheme("old-theme")).toBe("midnight");
-  });
+  it("applies Granite and retires a persisted picker value", () => {
+    const dataset: Record<string, string> = {};
+    const removeItem = vi.fn();
+    vi.stubGlobal("document", { documentElement: { dataset } });
+    vi.stubGlobal("localStorage", { removeItem });
 
-  it("publishes unique ids and at least four options in every group", () => {
-    expect(new Set(APP_THEMES.map((theme) => theme.id)).size).toBe(
-      APP_THEMES.length,
-    );
-    for (const group of APP_THEME_GROUPS) {
-      expect(APP_THEMES.filter((theme) => theme.group === group.id).length)
-        .toBeGreaterThanOrEqual(4);
-    }
+    initAppTheme();
+
+    expect(dataset.theme).toBe("granite");
+    expect(removeItem).toHaveBeenCalledWith("talos:theme");
   });
 });
