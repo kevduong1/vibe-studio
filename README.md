@@ -49,8 +49,9 @@ across launches.
   or use the applicable stage, unstage, and discard actions
 - **Commit graph** with colored branch lanes, branch & tag pills, and a
   branch filter; virtualized so huge histories stay smooth. The checked-out
-  branch takes the active project's color, and a branch held by another
-  worktree takes that checkout's project color (when it has one)
+  branch takes the active project's color and remains the filled pill even
+  when several local branches point at the same commit. A branch held by
+  another worktree takes that checkout's project color (when it has one)
 - Click a commit to browse and diff its files; multi-select + right-click
   for checkout, branch creation, squash, and copy-SHA
 - A debounced file watcher keeps status, log, and graph live — including
@@ -67,6 +68,9 @@ app session:
 - Global terminals are pinned to a **project**, not a window — they keep
   running when their workspace closes, and clicking one jumps straight to
   its project
+- Each global terminal-group tab shows a folder for every distinct project
+  represented in that group, using the project's color; groups have no
+  separate tab color or color picker
 - Semantic **Working / Needs Input / Done / No Agent** state distinguishes a
   live agent from the shell it returns to, with accessible text, icons, and
   priority rollups across the dock, titlebar tabs, and status bar; each leaf

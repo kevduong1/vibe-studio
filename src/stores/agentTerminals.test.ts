@@ -16,7 +16,6 @@ const terminal = (id: string, workspacePath: string): AgentTerminal => ({
 const grouping = (lastActiveWorkspacePath: string | null): GlobalTermGrouping => ({
   id: "grouping",
   name: "Global 1",
-  colorIndex: 0,
   lastActiveWorkspacePath,
   root: {
     type: "group",
