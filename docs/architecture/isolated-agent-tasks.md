@@ -67,11 +67,9 @@ checkout refusal. Only a second call after explicit confirmation uses the two
 force levels Git requires to override an explicit worktree lock. The primary
 checkout is never removable. A live global terminal
 bound to the checkout blocks removal; successful removal also prunes session
-global terminal records that still point at the deleted path. It also
-rebinds every global terminal grouping whose last-workspace navigation target
-was deleted, preferring that grouping's active surviving terminal project, then
-the current workspace, then no target. A grouping can therefore never try to
-reopen a checkout removed through this flow. No task outcome deletes a branch,
+global terminal records that still point at the deleted path. Global terminal
+groupings hold no workspace-navigation memory, so selecting an empty or
+background grouping cannot reopen any checkout. No task outcome deletes a branch,
 and only `created-by-talos` provenance may offer
 automatic checkout removal. The Source Control **Worktrees** tab may also
 explicitly remove any linked checkout after confirmation, regardless of where it was created;

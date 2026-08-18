@@ -42,8 +42,8 @@
   min-width: 0;
 }
 
-/* Global bottom panel (Project Terminals / Global Terminals groups), under the editor
-   column — the sidebar keeps the full app height beside it. */
+/* Persistent global terminal groups, under the editor column — project
+   terminals live in the lower sidebar dock instead. */
 .app-panel {
   flex-shrink: 0;
   /* The inline height is a remembered preference, not a contract: after a
@@ -67,12 +67,37 @@
 .app-sidebar {
   flex-shrink: 0;
   display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--bg-sidebar);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-inset);
   position: relative;
+}
+
+.app-sidebar-primary {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.project-terminal-section {
+  flex-shrink: 0;
+  min-height: 120px;
+  max-height: calc(100% - 120px);
+  position: relative;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+}
+
+.project-terminal-workspace {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .app-sidebar-content {
@@ -145,6 +170,24 @@
 .activity-btn .badge.attention {
   background: var(--warning);
   color: var(--bg-input);
+}
+
+.activity-terminal-status {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 11px;
+  height: 11px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  border-radius: 50%;
+  background: var(--bg-app);
+}
+
+.activity-terminal-status > svg {
+  width: 10px;
+  height: 10px;
 }
 
 /* drag handles */

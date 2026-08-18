@@ -46,8 +46,6 @@ export interface GlobalTermGrouping {
   id: string;
   /** Panel tab label (double-click to rename); defaults to "Global N". */
   name: string;
-  /** Workspace to restore when this large panel tab returns to the front. */
-  lastActiveWorkspacePath: string | null;
   root: dock.DockNode | null;
   activeGroupId: string | null;
 }
@@ -66,9 +64,6 @@ export interface AgentTerminalsState {
   /** New empty grouping ("Global N"), made active. Returns its id. */
   newGrouping: () => string;
   renameGrouping: (id: string, name: string) => void;
-  setGroupingWorkspace: (id: string, workspacePath: string) => void;
-  /** Rebind navigation memory that points at a checkout deleted from disk. */
-  forgetWorkspace: (workspacePath: string, fallbackPath: string | null) => void;
   /** Structural removal (grouping + its terminals) — go through
    *  closeGlobalGrouping() from UI. */
   closeGrouping: (id: string) => void;
@@ -196,31 +191,6 @@ const groupingOf = (
 ): GlobalTermGrouping | undefined =>
   groupings.find((g) => dock.groupOf(g.root, terminalId));
 
-/**
- * Replace one deleted grouping-navigation target. Prefer the grouping's active
- * surviving terminal, then any surviving terminal, then the caller's current
- * workspace. Keeping this pure makes the deletion race regression-testable.
- */
-export const groupingAfterWorkspaceDeleted = (
-  grouping: GlobalTermGrouping,
-  terminals: Record<string, AgentTerminal>,
-  workspacePath: string,
-  fallbackPath: string | null,
-): GlobalTermGrouping => {
-  if (grouping.lastActiveWorkspacePath !== workspacePath) return grouping;
-  const activeTerminalId = dock.findGroup(grouping.root, grouping.activeGroupId)
-    ?.activeTerminalId;
-  const orderedIds = [
-    ...(activeTerminalId ? [activeTerminalId] : []),
-    ...groupingTerminalIds(grouping).filter((id) => id !== activeTerminalId),
-  ];
-  const terminalPath = orderedIds
-    .map((id) => terminals[id]?.workspacePath)
-    .find((path) => Boolean(path) && path !== workspacePath);
-  const nextPath = terminalPath ?? (fallbackPath !== workspacePath ? fallbackPath : null);
-  return { ...grouping, lastActiveWorkspacePath: nextPath };
-};
-
 export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
   terminals: {},
   groupings: [],
@@ -235,7 +205,6 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
         {
           id,
           name: nextGroupingName(s.groupings),
-          lastActiveWorkspacePath: null,
           root: null,
           activeGroupId: null,
         },
@@ -253,36 +222,6 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
       return {
         groupings: s.groupings.map((x) => (x === g ? { ...x, name: trimmed } : x)),
       };
-    }),
-
-  setGroupingWorkspace: (id, workspacePath) =>
-    set((s) => {
-      const grouping = s.groupings.find((item) => item.id === id);
-      if (!grouping || !workspacePath || grouping.lastActiveWorkspacePath === workspacePath) {
-        return s;
-      }
-      return {
-        groupings: s.groupings.map((item) =>
-          item === grouping
-            ? { ...item, lastActiveWorkspacePath: workspacePath }
-            : item,
-        ),
-      };
-    }),
-
-  forgetWorkspace: (workspacePath, fallbackPath) =>
-    set((s) => {
-      const groupings = s.groupings.map((grouping) =>
-        groupingAfterWorkspaceDeleted(
-          grouping,
-          s.terminals,
-          workspacePath,
-          fallbackPath,
-        ),
-      );
-      return groupings.every((grouping, index) => grouping === s.groupings[index])
-        ? s
-        : { groupings };
     }),
 
   closeGrouping: (id) =>
@@ -337,7 +276,6 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
         const grouping: GlobalTermGrouping = {
           id: crypto.randomUUID(),
           name: nextGroupingName(s.groupings),
-          lastActiveWorkspacePath: workspacePath,
           root: next.root,
           activeGroupId: next.activeGroupId,
         };

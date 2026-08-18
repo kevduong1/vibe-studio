@@ -38,19 +38,25 @@ import SourceControl from "./components/SourceControl";
 import MemoriesPanel from "./components/MemoriesPanel";
 import EditorArea from "./components/EditorArea";
 import Panel from "./components/Panel";
+import TerminalPanel from "./components/TerminalPanel";
 import { Resizer } from "./components/Resizer";
 import {
+  ActivityGlyph,
   IcBrain,
   IcBranch,
   IcFile,
   IcFolderOpen,
   IcSparkle,
+  IcTerminal,
 } from "./components/icons";
 import { listenAgentNotificationActivations } from "./lib/agentInbox";
 import { listenNativeAgentSessionCapture } from "./lib/nativeAgentSessions";
 import { listenAgentControlPlane } from "./lib/agentControlPlane";
 import { saveDirtyTabs } from "./lib/editorBuffers";
-import { useAgentRuntimeStore } from "./stores/agentRuntime";
+import {
+  selectTerminalRollup,
+  useAgentRuntimeStore,
+} from "./stores/agentRuntime";
 import {
   agentAttentionTier,
   useAgentTasksStore,
@@ -118,7 +124,37 @@ function ActivityBar() {
       >
         <IcBrain />
       </button>}
+      {ws && <ProjectTerminalsActivityButton ws={ws} />}
     </nav>
+  );
+}
+
+function ProjectTerminalsActivityButton({ ws }: { ws: Workspace }) {
+  const sidebarVisible = useUiStore((s) => s.sidebarVisible);
+  const terminalsVisible = useUiStore((s) => s.projectTerminalsVisible);
+  const toggle = useUiStore((s) => s.toggleProjectTerminals);
+  const terminals = useStore(ws.terminal, (state) => state.terminals);
+  const terminalIds = useMemo(() => Object.keys(terminals), [terminals]);
+  const activity = useAgentRuntimeStore((state) =>
+    selectTerminalRollup(state, terminalIds),
+  );
+  const visible = sidebarVisible && terminalsVisible;
+
+  return (
+    <button
+      className={`activity-btn ${visible ? "active" : ""}`}
+      title="Project Terminals"
+      aria-label="Toggle Project Terminals"
+      aria-pressed={visible}
+      onClick={toggle}
+    >
+      <IcTerminal />
+      {activity !== null && activity !== "idle" && (
+        <span className="activity-terminal-status" aria-hidden="true">
+          <ActivityGlyph activity={activity} idle={null} />
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -191,8 +227,8 @@ function Welcome() {
  * One workspace's sidebar content / editor surface. EVERY workspace's pair
  * stays mounted; inactive ones are hidden with display:none so editor
  * buffers and explorer state are exactly as the user left them when
- * switching back. (Terminals live in the global bottom panel —
- * components/Panel.tsx.)
+ * switching back. Project terminal trees mount separately in the lower
+ * sidebar dock; persistent global groups live in components/Panel.tsx.
  */
 function WorkspaceSidebarContent({ visible }: { visible: boolean }) {
   const sidebarTab = useUiStore((s) => s.sidebarTab);
@@ -489,6 +525,9 @@ export default function App() {
   const sidebarVisible = useUiStore((s) => s.sidebarVisible);
   const sidebarWidth = useUiStore((s) => s.sidebarWidth);
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth);
+  const projectTerminalsVisible = useUiStore((s) => s.projectTerminalsVisible);
+  const projectTerminalsHeight = useUiStore((s) => s.projectTerminalsHeight);
+  const setProjectTerminalsHeight = useUiStore((s) => s.setProjectTerminalsHeight);
   const panelMaximized = useUiStore((s) => s.panelMaximized);
   const panelVisible = useUiStore((s) => s.panelVisible);
   // Nothing open in the editor card = give the whole center column to the
@@ -511,23 +550,64 @@ export default function App() {
         <ActivityBar />
         {/* Sidebar spans the full app height; the bottom panel sits beside
             it, under the editor column only. */}
-        {sidebarVisible && (hasWorkspaces || sidebarTab === "sessions") && (
-          <div className="app-sidebar" style={{ width: sidebarWidth }}>
-            {sidebarTab === "sessions" ? (
-              <AgentSessionsPanel />
-            ) : (
-              workspaces.map((ws) => (
-                <WorkspaceContext.Provider key={ws.path} value={ws}>
-                  <WorkspaceSidebarContent visible={ws.path === activePath} />
-                </WorkspaceContext.Provider>
-              ))
+        {(hasWorkspaces || (sidebarVisible && sidebarTab === "sessions")) && (
+          <div
+            className="app-sidebar"
+            style={{
+              width: sidebarWidth,
+              display:
+                sidebarVisible && (hasWorkspaces || sidebarTab === "sessions")
+                  ? undefined
+                  : "none",
+            }}
+          >
+            <div className="app-sidebar-primary">
+              {sidebarTab === "sessions" ? (
+                <AgentSessionsPanel />
+              ) : (
+                workspaces.map((ws) => (
+                  <WorkspaceContext.Provider key={ws.path} value={ws}>
+                    <WorkspaceSidebarContent visible={ws.path === activePath} />
+                  </WorkspaceContext.Provider>
+                ))
+              )}
+            </div>
+            {hasWorkspaces && (
+              <div
+                className="project-terminal-section"
+                style={{
+                  height: projectTerminalsHeight,
+                  display: projectTerminalsVisible ? undefined : "none",
+                }}
+              >
+                <Resizer
+                  direction="horizontal"
+                  onDelta={(d) =>
+                    setProjectTerminalsHeight(
+                      useUiStore.getState().projectTerminalsHeight - d,
+                    )
+                  }
+                />
+                {workspaces.map((ws) => (
+                  <WorkspaceContext.Provider key={ws.path} value={ws}>
+                    <div
+                      className="project-terminal-workspace"
+                      style={{ display: ws.path === activePath ? undefined : "none" }}
+                    >
+                      <TerminalPanel />
+                    </div>
+                  </WorkspaceContext.Provider>
+                ))}
+              </div>
             )}
-            <Resizer
-              direction="vertical"
-              onDelta={(d) =>
-                setSidebarWidth(useUiStore.getState().sidebarWidth + d)
-              }
-            />
+            {sidebarVisible && (
+              <Resizer
+                direction="vertical"
+                onDelta={(d) =>
+                  setSidebarWidth(useUiStore.getState().sidebarWidth + d)
+                }
+              />
+            )}
           </div>
         )}
         <div className="app-center">

@@ -1,26 +1,17 @@
 /**
- * Global bottom panel, hoisted out of the workspace trees so it can host two
- * kinds of tab: "Project Terminals" (leftmost — the active workspace's
- * tabbed terminals; every workspace's body stays mounted, display:none, same
- * survival rule as the workspace views) and any number of global terminal
- * groupings (each a session-only dock tree mounted exactly once, so its
- * terminals live across workspace switches; "+" adds a grouping, double-click
- * renames it, right-click closes it).
+ * Persistent global-terminal bottom panel. Each session-only grouping is one
+ * tab whose dock tree mounts exactly once, so its terminals live across
+ * workspace switches; selecting a grouping never changes the active workspace.
+ * Project terminals have a separate lower-sidebar dock in App.tsx.
  */
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
-  switchToProject,
   useActiveEditorTabCount,
   useActiveWorkspace,
   useWorkspacesStore,
-  WorkspaceContext,
 } from "../stores/workspaces";
-import {
-  useEffectivePanelGroup,
-  useUiStore,
-  type PanelGroup,
-} from "../stores/ui";
+import { useUiStore } from "../stores/ui";
 import {
   groupingTerminalIds,
   useAgentTerminalsStore,
@@ -35,8 +26,6 @@ import {
 import { closeGlobalGrouping, openGlobalTerminal } from "../lib/agentSessions";
 import { useProjectColorVar } from "../lib/projectColors";
 import { projectDisplayName } from "../lib/projectNames";
-import { openWorkspaceTerminal } from "../lib/workspaceSessions";
-import TerminalPanel from "./TerminalPanel";
 import AgentDock from "./AgentDock";
 import { Resizer } from "./Resizer";
 import { ContextMenu } from "./ContextMenu";
@@ -48,7 +37,6 @@ import {
   IcChevronsUp,
   IcFolder,
   IcPlus,
-  IcSplit,
 } from "./icons";
 import "./Panel.css";
 
@@ -66,43 +54,16 @@ async function closeGroupingSafely(groupingId: string): Promise<void> {
       { title: "Close Terminal Group", kind: "warning" },
     ))
   ) {
-    const wasActive =
-      useAgentTerminalsStore.getState().activeGroupingId === groupingId;
     closeGlobalGrouping(groupingId);
-    if (wasActive && effectiveAgentSide()) {
-      restoreGroupingWorkspace(
-        useAgentTerminalsStore.getState().activeGroupingId,
-      );
-    }
   }
 }
-
-const effectiveAgentSide = (): boolean => {
-  const hasWorkspaces = useWorkspacesStore.getState().workspaces.length > 0;
-  return !hasWorkspaces || useUiStore.getState().panelGroup === "agent";
-};
-
-const restoreGroupingWorkspace = (groupingId: string | null): void => {
-  const grouping = useAgentTerminalsStore
-    .getState()
-    .groupings.find((item) => item.id === groupingId);
-  const path = grouping?.lastActiveWorkspacePath;
-  if (path && path !== useWorkspacesStore.getState().activePath) {
-    void switchToProject(path);
-  }
-};
 
 const activateGrouping = (groupingId: string): void => {
   const terminals = useAgentTerminalsStore.getState();
   const grouping = terminals.groupings.find((item) => item.id === groupingId);
   if (!grouping) return;
-  const currentWorkspace = useWorkspacesStore.getState().activePath;
-  if (!grouping.lastActiveWorkspacePath && currentWorkspace) {
-    terminals.setGroupingWorkspace(groupingId, currentWorkspace);
-  }
   terminals.setActiveGrouping(groupingId);
-  useUiStore.getState().setPanelGroup("agent");
-  restoreGroupingWorkspace(groupingId);
+  useUiStore.getState().setPanelVisible(true);
 };
 
 interface GroupingWorkspaceActivity {
@@ -254,7 +215,7 @@ function GroupingTab({
   );
 }
 
-function PanelHeader({ group }: { group: PanelGroup }) {
+function PanelHeader() {
   const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(
     null,
   );
@@ -264,14 +225,18 @@ function PanelHeader({ group }: { group: PanelGroup }) {
     y: number;
   } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const setPanelGroup = useUiStore((s) => s.setPanelGroup);
   const setPanelVisible = useUiStore((s) => s.setPanelVisible);
   const maximized = useUiStore((s) => s.panelMaximized);
   const togglePanelMaximized = useUiStore((s) => s.togglePanelMaximized);
-  const hasWorkspaces = useWorkspacesStore((s) => s.workspaces.length > 0);
   const activeWs = useActiveWorkspace();
   const groupings = useAgentTerminalsStore((s) => s.groupings);
   const activeGroupingId = useAgentTerminalsStore((s) => s.activeGroupingId);
+  const runtimeStates = useAgentRuntimeStore((state) => state.states);
+  const persistentActivity = rollupAgentStates(
+    groupings.flatMap((grouping) =>
+      groupingTerminalIds(grouping).map((id) => runtimeStates[id]),
+    ),
+  );
 
   return (
     <div
@@ -285,19 +250,11 @@ function PanelHeader({ group }: { group: PanelGroup }) {
         togglePanelMaximized();
       }}
     >
-      {hasWorkspaces && (
-        <button
-          className={`panel-group-tab ${group === "terminal" ? "active" : ""}`}
-          onClick={() => setPanelGroup("terminal")}
-        >
-          Project Terminals
-        </button>
-      )}
       {groupings.map((g) => (
         <GroupingTab
           key={g.id}
           grouping={g}
-          front={group === "agent" && g.id === activeGroupingId}
+          front={g.id === activeGroupingId}
           editing={renamingId === g.id}
           onStartEdit={() => setRenamingId(g.id)}
           onEndEdit={() => setRenamingId(null)}
@@ -312,10 +269,6 @@ function PanelHeader({ group }: { group: PanelGroup }) {
         title="New Terminal Group"
         onClick={() => {
           const id = useAgentTerminalsStore.getState().newGrouping();
-          const path = useWorkspacesStore.getState().activePath;
-          if (path) {
-            useAgentTerminalsStore.getState().setGroupingWorkspace(id, path);
-          }
           activateGrouping(id);
         }}
       >
@@ -329,7 +282,7 @@ function PanelHeader({ group }: { group: PanelGroup }) {
           <>
             <button
               className="icon-btn"
-              title={`New ${group === "agent" ? "Global" : "Project"} Terminal`}
+              title="New Persistent Terminal"
               onClick={(e) => {
                 const r = e.currentTarget.getBoundingClientRect();
                 setCreateMenu({ x: r.right, y: r.bottom });
@@ -337,23 +290,33 @@ function PanelHeader({ group }: { group: PanelGroup }) {
             >
               <IcPlus />
             </button>
-            {group === "terminal" && (
-              <button
-                className="icon-btn"
-                title="Split Project Terminal"
-                onClick={() => activeWs.terminal.getState().splitActive()}
-              >
-                <IcSplit />
-              </button>
-            )}
           </>
         )}
         <button
-          className="icon-btn"
-          title={maximized ? "Restore Panel Size" : "Maximize Panel Size"}
+          className={`icon-btn panel-maximize ${maximized ? "active" : ""}`}
+          title={
+            maximized
+              ? "Restore Panel Size · Persistent Terminal Groups"
+              : "Maximize Panel Size · Persistent Terminal Groups"
+          }
           onClick={togglePanelMaximized}
+          aria-pressed={maximized}
         >
           {maximized ? <IcChevronsDown /> : <IcChevronsUp />}
+          {persistentActivity !== null && persistentActivity !== "idle" && (
+            <span
+              className="panel-persistent-activity"
+              title={
+                persistentActivity === "blocked"
+                  ? "Persistent terminal needs input"
+                  : persistentActivity === "done"
+                    ? "Persistent terminal finished"
+                    : "Persistent terminal working"
+              }
+            >
+              <ActivityGlyph activity={persistentActivity} idle={null} />
+            </span>
+          )}
         </button>
         <button
           className="icon-btn"
@@ -372,8 +335,7 @@ function PanelHeader({ group }: { group: PanelGroup }) {
           <button
             onClick={() => {
               setCreateMenu(null);
-              if (group === "agent") openGlobalTerminal(activeWs.path, "shell");
-              else openWorkspaceTerminal(activeWs, "shell");
+              openGlobalTerminal(activeWs.path, "shell");
             }}
           >
             New Shell
@@ -381,7 +343,7 @@ function PanelHeader({ group }: { group: PanelGroup }) {
           <button
             onClick={() => {
               setCreateMenu(null);
-              requestAgentLaunch({ workspacePath: activeWs.path, scope: group === "agent" ? "global" : "workspace", kind: "claude" });
+              requestAgentLaunch({ workspacePath: activeWs.path, scope: "global", kind: "claude" });
             }}
           >
             New Claude Agent
@@ -389,7 +351,7 @@ function PanelHeader({ group }: { group: PanelGroup }) {
           <button
             onClick={() => {
               setCreateMenu(null);
-              requestAgentLaunch({ workspacePath: activeWs.path, scope: group === "agent" ? "global" : "workspace", kind: "codex" });
+              requestAgentLaunch({ workspacePath: activeWs.path, scope: "global", kind: "codex" });
             }}
           >
             New Codex Agent
@@ -428,39 +390,13 @@ function PanelHeader({ group }: { group: PanelGroup }) {
 
 export default function Panel() {
   const workspaces = useWorkspacesStore((s) => s.workspaces);
-  const activePath = useWorkspacesStore((s) => s.activePath);
   const panelVisible = useUiStore((s) => s.panelVisible);
   const panelHeight = useUiStore((s) => s.panelHeight);
   const setPanelHeight = useUiStore((s) => s.setPanelHeight);
   const maximized = useUiStore((s) => s.panelMaximized);
   const openTabCount = useActiveEditorTabCount();
-  const group = useEffectivePanelGroup();
   const groupings = useAgentTerminalsStore((s) => s.groupings);
   const activeGroupingId = useAgentTerminalsStore((s) => s.activeGroupingId);
-
-  // Remember workspace navigation only while a global group is actually in
-  // front. Group switches are handled explicitly so a closed repo can reopen
-  // without the old workspace overwriting the target group's memory mid-load.
-  useEffect(
-    () =>
-      useWorkspacesStore.subscribe((state, previous) => {
-        if (
-          state.activePath === previous.activePath ||
-          !state.activePath ||
-          !effectiveAgentSide()
-        ) {
-          return;
-        }
-        const terminals = useAgentTerminalsStore.getState();
-        if (terminals.activeGroupingId) {
-          terminals.setGroupingWorkspace(
-            terminals.activeGroupingId,
-            state.activePath,
-          );
-        }
-      }),
-    [],
-  );
 
   // With nothing to show (welcome screen, no global groupings) the panel
   // disappears entirely; it is still MOUNTED either way — terminals hide
@@ -485,30 +421,15 @@ export default function Panel() {
           onDelta={(d) => setPanelHeight(useUiStore.getState().panelHeight - d)}
         />
       )}
-      <PanelHeader group={group} />
+      <PanelHeader />
       <div className="panel-body">
-        {workspaces.map((ws) => (
-          <WorkspaceContext.Provider key={ws.path} value={ws}>
-            <div
-              className="panel-group-body"
-              style={{
-                display:
-                  group === "terminal" && ws.path === activePath
-                    ? undefined
-                    : "none",
-              }}
-            >
-              <TerminalPanel />
-            </div>
-          </WorkspaceContext.Provider>
-        ))}
         {groupings.map((g) => (
           <div
             key={g.id}
             className="panel-group-body"
             style={{
               display:
-                group === "agent" && g.id === activeGroupingId
+                g.id === activeGroupingId
                   ? undefined
                   : "none",
             }}
@@ -521,7 +442,6 @@ export default function Panel() {
           // grouping on demand) so the global side isn't a blank void.
           <div
             className="panel-group-body"
-            style={{ display: group === "agent" ? undefined : "none" }}
           >
             <AgentDock groupingId="" />
           </div>

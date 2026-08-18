@@ -68,7 +68,7 @@ useTerminalRecipesStore.subscribe((state, previous) => {
 });
 
 export function runTerminalRecipe(workspace: Workspace, recipe: TerminalRecipe): string {
-  useUiStore.getState().setPanelGroup("terminal");
+  useUiStore.getState().setProjectTerminalsVisible(true);
   const id = workspace.terminal.getState().newTerminal(recipe.name, "shell");
   const session = getOrCreateWorkspaceSession(workspace, id);
   session.sendText(`${recipe.command}\r`);

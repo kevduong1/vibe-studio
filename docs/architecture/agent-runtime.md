@@ -18,8 +18,8 @@ descendant.
 Runtime state is ephemeral. Global tab metadata, layouts, PTYs, and semantic
 state are all session-only. After an app restart, both terminal docks start
 closed and empty; terminals exist only after an explicit user or task action.
-Global grouping state owns its name, navigation memory, and dock tree, but no
-independent presentation color. The panel derives one project-colored folder
+Global grouping state owns its name and dock tree, but no workspace-navigation
+memory or independent presentation color. The panel derives one project-colored folder
 glyph per distinct terminal `workspacePath` in the grouping, including a
 project whose workspace is currently closed but whose global terminal remains
 live.

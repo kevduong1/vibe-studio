@@ -356,7 +356,7 @@ function EmptyState({ onOpenPreview }: { onOpenPreview: () => void }) {
       </button>
       <div className="empty-hints">
         <div className="hint-row">
-          <span>Toggle terminal</span>
+          <span>Persistent terminals</span>
           <span className="kbd">⌘ `</span>
         </div>
         <div className="hint-row">

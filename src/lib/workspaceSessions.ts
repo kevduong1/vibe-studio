@@ -72,7 +72,7 @@ export function openWorkspaceTerminal(
 ): string {
   // Project terminals are opt-in. Once an explicit launch reaches this helper,
   // reveal the dock; opening/restoring a workspace never calls it implicitly.
-  useUiStore.getState().setPanelGroup("terminal");
+  useUiStore.getState().setProjectTerminalsVisible(true);
   const id = ws.terminal.getState().newTerminal(undefined, kind);
   if (kind !== "shell") {
     const session = getOrCreateWorkspaceSession(ws, id);

@@ -433,13 +433,6 @@ async function removeWorktreeCheckoutUnlocked(
   for (const terminalId of boundGlobalTerminalIds(worktreePath)) {
     closeAgentTerminal(terminalId);
   }
-  // Global terminal groupings remember their last workspace independently of
-  // their tabs. Clear that navigation target after the checkout is gone so an
-  // empty or background grouping can never try to reopen the deleted path.
-  useAgentTerminalsStore.getState().forgetWorkspace(
-    worktreePath,
-    useWorkspacesStore.getState().activePath,
-  );
   return true;
 }
 

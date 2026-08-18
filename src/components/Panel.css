@@ -121,6 +121,34 @@
   flex-shrink: 0;
 }
 
+.panel-maximize {
+  position: relative;
+}
+
+.panel-maximize.active {
+  color: var(--accent);
+  background: var(--bg-selected);
+  box-shadow: inset 0 0 0 1px var(--accent-muted);
+}
+
+.panel-persistent-activity {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 9px;
+  height: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  border-radius: 50%;
+  background: var(--bg-surface);
+}
+
+.panel-persistent-activity > svg {
+  width: 8px;
+  height: 8px;
+}
+
 .panel-body {
   flex: 1;
   min-height: 0;

@@ -10,6 +10,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { type WorkspaceTerminal } from "../stores/terminal";
 import { useTerminal, useWorkspace } from "../stores/workspaces";
+import { useUiStore } from "../stores/ui";
 import { getSession } from "../lib/termSessions";
 import { setTerminalNotifications } from "../lib/agentNotifications";
 import { copyText } from "../lib/clipboard";
@@ -38,9 +39,12 @@ import { requestAgentLaunch } from "../lib/agentLaunchRequest";
 import {
   ActivityGlyph,
   IcBell,
+  IcChevronDown,
   IcClaude,
   IcCodex,
+  IcPlus,
   IcSparkle,
+  IcSplit,
   IcTerminal,
 } from "./icons";
 import "@xterm/xterm/css/xterm.css";
@@ -215,36 +219,87 @@ function TerminalEmpty() {
   );
 }
 
-/** One workspace's terminal dock (body only — the shared panel header with
- *  the group switcher lives in Panel.tsx). Stays mounted for the
- *  workspace's lifetime. */
+/** One workspace's lower-sidebar terminal dock. Stays mounted for the
+ *  workspace's lifetime; inactive workspaces hide rather than unmount it. */
 export default function TerminalPanel() {
   const ws = useWorkspace();
+  const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
   const enabled = tabMenu
     ? ws.terminal.getState().terminals[tabMenu.id]?.notificationsEnabled === true
     : false;
   return (
-    <>
-      <Dock
-        store={ws.terminal}
-        Pane={TerminalPane}
-        TabIcon={TerminalTabIcon}
-        TabBadge={TerminalTabBadge}
-        Empty={TerminalEmpty}
-        onTabContextMenu={(terminal, event) => {
-          const runtime = useAgentRuntimeStore.getState().states[terminal.id];
-          if (
-            terminal.kind === "shell" &&
-            runtime?.occupancy !== "present" &&
-            terminal.notificationsEnabled !== true
-          ) return;
-          event.preventDefault();
-          setTabMenu({ id: terminal.id, x: event.clientX, y: event.clientY });
-        }}
-        closeTerminal={(id) => closeWorkspaceTerminal(ws.terminal, id)}
-      />
+    <div className="project-terminal-dock">
+      <div className="project-terminal-header">
+        <span className="project-terminal-title">Project Terminals</span>
+        <div className="project-terminal-actions">
+          <button
+            className="icon-btn"
+            title="New Project Terminal"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setCreateMenu({ x: rect.right, y: rect.bottom });
+            }}
+          >
+            <IcPlus />
+          </button>
+          <button
+            className="icon-btn"
+            title="Split Project Terminal"
+            onClick={() => ws.terminal.getState().splitActive()}
+          >
+            <IcSplit />
+          </button>
+          <button
+            className="icon-btn"
+            title="Hide Project Terminals"
+            onClick={() => useUiStore.getState().setProjectTerminalsVisible(false)}
+          >
+            <IcChevronDown />
+          </button>
+        </div>
+      </div>
+      <div className="project-terminal-body">
+        <Dock
+          store={ws.terminal}
+          Pane={TerminalPane}
+          TabIcon={TerminalTabIcon}
+          TabBadge={TerminalTabBadge}
+          Empty={TerminalEmpty}
+          onTabContextMenu={(terminal, event) => {
+            const runtime = useAgentRuntimeStore.getState().states[terminal.id];
+            if (
+              terminal.kind === "shell" &&
+              runtime?.occupancy !== "present" &&
+              terminal.notificationsEnabled !== true
+            ) return;
+            event.preventDefault();
+            setTabMenu({ id: terminal.id, x: event.clientX, y: event.clientY });
+          }}
+          closeTerminal={(id) => closeWorkspaceTerminal(ws.terminal, id)}
+        />
+      </div>
+      {createMenu && (
+        <ContextMenu
+          x={createMenu.x}
+          y={createMenu.y}
+          onClose={() => setCreateMenu(null)}
+        >
+          <button onClick={() => {
+            setCreateMenu(null);
+            openWorkspaceTerminal(ws, "shell");
+          }}>New Shell</button>
+          <button onClick={() => {
+            setCreateMenu(null);
+            requestAgentLaunch({ workspacePath: ws.path, scope: "workspace", kind: "claude" });
+          }}>New Claude Agent</button>
+          <button onClick={() => {
+            setCreateMenu(null);
+            requestAgentLaunch({ workspacePath: ws.path, scope: "workspace", kind: "codex" });
+          }}>New Codex Agent</button>
+        </ContextMenu>
+      )}
       {tabMenu && (
         <ContextMenu x={tabMenu.x} y={tabMenu.y} onClose={() => setTabMenu(null)}>
           <button onClick={() => {
@@ -269,6 +324,6 @@ export default function TerminalPanel() {
           </button>
         </ContextMenu>
       )}
-    </>
+    </div>
   );
 }

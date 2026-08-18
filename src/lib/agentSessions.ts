@@ -106,7 +106,7 @@ export function openAgentTerminal(
 ): string {
   // Global terminals are opt-in too. An explicit launch should reveal the
   // dock, but app/workspace restoration never reaches this helper.
-  useUiStore.getState().setPanelGroup("agent");
+  useUiStore.getState().setPanelVisible(true);
   const kind = opts?.kind ?? "claude";
   const workspace = useWorkspacesStore
     .getState()

@@ -8,9 +8,6 @@ export type SidebarTab =
   | "scm"
   | "memories";
 export type AgentSessionsView = "all" | "attention";
-/** Bottom-panel sides: per-workspace terminals vs the global terminal
- *  groupings (which grouping is in front lives in stores/agentTerminals). */
-export type PanelGroup = "terminal" | "agent";
 
 interface UiState {
   sidebarTab: SidebarTab;
@@ -20,9 +17,12 @@ interface UiState {
       them above the component preserves the view across activity-tab swaps. */
   agentSessionsView: AgentSessionsView;
   agentSessionsSort: AgentSessionsSort;
+  /** Project terminals live in a session-only lower sidebar dock. This is one
+      global visibility choice rather than remembered per-workspace state. */
+  projectTerminalsVisible: boolean;
+  projectTerminalsHeight: number;
   panelVisible: boolean;
   panelHeight: number;
-  panelGroup: PanelGroup;
   /** Panel fills the whole center column (editor hidden). Transient view
       state: maximizing reveals the panel, hiding the panel clears it, and
       opening an editor tab clears it (stores/editor.ts) so the file is
@@ -56,11 +56,12 @@ interface UiState {
   showSearch: () => void;
   toggleSidebar: () => void;
   setSidebarWidth: (w: number) => void;
+  toggleProjectTerminals: () => void;
+  setProjectTerminalsVisible: (v: boolean) => void;
+  setProjectTerminalsHeight: (h: number) => void;
   togglePanel: () => void;
   setPanelVisible: (v: boolean) => void;
   setPanelHeight: (h: number) => void;
-  /** Selecting a group also reveals the panel. */
-  setPanelGroup: (g: PanelGroup) => void;
   togglePanelMaximized: () => void;
   setPanelMaximized: (v: boolean) => void;
   toggleMarkdownPreview: () => void;
@@ -85,9 +86,10 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarWidth: 320,
   agentSessionsView: "all",
   agentSessionsSort: "repository",
+  projectTerminalsVisible: false,
+  projectTerminalsHeight: 320,
   panelVisible: false,
   panelHeight: 280,
-  panelGroup: "terminal",
   panelMaximized: false,
   searchFocusNonce: 0,
   searchFocusPath: null,
@@ -117,12 +119,23 @@ export const useUiStore = create<UiState>((set) => ({
   },
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, 200, 600) }),
+  toggleProjectTerminals: () =>
+    set((s) =>
+      !s.sidebarVisible || !s.projectTerminalsVisible
+        ? { sidebarVisible: true, projectTerminalsVisible: true }
+        : { projectTerminalsVisible: false },
+    ),
+  setProjectTerminalsVisible: (v) =>
+    set(v
+      ? { sidebarVisible: true, projectTerminalsVisible: true }
+      : { projectTerminalsVisible: false }),
+  setProjectTerminalsHeight: (h) =>
+    set({ projectTerminalsHeight: clamp(h, 120, 800) }),
   togglePanel: () =>
     set((s) => ({ panelVisible: !s.panelVisible, panelMaximized: false })),
   setPanelVisible: (v) =>
     set(v ? { panelVisible: true } : { panelVisible: false, panelMaximized: false }),
   setPanelHeight: (h) => set({ panelHeight: clamp(h, 100, 800) }),
-  setPanelGroup: (g) => set({ panelGroup: g, panelVisible: true }),
   togglePanelMaximized: () =>
     set((s) =>
       s.panelMaximized
@@ -150,15 +163,3 @@ export const useUiStore = create<UiState>((set) => ({
   popNativeOverlay: () =>
     set((s) => ({ nativeOverlayDepth: Math.max(0, s.nativeOverlayDepth - 1) })),
 }));
-
-/**
- * The panel group actually displayed: with no workspaces open, "terminal"
- * is meaningless (workspace terminals don't exist) and the agent group —
- * whose terminals outlive their projects — takes over. Pure derivation;
- * the user's panelGroup choice is untouched.
- */
-export function useEffectivePanelGroup(): PanelGroup {
-  const hasWorkspaces = useWorkspacesStore((s) => s.workspaces.length > 0);
-  const group = useUiStore((s) => s.panelGroup);
-  return hasWorkspaces ? group : "agent";
-}

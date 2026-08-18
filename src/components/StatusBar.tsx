@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "zustand";
 import type { CodexUsageLimit, UsageLimit } from "../lib/ipc";
 import { getWorkspaceLsp, useLspStatusVersionValue } from "../lib/lsp/servers";
@@ -19,6 +19,7 @@ import {
   selectTerminalRollup,
   useAgentRuntimeStore,
 } from "../stores/agentRuntime";
+import { useAgentTerminalsStore } from "../stores/agentTerminals";
 import { initUsagePolling, useUsageStore } from "../stores/usage";
 import {
   initCodexUsagePolling,
@@ -490,9 +491,17 @@ export default function StatusBar({
   const sidebarVisible = useUiStore((s) => s.sidebarVisible);
   const togglePanel = useUiStore((s) => s.togglePanel);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
-  // A waiting agent terminal has no visible indicator when the panel is
-  // hidden and its project's titlebar tab is closed — surface it here.
-  const agentActivity = useAgentRuntimeStore((s) => selectTerminalRollup(s));
+  // The center-bottom panel now owns only persistent global groups. Keep its
+  // hidden-state indicator scoped to those terminals; project activity lives
+  // on the lower-sidebar terminal button.
+  const globalTerminals = useAgentTerminalsStore((s) => s.terminals);
+  const globalTerminalIds = useMemo(
+    () => Object.keys(globalTerminals),
+    [globalTerminals],
+  );
+  const agentActivity = useAgentRuntimeStore((s) =>
+    selectTerminalRollup(s, globalTerminalIds),
+  );
 
   return (
     <div className="statusbar">
@@ -519,7 +528,7 @@ export default function StatusBar({
         </button>
         <button
           className={`icon-btn statusbar-toggle ${panelVisible ? "active" : ""}`}
-          title="Toggle panel"
+          title="Toggle Persistent Terminal Groups (⌘`)"
           onClick={togglePanel}
         >
           <IcTerminal />

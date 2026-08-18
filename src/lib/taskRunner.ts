@@ -62,7 +62,7 @@ export function runTask(ws: Workspace, task: TaskDef): void {
   // "silent" would only reveal on errors; without problem matchers we can't
   // tell, so it gets the quiet treatment like "never".
   if (task.reveal === "always") {
-    useUiStore.getState().setPanelGroup("terminal"); // also un-hides the panel
+    useUiStore.getState().setProjectTerminalsVisible(true);
     const g = groupOf(store.getState().root, id);
     if (g) store.getState().setActiveTerminal(g.id, id);
   }

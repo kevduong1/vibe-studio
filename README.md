@@ -71,7 +71,8 @@ app session:
   its project
 - Each global terminal-group tab shows a folder for every distinct project
   represented in that group, using the project's color; groups have no
-  separate tab color or color picker
+  separate tab color or color picker. Switching group tabs never changes the
+  active workspace; selecting a terminal is the explicit jump to its project
 - Semantic **Working / Needs Input / Done / No Agent** state distinguishes a
   live agent from the shell it returns to, with accessible text, icons, and
   priority rollups across the dock, titlebar tabs, and status bar; each leaf
@@ -285,9 +286,10 @@ Repository checks come from `.vscode/tasks.json`:
 
 ### ⌨️ Project terminals
 
-- Opening or restoring a workspace never starts a shell. The terminal panel
+- Opening or restoring a workspace never starts a shell. The project-terminal dock
   stays closed and empty until an explicit terminal, task, check, or recipe
-  action needs it.
+  action needs it. When opened, Project Terminals dock in the resizable lower
+  half of the left sidebar instead of covering or resizing the editor
 - Real PTYs running your login shell, Claude Code, or Codex, with tabs,
   side-by-side splits, and drag-and-drop layout
 - Dedicated Codex tabs intentionally launch with `codex --yolo` by default
@@ -394,7 +396,7 @@ Repository checks come from `.vscode/tasks.json`:
 | ⌘ ⇧ B | Run build task |
 | ⌘ ⇧ I | Show Agent Sessions |
 | ⌘ ⌥ ↓ / ⌘ ⌥ ↑ | Next / previous actionable agent |
-| ⌘ ` | Toggle terminal panel |
+| ⌘ ` | Toggle persistent terminal groups |
 | ⌘ B | Toggle sidebar |
 | ⌘ 1–9 | Switch to the Nth workspace |
 | ⌘ W | Close editor tab |

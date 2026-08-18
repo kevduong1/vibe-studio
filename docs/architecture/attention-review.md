@@ -125,7 +125,7 @@ terminal ID. The activity icon carries the actionable count without collapsing
 lifecycle and review into one state.
 
 All entry points call `focusAgentTerminal(id)`. Workspace terminals activate
-their open workspace, Project Terminals panel, dock group, and exact tab. Global
+their open workspace, lower-sidebar Project Terminals dock, group, and exact tab. Global
 terminals reopen/switch projects as needed, activate the owning global grouping
 and exact tab, then focus and acknowledge. Merely opening Agent Sessions never
 acknowledges every row. A stale row leaves a nonfatal explanation in the view.

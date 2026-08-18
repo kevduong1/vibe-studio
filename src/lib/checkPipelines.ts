@@ -305,7 +305,7 @@ export function focusCheckNode(terminalId: string): void {
   useWorkspacesStore.getState().setActive(ws.path);
   const group = groupOf(ws.terminal.getState().root, terminalId);
   if (group) ws.terminal.getState().setActiveTerminal(group.id, terminalId);
-  useUiStore.getState().setPanelGroup("terminal");
+  useUiStore.getState().setProjectTerminalsVisible(true);
   window.setTimeout(() => {
     getSession(terminalId)?.focus();
   }, 0);

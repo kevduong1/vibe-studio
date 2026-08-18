@@ -28,7 +28,7 @@ export async function focusAgentTerminal(terminalId: string): Promise<FocusAgent
     if (!useAgentTerminalsStore.getState().terminals[terminalId]) {
       return { ok: false, message: "Terminal no longer available" };
     }
-    useUiStore.getState().setPanelGroup("agent");
+    useUiStore.getState().setPanelVisible(true);
     useAgentTerminalsStore.getState().setActiveTerminalById(terminalId);
   } else {
     const ws = useWorkspacesStore
@@ -37,7 +37,7 @@ export async function focusAgentTerminal(terminalId: string): Promise<FocusAgent
     const terminal = ws?.terminal.getState().terminals[terminalId];
     if (!ws || !terminal) return { ok: false, message: "Terminal no longer available" };
     useWorkspacesStore.getState().setActive(ws.path);
-    useUiStore.getState().setPanelGroup("terminal");
+    useUiStore.getState().setProjectTerminalsVisible(true);
     const group = groupOf(ws.terminal.getState().root, terminalId);
     if (!group) return { ok: false, message: "Terminal no longer available" };
     ws.terminal.getState().setActiveTerminal(group.id, terminalId);
