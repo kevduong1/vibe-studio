@@ -2,9 +2,9 @@
  * Global terminal groupings: any number of named dockable layout trees
  * (lib/dockTree) of terminal tab groups, independent of any workspace. Each
  * grouping is one panel tab; each terminal is bound to a project
- * (workspacePath) but lives here, so it survives workspace switches — and
- * the whole set of groupings survives app restarts (localStorage; shells
- * respawn fresh on first attach).
+ * (workspacePath) but lives here, so it survives workspace switches for the
+ * current app session. Terminals and grouping layouts intentionally start
+ * empty on every app launch.
  *
  * Pure UI-state model, same rule as stores/terminal.ts: xterm/PTY lifecycle
  * lives elsewhere (lib/agentSessions.ts) — this store never touches xterm or
@@ -22,11 +22,8 @@ import {
   prunePaneState,
 } from "./terminal";
 
-const STORAGE_KEY = "talos:agent-terminals";
-
 export interface AgentTerminal {
-  /** Doubles as the PTY id (the backend session map is empty at boot, so
-   *  restored uuids are safely reused for the respawned shells). */
+  /** Doubles as the PTY id. */
   id: string;
   /** Tab label (double-click the tab to rename).
    *  Defaults to the project's display name, deduped. */
@@ -36,7 +33,7 @@ export interface AgentTerminal {
   /** Global docks can hold plain shells as well as either supported agent. */
   kind: TerminalKind;
   /** macOS notification + sound on attention onset (lib/agentNotifications).
-   *  Persisted; stored as true | undefined (absent = off, the default). */
+   *  Session-only; stored as true | undefined (absent = off, the default). */
   notificationsEnabled?: boolean;
 }
 
@@ -62,8 +59,7 @@ export interface AgentTerminalsState {
   /** Grouping shown while the panel's global side is in front. */
   activeGroupingId: string | null;
   /** Sparse per-terminal live OSC 0/2 titles (Claude Code's auto-generated
-   *  topic summaries), shown on the pane badge — ephemeral, never persisted
-   *  (a respawned shell has no topic until its agent sets one). */
+   *  topic summaries), shown on the pane badge — ephemeral and session-only. */
   paneTitle: Record<string, string>;
 
   /** New empty grouping ("Global N"), made active. Returns its id. */
@@ -83,7 +79,7 @@ export interface AgentTerminalsState {
    * of opts.groupingId/the active grouping, else that grouping's active
    * group; with no grouping at all, a fresh one is created). Returns the
    * terminal id. Does NOT spawn a PTY — the session registry spawns lazily
-   * on first attach, which doubles as the respawn path after a restart.
+   * on first attach.
    */
   newTerminal: (
     workspacePath: string,
@@ -162,126 +158,6 @@ export const groupingTerminalIds = (g: GlobalTermGrouping): string[] =>
   dock.dockGroups(g.root).flatMap((group) => group.terminalIds);
 
 // ---------------------------------------------------------------------------
-// Persistence (groupings + terminals only — semantic runtime state is separate)
-// ---------------------------------------------------------------------------
-
-interface PersistedSlice {
-  terminals: Record<string, AgentTerminal>;
-  groupings: GlobalTermGrouping[];
-  activeGroupingId: string | null;
-}
-
-const emptySlice: PersistedSlice = {
-  terminals: {},
-  groupings: [],
-  activeGroupingId: null,
-};
-
-const loadDock = (): PersistedSlice => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return emptySlice;
-    const p = JSON.parse(raw) as Record<string, unknown>;
-    if (p?.version !== 1 && p?.version !== 2 && p?.version !== 3) return emptySlice;
-
-    const terminals: Record<string, AgentTerminal> = {};
-    if (p.terminals && typeof p.terminals === "object") {
-      for (const [id, v] of Object.entries(p.terminals as Record<string, unknown>)) {
-        const t = v as Record<string, unknown> | null;
-        if (t && typeof t.title === "string" && typeof t.workspacePath === "string") {
-          terminals[id] = {
-            id,
-            title: t.title,
-            workspacePath: t.workspacePath,
-            // v1 layouts predate terminal kinds and were all Claude tabs.
-            kind:
-              t.kind === "shell" || t.kind === "codex" || t.kind === "claude"
-                ? t.kind
-                : "claude",
-            ...(t.notificationsEnabled === true && { notificationsEnabled: true }),
-          };
-        }
-      }
-    }
-
-    // v1 stored a single tree; wrap it as the one grouping (dropped when
-    // empty — a v1 user with no terminals gets no grouping tab). v2/v3 are
-    // the multi-grouping shape, where empty groupings are deliberate and kept.
-    const rawGroupings: unknown[] =
-      (p.version === 2 || p.version === 3) && Array.isArray(p.groupings)
-        ? (p.groupings as unknown[])
-        : [{ name: "Global 1", root: p.root, activeGroupId: p.activeGroupId }];
-
-    const seen = new Set<string>();
-    const groupings: GlobalTermGrouping[] = [];
-    for (const rg of rawGroupings) {
-      if (!rg || typeof rg !== "object") continue;
-      const g = rg as Record<string, unknown>;
-      // `seen` spans ALL groupings — a terminal referenced twice keeps only
-      // its first tab (same first-reference-wins rule as within one tree).
-      const root = dock.normalize(dock.sanitizeNode(g.root, terminals, seen));
-      if (!root && p.version === 1) continue; // legacy empty dock = no grouping
-      const id =
-        typeof g.id === "string" && !groupings.some((x) => x.id === g.id)
-          ? g.id
-          : crypto.randomUUID();
-      const groups = dock.dockGroups(root);
-      groupings.push({
-        id,
-        name:
-          typeof g.name === "string" && g.name.trim()
-            ? g.name
-            : `Global ${groupings.length + 1}`,
-        colorIndex:
-          typeof g.colorIndex === "number" &&
-          Number.isInteger(g.colorIndex) &&
-          g.colorIndex >= 0 &&
-          g.colorIndex < PROJECT_COLOR_NAMES.length
-            ? g.colorIndex
-            : nextGroupingColor(groupings),
-        lastActiveWorkspacePath:
-          typeof g.lastActiveWorkspacePath === "string" &&
-          g.lastActiveWorkspacePath.length > 0
-            ? g.lastActiveWorkspacePath
-            : null,
-        root,
-        activeGroupId:
-          typeof g.activeGroupId === "string" &&
-          groups.some((x) => x.id === g.activeGroupId)
-            ? g.activeGroupId
-            : (groups[0]?.id ?? null),
-      });
-    }
-    // Drop terminals no grouping references (their tabs are gone anyway).
-    for (const id of Object.keys(terminals)) {
-      if (!seen.has(id)) delete terminals[id];
-    }
-    const requested =
-      typeof p.activeGroupingId === "string" ? p.activeGroupingId : null;
-    return {
-      terminals,
-      groupings,
-      activeGroupingId: groupings.some((g) => g.id === requested)
-        ? requested
-        : (groupings[0]?.id ?? null),
-    };
-  } catch {
-    return emptySlice;
-  }
-};
-
-const saveDock = (s: PersistedSlice) =>
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      version: 3,
-      terminals: s.terminals,
-      groupings: s.groupings,
-      activeGroupingId: s.activeGroupingId,
-    }),
-  );
-
-// ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 
@@ -345,7 +221,9 @@ export const groupingAfterWorkspaceDeleted = (
 };
 
 export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
-  ...loadDock(),
+  terminals: {},
+  groupings: [],
+  activeGroupingId: null,
   paneTitle: {},
 
   newGrouping: () => {
@@ -544,7 +422,7 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
       return {
         terminals: {
           ...s.terminals,
-          // true | undefined (never false) keeps the persisted JSON minimal.
+          // true | undefined (never false) keeps the state compact.
           [terminalId]: { ...t, notificationsEnabled: enabled || undefined },
         },
       };
@@ -578,20 +456,12 @@ export const useAgentTerminalsStore = create<AgentTerminalsState>((set) => ({
     }),
 }));
 
-// Persist on structural changes only; semantic runtime state lives in the
-// separate ephemeral agentRuntime store and never reaches localStorage.
+// Prune cached adapters when their session-only grouping closes.
 useAgentTerminalsStore.subscribe((s, prev) => {
   if (s.groupings !== prev.groupings) {
     // Drop dock adapters for groupings that no longer exist.
     for (const id of [...groupingDocks.keys()])
       if (!s.groupings.some((g) => g.id === id)) groupingDocks.delete(id);
-  }
-  if (
-    s.groupings !== prev.groupings ||
-    s.terminals !== prev.terminals ||
-    s.activeGroupingId !== prev.activeGroupingId
-  ) {
-    saveDock(s);
   }
 });
 

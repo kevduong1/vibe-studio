@@ -123,15 +123,6 @@
   background: var(--bg-selected);
   box-shadow: inset 0 0 0 1px var(--accent-muted);
 }
-.activity-btn.active::before {
-  content: "";
-  position: absolute;
-  left: -7px;
-  width: 3px;
-  height: 18px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent);
-}
 .activity-btn svg {
   width: 19px;
   height: 19px;

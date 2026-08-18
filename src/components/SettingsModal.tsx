@@ -508,17 +508,6 @@ function TerminalRecipes({ ws }: { ws: Workspace | null }) {
           <div className="settings-row-main">
             <span className="settings-row-name">{recipe.name}</span>
             <code className="settings-recipe-command">{recipe.command}</code>
-            <label className="settings-recipe-policy">
-              <input
-                type="checkbox"
-                checked={recipe.runOnRestore}
-                onChange={(event) => useTerminalRecipesStore.getState().update(ws.path, {
-                  ...recipe,
-                  runOnRestore: event.target.checked,
-                })}
-              />
-              Run automatically only when this workspace is restored at app launch
-            </label>
           </div>
           <button onClick={() => runTerminalRecipe(ws, recipe)}>Run</button>
           <button
@@ -809,7 +798,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <section className="settings-section">
             <h3>Workspace Terminal Recipes</h3>
             <p className="settings-hint">
-              Local, user-owned commands for {ws?.path ?? "the active project"}. Nothing runs on app restore unless its per-recipe policy is enabled here.
+              Local, user-owned commands for {ws?.path ?? "the active project"}. Recipes run only when you press Run; opening or restoring a project never starts one.
             </p>
             <TerminalRecipes ws={ws} />
           </section>

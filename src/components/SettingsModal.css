@@ -292,14 +292,6 @@
   white-space: nowrap;
 }
 
-.settings-recipe-policy {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--fg-dim);
-  font-size: var(--font-size-sm);
-}
-
 .settings-recipe-add {
   display: grid;
   grid-template-columns: 0.8fr 1.5fr auto;

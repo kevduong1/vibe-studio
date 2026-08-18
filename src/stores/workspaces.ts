@@ -18,7 +18,6 @@ import { disposeWorkspaceLsp, setActiveLspWorkspace } from "../lib/lsp/servers";
 import { disposeSession } from "../lib/termSessions";
 import { confirmSaveDirtyTabs } from "../lib/editorBuffers";
 import { removeAgentTask } from "./agentTasks";
-import { runRestoreTerminalRecipes } from "./terminalRecipes";
 import { createRepoStore, type RepoState, type RepoStore } from "./repo";
 import {
   createEditorStore,
@@ -376,8 +375,6 @@ export async function restoreSession(): Promise<void> {
     for (const p of paths) {
       const before = store.getState().activePath;
       await store.getState().openWorkspace(p, false).catch(() => {});
-      const restored = store.getState().workspaces.find((workspace) => workspace.path === p);
-      if (restored) runRestoreTerminalRecipes(restored);
       if (autoActivated === null && before === null) {
         const after = store.getState().activePath;
         if (after === p) autoActivated = p;

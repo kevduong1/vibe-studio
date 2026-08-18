@@ -1,7 +1,7 @@
 # Isolated agent tasks
 
-Talos can create agent-owned Git worktrees with **New Task** in the
-Worktrees sidebar or titlebar **+** menu.
+Talos can create agent-owned Git worktrees with **New Task** in the Source
+Control **Worktrees** tab or titlebar **+** menu.
 The checkout is an ordinary workspace, while `isolatedTasks.ts` retains the
 task identity and cleanup provenance across workspace close and app restart.
 
@@ -66,15 +66,15 @@ Removal first calls normal `git worktree remove`, preserving Git's dirty
 checkout refusal. Only a second call after explicit confirmation uses the two
 force levels Git requires to override an explicit worktree lock. The primary
 checkout is never removable. A live global terminal
-bound to the checkout blocks removal; successful removal also prunes restored
-non-live global terminal records that still point at the deleted path. It also
+bound to the checkout blocks removal; successful removal also prunes session
+global terminal records that still point at the deleted path. It also
 rebinds every global terminal grouping whose last-workspace navigation target
 was deleted, preferring that grouping's active surviving terminal project, then
 the current workspace, then no target. A grouping can therefore never try to
 reopen a checkout removed through this flow. No task outcome deletes a branch,
 and only `created-by-talos` provenance may offer
-automatic checkout removal. The Worktrees sidebar may also explicitly remove
-any linked checkout after confirmation, regardless of where it was created;
+automatic checkout removal. The Source Control **Worktrees** tab may also
+explicitly remove any linked checkout after confirmation, regardless of where it was created;
 listing the checkout alone still grants no automatic cleanup ownership.
 Removal is also refused when the checkout is the persisted parent of another
 retained task checkout, preventing child merge, fork, and cleanup operations
@@ -105,8 +105,10 @@ worktree removal, and permanent task-record deletion remain separate operations.
 
 ## Repository worktree view
 
-The activity-bar Worktrees sidebar is repository-scoped, not a census of only
-Talos-created tasks. On mount, manual refresh, and Git-metadata watcher events,
+The **Worktrees** tab inside the Source Control sidebar is repository-scoped,
+not a census of only Talos-created tasks. The Changes and Worktrees panes stay
+mounted when switching tabs so in-progress view state is retained. On mount,
+manual refresh, and Git-metadata watcher events,
 it calls `git_worktree_list` for the current workspace. Git remains the source
 of truth for the live set: the main checkout and every linked worktree appear
 even when they were created in another tool. Rows expose the checkout path,
@@ -151,7 +153,7 @@ cannot hide the dialog before its close transition completes.
 
 ## Review and prompt ownership
 
-The Worktrees sidebar's Talos-task rows are the combined evidence surface:
+The Source Control **Worktrees** tab's Talos-task rows are the combined evidence surface:
 whole-task and latest-turn path counts, conflicts, check state, LSP diagnostics,
 commits, preview servers, agent state, and privacy-bounded child-agent
 processes. Each live task card scopes its accent to its persisted worktree

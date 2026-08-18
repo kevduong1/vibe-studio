@@ -1,4 +1,57 @@
 /* Source-control sidebar panel (VSCode SCM style) */
+.source-control-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-sidebar);
+}
+
+.sc-view-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex-shrink: 0;
+  gap: 3px;
+  padding: 7px 8px 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sc-view-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font-size: var(--font-size-sm);
+}
+
+.sc-view-tabs button:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.sc-view-tabs button.active {
+  border-color: var(--accent-muted);
+  color: var(--accent-hover);
+  background: var(--bg-selected);
+}
+
+.sc-view-tabs svg {
+  width: 13px;
+  height: 13px;
+}
+
+.sc-view-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .source-control {
   display: flex;
   flex-direction: column;

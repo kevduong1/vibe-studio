@@ -215,21 +215,6 @@ export default function TerminalPanel() {
   const ws = useWorkspace();
   const [tabMenu, setTabMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
-  // Auto-create the first terminal exactly once. The ref survives React 19
-  // StrictMode's dev double-mount, so we never auto-spawn two tabs — and a
-  // user closing the last tab intentionally is not overridden.
-  const autoCreated = useRef(false);
-  useEffect(() => {
-    if (
-      !autoCreated.current &&
-      Object.keys(ws.terminal.getState().terminals).length === 0
-    ) {
-      autoCreated.current = true;
-      ws.terminal.getState().newTerminal();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const enabled = tabMenu
     ? ws.terminal.getState().terminals[tabMenu.id]?.notificationsEnabled === true
     : false;

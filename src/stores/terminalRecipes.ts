@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { getOrCreateWorkspaceSession } from "../lib/workspaceSessions";
 import type { Workspace } from "./workspaces";
 import { validTerminalRecipe, type TerminalRecipe } from "./terminalRecipeModel";
+import { useUiStore } from "./ui";
 
 export type { TerminalRecipe } from "./terminalRecipeModel";
 
@@ -30,7 +31,6 @@ const load = (): RecipeMap => {
 interface TerminalRecipesState {
   projects: RecipeMap;
   add: (workspacePath: string, name: string, command: string) => void;
-  update: (workspacePath: string, recipe: TerminalRecipe) => void;
   remove: (workspacePath: string, recipeId: string) => void;
 }
 
@@ -45,17 +45,8 @@ export const useTerminalRecipesStore = create<TerminalRecipesState>((set) => ({
           id: crypto.randomUUID(),
           name: name.trim(),
           command: command.trim(),
-          runOnRestore: false,
         },
       ],
-    },
-  })),
-  update: (workspacePath, recipe) => set((state) => ({
-    projects: {
-      ...state.projects,
-      [workspacePath]: (state.projects[workspacePath] ?? []).map((item) =>
-        item.id === recipe.id ? recipe : item,
-      ),
     },
   })),
   remove: (workspacePath, recipeId) => set((state) => ({
@@ -77,15 +68,9 @@ useTerminalRecipesStore.subscribe((state, previous) => {
 });
 
 export function runTerminalRecipe(workspace: Workspace, recipe: TerminalRecipe): string {
+  useUiStore.getState().setPanelGroup("terminal");
   const id = workspace.terminal.getState().newTerminal(recipe.name, "shell");
   const session = getOrCreateWorkspaceSession(workspace, id);
   session.sendText(`${recipe.command}\r`);
   return id;
-}
-
-export function runRestoreTerminalRecipes(workspace: Workspace): void {
-  const recipes = useTerminalRecipesStore.getState().projects[workspace.path] ?? [];
-  for (const recipe of recipes) {
-    if (recipe.runOnRestore) runTerminalRecipe(workspace, recipe);
-  }
 }

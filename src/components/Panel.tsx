@@ -3,7 +3,7 @@
  * kinds of tab: "Project Terminals" (leftmost — the active workspace's
  * tabbed terminals; every workspace's body stays mounted, display:none, same
  * survival rule as the workspace views) and any number of global terminal
- * groupings (each a persistent dock tree mounted exactly once, so its
+ * groupings (each a session-only dock tree mounted exactly once, so its
  * terminals live across workspace switches; "+" adds a grouping, double-click
  * renames it, right-click closes it).
  */

@@ -47,7 +47,6 @@ import {
   IcFolderOpen,
   IcSearch,
   IcSparkle,
-  IcTree,
 } from "./components/icons";
 import { listenAgentNotificationActivations } from "./lib/agentInbox";
 import { listenNativeAgentSessionCapture } from "./lib/nativeAgentSessions";
@@ -62,7 +61,6 @@ import {
 const SettingsModal = lazy(() => import("./components/SettingsModal"));
 const AgentLaunchDialog = lazy(() => import("./components/AgentLaunchDialog"));
 const WorktreeDialog = lazy(() => import("./components/WorktreeDialog"));
-const IsolatedTasksPanel = lazy(() => import("./components/IsolatedTasksPanel"));
 
 /** Slim far-left icon strip for switching sidebar panels. */
 function ActivityBar() {
@@ -104,14 +102,6 @@ function ActivityBar() {
         onClick={() => setSidebarTab("explorer")}
       >
         <IcFile />
-      </button>}
-      {ws && <button
-        className={`activity-btn ${active("tasks") ? "active" : ""}`}
-        title="Git Worktrees"
-        aria-pressed={active("tasks")}
-        onClick={() => setSidebarTab("tasks")}
-      >
-        <IcTree />
       </button>}
       {ws && <button
         className={`activity-btn ${active("search") ? "active" : ""}`}
@@ -225,10 +215,6 @@ function WorkspaceSidebarContent({ visible }: { visible: boolean }) {
         <FileExplorer />
       ) : sidebarTab === "search" ? (
         <SearchPanel />
-      ) : sidebarTab === "tasks" ? (
-        <Suspense fallback={<div className="sidebar-empty">Loading worktrees…</div>}>
-          <IsolatedTasksPanel />
-        </Suspense>
       ) : sidebarTab === "memories" ? (
         <MemoriesPanel />
       ) : (

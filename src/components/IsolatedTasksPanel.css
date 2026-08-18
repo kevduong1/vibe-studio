@@ -21,11 +21,11 @@
 .isolated-tasks-empty { padding: 22px 14px; color: var(--fg-dim); line-height: 1.5; }
 .worktree-load-error { display: grid; gap: 7px; margin: 8px; padding: 8px; border: 1px solid var(--danger); border-radius: 4px; color: var(--danger); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .worktree-load-error button { justify-self: start; padding: 3px 7px; border: 1px solid var(--border); border-radius: 3px; color: var(--fg); }
-.isolated-task-card { border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 5px; background: var(--bg-hover); overflow: hidden; }
-.isolated-task-card.current { border-color: var(--border); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.worktree-card { border: 1px solid var(--border-subtle); border-left: 3px solid var(--accent); border-radius: 6px; background: color-mix(in srgb, var(--bg-hover) 72%, transparent); overflow: hidden; }
-.worktree-card:hover { border-color: var(--border); border-left-color: var(--accent); background: var(--bg-hover); }
-.worktree-card.current { border-color: var(--border); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.isolated-task-card { border: 1px solid var(--border); border-radius: 5px; background: var(--bg-hover); overflow: hidden; }
+.isolated-task-card.current { border-color: var(--border); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.worktree-card { border: 1px solid var(--border-subtle); border-radius: 6px; background: color-mix(in srgb, var(--bg-hover) 72%, transparent); overflow: hidden; }
+.worktree-card:hover { border-color: var(--border); background: var(--bg-hover); }
+.worktree-card.current { border-color: var(--border); background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .worktree-card-content { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 9px 8px 10px; }
 .worktree-card-copy { display: grid; gap: 3px; min-width: 0; }
 .worktree-card-title-row { display: flex; min-width: 0; align-items: center; gap: 7px; }

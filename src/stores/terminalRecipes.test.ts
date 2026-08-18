@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { validTerminalRecipe } from "./terminalRecipeModel";
 
 describe("terminal recipes", () => {
-  it("requires an explicit boolean restore policy", () => {
-    expect(validTerminalRecipe({ id: "a", name: "Dev", command: "pnpm dev", runOnRestore: false })).toBe(true);
-    expect(validTerminalRecipe({ id: "a", name: "Dev", command: "pnpm dev" })).toBe(false);
+  it("accepts manual recipes and ignores legacy restore metadata", () => {
+    expect(validTerminalRecipe({ id: "a", name: "Dev", command: "pnpm dev" })).toBe(true);
+    expect(validTerminalRecipe({ id: "a", name: "Dev", command: "pnpm dev", runOnRestore: true })).toBe(true);
   });
 
   it("rejects empty commands", () => {
-    expect(validTerminalRecipe({ id: "a", name: "Dev", command: " ", runOnRestore: true })).toBe(false);
+    expect(validTerminalRecipe({ id: "a", name: "Dev", command: " " })).toBe(false);
   });
 });

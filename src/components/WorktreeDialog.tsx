@@ -20,7 +20,7 @@ import "./WorktreeDialog.css";
 export type WorktreeDialogMode = "create" | "create-agent" | "open";
 
 /** Open the app-level task/worktree dialog from repository-scoped UI such as
- * the Worktrees sidebar. App owns the overlay so switching workspaces during
+ * the Source Control Worktrees tab. App owns the overlay so switching workspaces during
  * creation cannot hide it inside an inactive workspace tree. */
 export const requestNewIsolatedTask = (workspacePath: string): void => {
   window.dispatchEvent(new CustomEvent("talos:new-isolated-task", {

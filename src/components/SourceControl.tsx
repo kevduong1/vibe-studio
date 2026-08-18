@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -41,8 +43,11 @@ import {
   IcSpinner,
   IcSync,
   IcTrash,
+  IcTree,
 } from "./icons";
 import "./SourceControl.css";
+
+const IsolatedTasksPanel = lazy(() => import("./IsolatedTasksPanel"));
 
 /* ----------------------------------------------------------------------- */
 /* Collapsible section                                                      */
@@ -250,7 +255,7 @@ function FileRow({ file, staged }: { file: FileStatus; staged: boolean }) {
 
 const MAX_INPUT_HEIGHT = 6 * 18 + 12; // 6 lines * line-height + padding
 
-export default function SourceControl() {
+function SourceControlChanges() {
   const ws = useWorkspace();
   const { status, stashes, syncing } = useRepo(
     useShallow((s) => ({
@@ -809,6 +814,55 @@ export default function SourceControl() {
             <GitGraph />
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+type SourceControlView = "changes" | "worktrees";
+
+/** Source Control owns Git changes and repository worktrees as sibling tabs.
+ * Both panes stay mounted so draft commit messages, filters, and expanded task
+ * cards survive tab switches. */
+export default function SourceControl() {
+  const [view, setView] = useState<SourceControlView>("changes");
+  return (
+    <div className="source-control-shell">
+      <div className="sc-view-tabs" role="tablist" aria-label="Source Control views">
+        <button
+          className={view === "changes" ? "active" : ""}
+          role="tab"
+          aria-selected={view === "changes"}
+          onClick={() => setView("changes")}
+        >
+          <IcBranch />
+          Changes
+        </button>
+        <button
+          className={view === "worktrees" ? "active" : ""}
+          role="tab"
+          aria-selected={view === "worktrees"}
+          onClick={() => setView("worktrees")}
+        >
+          <IcTree />
+          Worktrees
+        </button>
+      </div>
+      <div
+        className="sc-view-pane"
+        role="tabpanel"
+        style={{ display: view === "changes" ? undefined : "none" }}
+      >
+        <SourceControlChanges />
+      </div>
+      <div
+        className="sc-view-pane"
+        role="tabpanel"
+        style={{ display: view === "worktrees" ? undefined : "none" }}
+      >
+        <Suspense fallback={<div className="sidebar-empty">Loading worktrees…</div>}>
+          <IsolatedTasksPanel />
+        </Suspense>
       </div>
     </div>
   );

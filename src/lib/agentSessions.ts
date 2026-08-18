@@ -23,6 +23,7 @@ import {
 } from "./agentLaunchProgram";
 import { codexCliCommand } from "./codexTerminalTitle";
 import { isolatedTaskForPath } from "../stores/isolatedTasks";
+import { useUiStore } from "../stores/ui";
 
 /** The (possibly already-running) session for an agent terminal. */
 export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
@@ -87,9 +88,9 @@ const AGENT_COMMAND: Record<Exclude<TerminalKind, "shell">, string> = {
  * UI-facing create: places the tab and queues the selected agent into the shell.
  * The session is created eagerly (the tab's pane host only mounts on the
  * NEXT render); its shell still spawns lazily on first attach, and sendText
- * queues until that spawn settles (same pattern as taskRunner). Restored
- * layouts respawn via the mount path, NOT here — a relaunch brings back
- * plain shells, not a surprise fleet of agents.
+ * queues until that spawn settles (same pattern as taskRunner). Global
+ * terminal layouts are session-only, so relaunch never respawns a shell or
+ * agent until the user explicitly creates one.
  */
 export function openAgentTerminal(
   workspacePath: string,
@@ -101,6 +102,9 @@ export function openAgentTerminal(
     setupCommand?: string;
   },
 ): string {
+  // Global terminals are opt-in too. An explicit launch should reveal the
+  // dock, but app/workspace restoration never reaches this helper.
+  useUiStore.getState().setPanelGroup("agent");
   const kind = opts?.kind ?? "claude";
   const id = useAgentTerminalsStore.getState().newTerminal(workspacePath, {
     groupId: opts?.groupId,

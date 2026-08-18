@@ -15,9 +15,9 @@ Plain shell tabs have no requested identity and acquire a dynamic
 Claude/Codex identity only while an exact supported executable is their PTY
 descendant.
 
-Runtime state is ephemeral. Global tab metadata and layouts persist, but PTYs
-and semantic state do not. After an app restart, restored agent tabs open as
-fresh shells and correctly show **No Agent** until an agent is launched.
+Runtime state is ephemeral. Global tab metadata, layouts, PTYs, and semantic
+state are all session-only. After an app restart, both terminal docks start
+closed and empty; terminals exist only after an explicit user or task action.
 
 ## State model
 
@@ -331,8 +331,9 @@ never a false `idle`. Chrome treats `null` as no badge — a terminal that never
 held an agent must not present as a quiet one.
 
 The activity rail's top, global section opens **Agent Sessions** over both
-docks; workspace-scoped Explorer, Worktrees, Search, Source Control, and
-Memories live below a divider. The view remains available with no workspace
+docks; workspace-scoped Explorer, Search, Source Control, and Memories live
+below a divider, with Worktrees as an internal Source Control tab. The view
+remains available with no workspace
 open, preserves stable live-session sections, routes to the exact
 workspace/group/tab/session, and projects review state beside (never into)
 lifecycle state. Each row also resolves a large 80px pixel-art avatar tile
@@ -420,9 +421,9 @@ authority, and stable terminal/workspace identity. See
 
 ## Alerts
 
-Notifications are opt-in per terminal. Global-tab toggles persist with global
-tab metadata; project-tab toggles are ephemeral. One notification identifier
-per terminal replaces repeated banners rather than stacking them.
+Notifications are opt-in per terminal and session-only in both docks. One
+notification identifier per terminal replaces repeated banners rather than
+stacking them.
 
 Alerts fire once for a background transition into blocked and once when a
 completed turn becomes unseen Done. They are dismissed on acknowledgement,

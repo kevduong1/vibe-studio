@@ -24,6 +24,7 @@ import {
 } from "./agentLaunchProgram";
 import { codexCliCommand } from "./codexTerminalTitle";
 import { isolatedTaskForPath } from "../stores/isolatedTasks";
+import { useUiStore } from "../stores/ui";
 
 /** The (possibly already-running) session for a workspace terminal. */
 export function getOrCreateWorkspaceSession(
@@ -69,6 +70,9 @@ export function openWorkspaceTerminal(
   prelude?: string,
   setupCommand?: string,
 ): string {
+  // Project terminals are opt-in. Once an explicit launch reaches this helper,
+  // reveal the dock; opening/restoring a workspace never calls it implicitly.
+  useUiStore.getState().setPanelGroup("terminal");
   const id = ws.terminal.getState().newTerminal(undefined, kind);
   if (kind !== "shell") {
     const session = getOrCreateWorkspaceSession(ws, id);

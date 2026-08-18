@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   groupingAfterWorkspaceDeleted,
+  useAgentTerminalsStore,
   type AgentTerminal,
   type GlobalTermGrouping,
 } from "./agentTerminals";
@@ -27,6 +28,13 @@ const grouping = (lastActiveWorkspacePath: string | null): GlobalTermGrouping =>
 });
 
 describe("global terminal workspace memory", () => {
+  it("starts every app session without restored terminal layouts", () => {
+    const state = useAgentTerminalsStore.getState();
+    expect(state.terminals).toEqual({});
+    expect(state.groupings).toEqual([]);
+    expect(state.activeGroupingId).toBeNull();
+  });
+
   it("rebinds a deleted path to the active surviving terminal", () => {
     const value = grouping("/repo/deleted");
     const terminals = {

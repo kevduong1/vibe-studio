@@ -6,8 +6,7 @@ export type SidebarTab =
   | "explorer"
   | "search"
   | "scm"
-  | "memories"
-  | "tasks";
+  | "memories";
 export type AgentSessionsView = "all" | "attention";
 /** Bottom-panel sides: per-workspace terminals vs the global terminal
  *  groupings (which grouping is in front lives in stores/agentTerminals). */
@@ -84,7 +83,7 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarWidth: 320,
   agentSessionsView: "all",
   agentSessionsQuietExpanded: true,
-  panelVisible: true,
+  panelVisible: false,
   panelHeight: 280,
   panelGroup: "terminal",
   panelMaximized: false,

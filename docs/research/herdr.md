@@ -46,8 +46,8 @@ task.
 - [x] Support opt-in blocked/completion alerts in both docks with one
   replaceable notification per terminal.
 - [x] Return exited agents to No Agent and detect a relaunch in the same tab.
-- [x] Keep runtime/seen state ephemeral and restore global tabs as fresh
-  shells.
+- [x] Keep runtime/seen state and terminal layouts ephemeral; start every app
+  session with both docks closed and empty.
 - [x] Preserve the intentional `codex --yolo` launch default in both docks.
 - [x] Keep the existing related-repository/worktree titlebar grouping.
 - [x] Add frontend state/detection tests and Rust process-snapshot tests.
@@ -227,8 +227,8 @@ roadmap:
 
 - [x] Open localhost terminal links directly in Preview.
 - [x] Add explicit copy/open-last-N-lines actions.
-- [x] Persist workspace terminal recipes with an explicit run-on-restore
-  policy.
+- [x] Persist manual-only workspace terminal recipes; opening or restoring a
+  project never runs them.
 - [x] Send an editor selection, file, or diff to an agent.
 - [x] Discover Claude/Codex launched inside tabs created as plain shells.
 - [x] Add versioned screen-profile updates and an internal explain/debug view.
@@ -250,8 +250,8 @@ roadmap:
   [`agentRuntime.ts`](../../src/stores/agentRuntime.ts): semantic model,
   detection, transitions, and rollups.
 - [`agentSessions.ts`](../../src/lib/agentSessions.ts) and
-  [`workspaceSessions.ts`](../../src/lib/workspaceSessions.ts): current launch
-  and restore behavior in both docks.
+  [`workspaceSessions.ts`](../../src/lib/workspaceSessions.ts): explicit launch
+  behavior in both docks.
 - [`terminalActivity.ts`](../../src/lib/terminalActivity.ts) and
   [`termSession.ts`](../../src/lib/termSession.ts): activity/OSC fallback and
   bounded xterm-tail inspection.
@@ -260,8 +260,8 @@ roadmap:
   notification identity.
 - [`agentTerminals.ts`](../../src/stores/agentTerminals.ts),
   [`workspaces.ts`](../../src/stores/workspaces.ts), and
-  [`Titlebar.tsx`](../../src/components/Titlebar.tsx): terminal persistence,
-  workspace identity, and related-repository grouping.
+  [`Titlebar.tsx`](../../src/components/Titlebar.tsx): session-only terminal
+  grouping, workspace identity, and related-repository navigation.
 - [`git.rs`](../../src-tauri/src/git.rs),
   [`taskRunner.ts`](../../src/lib/taskRunner.ts), and
   [`DiffViewer.tsx`](../../src/components/DiffViewer.tsx): seams for worktrees,

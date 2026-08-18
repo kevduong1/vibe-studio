@@ -37,8 +37,8 @@ across launches.
   instant and nothing reloads
 - Jump with **⌘1–9**, double-click a tab to rename it, right-click to pick a
   **per-project accent color** that tints the whole app
-- Session restore: your workspaces, layouts, and agent terminals come back
-  on relaunch
+- Session restore brings workspaces and editor tabs back on relaunch, while
+  terminal docks deliberately start closed and empty
 
 ### 🌱 Source control
 
@@ -58,7 +58,8 @@ across launches.
 
 ### 🤖 Global terminals
 
-A global dock for persistent shells and AI coding agents:
+A global dock for long-running shells and AI coding agents during the current
+app session:
 
 - Start a plain shell, **Claude Code**, or **Codex** in the project root —
   quit an agent and you're back in its shell
@@ -95,16 +96,17 @@ A global dock for persistent shells and AI coding agents:
   shortcut, or **⌘⇧I**) combines both docks in attention / active / quiet
   sections, with exact-terminal navigation, a bounded review-context peek,
   independent review status, and check evidence
-- Drag & drop tabs into splits; layout persists across restarts
+- Drag & drop tabs into splits; the layout survives workspace switches during
+  the current app session, and a relaunch starts with an empty dock
 - Drop a file or image from Finder onto a pane to paste its path — image
   drops work with Claude Code out of the box
 
 ### ✨ Agent Sessions & review
 
-Agent Sessions turns live agent activity into persistent global navigation
+Agent Sessions turns live agent activity into global navigation
 across global and project terminals. It sits above a divider in the activity
-rail; Explorer, Worktrees, Search, Source Control, and Memories remain
-workspace-specific below it.
+rail; Explorer, Search, Source Control, and Memories remain workspace-specific
+below it, with Worktrees available as a tab inside Source Control.
 
 - Open it from the top activity icon, the top-right titlebar shortcut, or with
   **⌘⇧I**. It remains available with no repository open. **Attention** shows
@@ -151,9 +153,9 @@ workspace-specific below it.
   nonfatal message.
 
 This first version is intentionally a live-session navigator, not provider
-transcript history: terminal metadata/layout may persist, but PTYs, lifecycle,
-review state, and terminal text remain session-only. Restored global tabs still
-start as fresh shells.
+transcript history: terminal metadata/layout, PTYs, lifecycle, review state,
+and terminal text are all session-only. Relaunching Talos starts both terminal
+docks closed and empty.
 
 Each dedicated agent launch owns a session-only review task tied to that exact
 terminal occupant. Review state is intentionally independent from terminal
@@ -178,7 +180,7 @@ or was approved.
   repository changes after acceptance, Agent Sessions marks that approval stale.
 - Agents in a normal workspace still use “all repository changes since the
   base commit” scope. For isolated ownership, choose **New Task…** from the
-  Worktrees sidebar or titlebar **+** menu.
+  Source Control **Worktrees** tab or titlebar **+** menu.
 
 ### 🌿 Git worktrees & isolated agent tasks
 
@@ -187,13 +189,13 @@ or was approved.
   agent. The root is configurable;
   repositories can opt into bootstrap, ignored-file includes, and a preview
   port range with `.talos/worktrees.json`.
-- The Worktrees sidebar lists the main checkout and every linked worktree Git
-  knows about for the current repository, including worktrees created outside
+- The **Worktrees** tab in Source Control lists the main checkout and every
+  linked worktree Git knows about for the current repository, including worktrees created outside
   Talos. It shows branch/detached state, HEAD, main/linked and
   locked/prunable status, and lets you open or switch to another checkout.
   Ordinary worktrees stay in compact rows; Talos-owned task rows expand for
-  review evidence, plans, feedback, and lifecycle actions. The activity-bar
-  tree icon opens this view. Ordering remains stable while switching: the main
+  review evidence, plans, feedback, and lifecycle actions. Ordering remains
+  stable while switching: the main
   checkout comes first, followed by branch and path, while **Current** is only
   a status badge.
   Live Git data remains authoritative; ordinary worktrees are never silently
@@ -262,6 +264,9 @@ Repository checks come from `.vscode/tasks.json`:
 
 ### ⌨️ Project terminals
 
+- Opening or restoring a repository never starts a shell. The terminal panel
+  stays closed and empty until an explicit terminal, task, check, or recipe
+  action needs it.
 - Real PTYs running your login shell, Claude Code, or Codex, with tabs,
   side-by-side splits, and drag-and-drop layout
 - Dedicated Codex tabs intentionally launch with `codex --yolo` by default
@@ -276,8 +281,9 @@ Repository checks come from `.vscode/tasks.json`:
   explicit, revocable per-project approval. Checks use fresh reserved terminals
   and compare the repository before/after execution, rerunning once when a
   formatter changes the tree rather than certifying untested edits
-- Settings can save user-owned commands as per-project terminal recipes. Each
-  recipe has its own explicit run-on-restore switch; recipes default to off.
+- Settings can save user-owned commands as per-project terminal recipes.
+  Recipes are always manual and never run merely because a repository opens or
+  is restored.
 
 ### ✍️ Editor & navigation
 
@@ -427,7 +433,7 @@ Notes:
 - The `rm -rf` matters: `ditto` *merges* into an existing bundle, so copying
   over an old install can leave stale files behind if something was renamed
   or removed between builds. Deleting first guarantees a clean bundle.
-- Settings survive updates — persisted state (workspaces, terminal layouts,
+- Settings survive updates — persisted state (workspaces, editor state,
   project colors) lives in WebKit storage under `~/Library/` keyed by bundle
   id, not inside the .app. The dev build (`pnpm tauri dev`) keeps its own
   separate state.
