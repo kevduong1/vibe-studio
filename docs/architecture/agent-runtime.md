@@ -23,6 +23,10 @@ independent presentation color. The panel derives one project-colored folder
 glyph per distinct terminal `workspacePath` in the grouping, including a
 project whose workspace is currently closed but whose global terminal remains
 live.
+Each global terminal snapshots the source workspace's credential-free
+Git-family ID and derived repository label at creation. That metadata is
+presentation-only and session-only, but lets Agent Sessions keep a global
+terminal in its repository/worktree family after the source workspace closes.
 
 ## State model
 
@@ -367,18 +371,25 @@ below a divider, with Worktrees as an internal Source Control tab. The view
 remains available with no workspace
 open, preserves stable live-session sections, routes to the exact
 workspace/group/tab/session, and projects review state beside (never into)
-lifecycle state. Agent Sessions shows the background summary as a small row
-chip. An idle row reads `Idle · 1 shell running`; working/Done rows keep their
-lifecycle chip and show the background summary alongside it. The row remains
-in its ordinary active/quiet section because background work does not require
-attention. Dock badges and semantic tooltips expose the same summary, while
-rollups continue to treat the session as idle. Each row also resolves a large
-80px pixel-art avatar tile
+lifecycle state. The default projection groups rows alphabetically by the same
+credential-free Git-family identity as titlebar tabs, so linked worktrees (and
+equivalent open clones) stay together; checkout and session names break ties
+within a family. A session-name A–Z projection is also available. Attention is
+a filter over the selected alphabetical projection, not a third ordering.
+Agent Sessions shows the background summary as a small row chip. An idle row
+reads `Idle · 1 shell running`; working/Done rows keep their lifecycle chip and
+show the background summary alongside it. Background work does not require
+attention, so it does not affect the Attention filter; dock badges and semantic
+tooltips expose the same summary while rollups continue to treat the session as
+idle. Each row resolves a large 80px pixel-art avatar tile
 through the pure `agentAvatars.ts` personality/sprite/state model and the
 `AgentAvatar.tsx` Canvas renderer. Character identity is a pure function of the
 project's current palette index and the *detected* runtime kind (not the tab's
 requested/default kind), so changing a project's color updates visible rows
-immediately:
+immediately; its deity name is printed below the tile. The row also carries an
+explicit repository label plus exact checkout/worktree, live branch when the
+workspace is open (or a known isolated-task branch), full path in the tooltip,
+and any nonredundant tab label:
 
 | Project color | Claude | Codex |
 |---|---|---|
@@ -434,19 +445,22 @@ module-level `requestAnimationFrame` clock serves only rows intersecting the
 viewport, each Canvas redraws only when its four-frame index actually changes,
 and a per-deity phase offset keeps rows from blinking in lockstep; offscreen
 rows freeze on the state's descriptive frame.
-Only an unseen blocked prompt adds a CSS attention-ring pulse, while an
-acknowledged prompt keeps its waiting loop without the ring. `absent` draws an
-empty, desaturated, slashed, non-animated tile next to the explicit **No
-Agent** chip; it must never imply a live quiet agent. `prefers-reduced-motion`
-freezes the most descriptive pose for the state and does not subscribe that
-row to the animation clock. Avatar identity and state are exposed through
-title/ARIA while the textual lifecycle chip remains the authoritative
-non-visual presentation.
+Working/starting tiles add a slow project-accent square-ring pulse. Any row the
+review model currently considers actionable (blocked/Done/conflict/check/review
+attention) uses a faster blinking warning ring instead, while idle/unknown
+portraits are partially desaturated. `absent` draws an empty, desaturated,
+slashed tile next to the explicit **No Agent** chip; it must never imply a live
+quiet agent. `prefers-reduced-motion` freezes the most descriptive pose, does
+not subscribe that row to the animation clock, and freezes CSS ring animation
+without dropping the ring's status color. Avatar identity and state are
+exposed through title/ARIA while the textual lifecycle chip remains the
+authoritative non-visual presentation.
 
-An attention filter and badge reuse the strict semantic ordering, while active
-and quiet rows retain stable registration order. The titlebar shortcut and
-⌘⇧I reveal this view; detailed review/check controls remain available through
-its review action. Task ownership, review evidence, checks, and context-peek
+The Attention filter and badge reuse the actionable predicate but preserve the
+chosen alphabetical order; strict urgency/age sorting remains in the detailed
+review overlay and attention-cycling command. The titlebar shortcut and ⌘⇧I
+reveal this view; detailed review/check controls remain available through its
+review action. Task ownership, review evidence, checks, and context-peek
 privacy are specified in
 [`attention-review.md`](attention-review.md).
 

@@ -9,6 +9,7 @@
  * changes; non-React code (store actions, dialogs) reads projectDisplayName
  * directly.
  */
+import { useMemo } from "react";
 import { create } from "zustand";
 import { basename } from "./path";
 
@@ -86,6 +87,6 @@ export function useProjectDisplayName(path: string): string {
 
 /** Reactive lookup for callers mapping over many paths (the tab strip). */
 export function useProjectDisplayNames(): (path: string) => string {
-  useNamesVersion();
-  return projectDisplayName;
+  const version = useNamesVersion((state) => state.version);
+  return useMemo(() => (path: string) => projectDisplayName(path), [version]);
 }

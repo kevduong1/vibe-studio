@@ -97,11 +97,12 @@ app session:
   questions/permissions or unseen completion; clicking a banner returns to
   the exact terminal
 - A global **Agent Sessions** view (the first activity-rail item, the titlebar
-  shortcut, or **⌘⇧I**) combines both docks in attention / active / quiet
-  sections, with exact-terminal navigation, a bounded review-context peek,
-  independent review status, and check evidence. Claude background shells,
-  monitors, teams, and local agents appear as a live count/summary chip without
-  making an otherwise input-ready session look Working
+  shortcut, or **⌘⇧I**) combines both docks in alphabetical repository-family
+  sections (or a session-name A–Z list), with exact-terminal navigation, a
+  bounded review-context peek, independent review status, and check evidence.
+  Claude background shells, monitors, teams, and local agents appear as a live
+  count/summary chip without making an otherwise input-ready session look
+  Working
 - Drag & drop tabs into splits; the layout survives workspace switches during
   the current app session, and a relaunch starts with an empty dock
 - Drop a file or image from Finder onto a pane to paste its path — image
@@ -118,15 +119,21 @@ below it, with Worktrees available as a tab inside Source Control.
   **⌘⇧I**. It remains available with no repository open. **Attention** shows
   actionable agents; **All** includes active, idle, accepted, and unavailable
   sessions.
-- Actionable items keep the strict urgency order: **Needs Input**, conflicts or
-  failed checks, then completed/unreviewed/stale approvals. Active and quiet
-  rows keep stable registration order so normal status ticks do not move the
-  session you were about to select.
+- Sorting defaults to repository name, using the same Git-family identity as
+  titlebar tabs so linked worktrees and equivalent open clones stay together;
+  checkout and session names sort alphabetically within each family. The sort
+  menu can switch to one flat session-name A–Z list. **Attention** filters the
+  chosen alphabetical order instead of replacing it with urgency ranking; the
+  detailed review overlay keeps its strict actionable urgency order.
 - Every row includes a state-aware pixel-art avatar, agent identity,
-  terminal/topic title, project, elapsed time, textual lifecycle state, and
-  separate background/review/check evidence. Idle Claude sessions with live
-  background tasks remain safely promptable and read, for example,
-  **Idle · 1 shell running**. The avatar character follows the source
+  terminal/topic title, repository, checkout/worktree, current branch when
+  known, elapsed time, textual lifecycle state, and separate
+  background/review/check evidence. Idle Claude sessions with live background
+  tasks remain safely promptable and read, for example, **Idle · 1 shell
+  running**. The avatar's deity name is printed below the portrait. Working and
+  starting portraits pulse an accent-colored square ring, actionable sessions
+  blink a warning ring, and idle/unknown portraits are partially desaturated.
+  The avatar character follows the source
   project's editable color and the detected agent: Blue uses Athena/Zeus,
   Purple Hera/Hades, Green Artemis/Demeter, and Orange Hermes/Hephaestus for
   Claude/Codex respectively; Pink uses Aphrodite, Cyan Poseidon, Yellow Apollo,
@@ -145,8 +152,8 @@ below it, with Worktrees available as a tab inside Source Control.
   restrained project-colored pool of light. Animation remains deliberately
   quiet: a slow breath, a blink, a one-pixel relic tap and glint, and pulsing
   cues/aura—nothing walks, sweeps, or flickers across the tile.
-  Reduced-motion users receive a descriptive static frame; **No Agent** is an
-  explicitly empty, desaturated box and never animates.
+  Reduced-motion users receive a descriptive static frame and static status
+  ring; **No Agent** is an explicitly empty, desaturated box.
   Detected child
   agent processes appear as a bounded count, not as invented conversation
   history.

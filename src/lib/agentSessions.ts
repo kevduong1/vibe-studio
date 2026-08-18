@@ -24,6 +24,8 @@ import {
 import { codexCliCommand } from "./codexTerminalTitle";
 import { isolatedTaskForPath } from "../stores/isolatedTasks";
 import { useUiStore } from "../stores/ui";
+import { useWorkspacesStore } from "../stores/workspaces";
+import { repositoryNameFromGroupId } from "./agentSessionsView";
 
 /** The (possibly already-running) session for an agent terminal. */
 export function getOrCreateAgentSession(t: AgentTerminal): TermSession {
@@ -106,9 +108,17 @@ export function openAgentTerminal(
   // dock, but app/workspace restoration never reaches this helper.
   useUiStore.getState().setPanelGroup("agent");
   const kind = opts?.kind ?? "claude";
+  const workspace = useWorkspacesStore
+    .getState()
+    .workspaces.find((candidate) => candidate.path === workspacePath);
+  const repositoryId = workspace?.tabGroupId;
   const id = useAgentTerminalsStore.getState().newTerminal(workspacePath, {
     groupId: opts?.groupId,
     kind,
+    repositoryId,
+    repository: repositoryId
+      ? repositoryNameFromGroupId(repositoryId, workspacePath)
+      : undefined,
   });
   const t = useAgentTerminalsStore.getState().terminals[id];
   if (t && kind !== "shell") {

@@ -112,15 +112,17 @@ The top, global activity-rail item opens a persistent Agent Sessions sidebar
 that fills the resizable sidebar width and aggregates registered live sessions
 from both docks, including while no workspace is open. The activity rail
 separates this global item from workspace-scoped views with a divider. **All**
-groups actionable, active, and quiet rows; active/quiet rows retain stable
-registration order so normal
-activity does not move the user's target. **Attention** contains only
-actionable items and uses the strict queue order: Needs Input;
-conflicts/current failed checks;
-Done/Unreviewed/Reviewed/Approval Stale; Working/Starting; then
-Feedback/Clean/Accepted/Idle/Unknown/No Agent. Ties use oldest stable attention
-time, project, terminal title, and terminal ID. The activity icon carries the
-actionable count without collapsing lifecycle and review into one state.
+defaults to repository-name A–Z sections keyed by the titlebar's Git-family
+identity, keeping linked worktrees/equivalent open clones together and sorting
+their checkout/session names alphabetically. It can instead show one flat
+session-name A–Z list. **Attention** contains only actionable items but retains
+the chosen alphabetical projection; it is a filter, not an urgency sort. The
+detailed review overlay and ⌘⌥↓/↑ attention cycling keep the strict queue order:
+Needs Input; conflicts/current failed checks; Done/Unreviewed/Reviewed/Approval
+Stale; Working/Starting; then Feedback/Clean/Accepted/Idle/Unknown/No Agent.
+Ties there use oldest stable attention time, project, terminal title, and
+terminal ID. The activity icon carries the actionable count without collapsing
+lifecycle and review into one state.
 
 All entry points call `focusAgentTerminal(id)`. Workspace terminals activate
 their open workspace, Project Terminals panel, dock group, and exact tab. Global
@@ -144,7 +146,12 @@ selection, visible focus, text labels in addition to color, and Escape/outside
 dismissal. The titlebar shortcut and ⌘⇧I reveal Agent Sessions. Each row's
 accent-derived selection, focus, and state styling uses that terminal's
 path-keyed project color rather than the currently active workspace's color;
-the selected review detail inherits the same project scope.
+the selected review detail inherits the same project scope. Sidebar rows show
+the repository, exact checkout/worktree, current branch when known, and deity
+name alongside the topic/tab title. Working/starting avatar tiles pulse a
+project-accent ring, actionable rows blink a warning ring, and idle/unknown
+tiles are partially desaturated; reduced motion freezes those animations while
+preserving their static state styling.
 
 Rows also show Claude's live background-task summary as an orthogonal chip.
 Idle-with-background reads `Idle · 1 shell running`, stays in the normal quiet
