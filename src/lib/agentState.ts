@@ -15,6 +15,13 @@ export type AgentReason =
   | "error"
   | "notification";
 
+export interface AgentBackgroundWork {
+  /** Total running background tasks parsed from the CLI's live footer. */
+  count: number;
+  /** The CLI's own comma-joined summary, for example "2 shells, 1 monitor". */
+  summary: string;
+}
+
 export interface AgentRuntimeState {
   terminalId: string;
   workspacePath: string;
@@ -34,6 +41,9 @@ export interface AgentRuntimeState {
   authority?: AgentAuthority;
   reason?: AgentReason;
   matchedRule?: string;
+  /** Live screen-derived annotation, orthogonal to lifecycle and never
+   * persisted. An idle agent with background work still accepts input. */
+  background?: AgentBackgroundWork;
 }
 
 export type AgentDisplayState =
@@ -133,6 +143,16 @@ export const displayLabel = (display: AgentDisplayState): string => {
   }
 };
 
+/** Human-readable state text for surfaces with room for the orthogonal
+ * background-work annotation. Input semantics continue to use lifecycle. */
+export const agentStateLabel = (state: AgentRuntimeState): string => {
+  const display = displayAgentState(state);
+  const label = displayLabel(display);
+  return state.background && display === "idle"
+    ? `${label} · ${state.background.summary} running`
+    : label;
+};
+
 export const agentStateTooltip = (state: AgentRuntimeState): string => {
   const display = displayAgentState(state);
   const lines = [
@@ -141,6 +161,7 @@ export const agentStateTooltip = (state: AgentRuntimeState): string => {
   if (state.requestedKind && state.requestedKind !== state.kind) {
     lines.push(`Tab default: ${state.requestedKind === "claude" ? "Claude" : "Codex"}`);
   }
+  if (state.background) lines.push(`Background: ${state.background.summary}`);
   if (state.reason) lines.push(`Reason: ${reasonLabel(state.reason)}`);
   if (state.authority) lines.push(`Authority: ${state.authority}`);
   lines.push(`Changed: ${new Date(state.changedAt).toLocaleString()}`);
@@ -164,6 +185,20 @@ export const agentAlertAction = (
 ): AgentAlertAction => {
   const before = displayAgentState(previous);
   const after = displayAgentState(current);
+  // Annotation-only refreshes are not alert edges. They may publish runtime
+  // state (and update diagnostics) without dismissing or creating a banner.
+  if (
+    previous &&
+    current &&
+    previous.terminalId === current.terminalId &&
+    previous.generation === current.generation &&
+    previous.occupancy === current.occupancy &&
+    previous.lifecycle === current.lifecycle &&
+    previous.seen === current.seen &&
+    previous.authority === current.authority &&
+    previous.reason === current.reason &&
+    previous.matchedRule === current.matchedRule
+  ) return "none";
   // A process-table outage temporarily masks an otherwise unchanged
   // generation as occupancy=unknown. Restoring that same semantic evidence
   // is not a new blocked/completion edge and must not replay its alert.

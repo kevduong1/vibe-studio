@@ -36,6 +36,8 @@ task.
   screen profiles.
 - [x] Prioritize screen evidence over OSC and generic activity fallback.
 - [x] Detect Working, Needs Input, Done, Idle/Unknown, and No Agent.
+- [x] Annotate Claude's input-ready state with live footer-derived background
+  shell/monitor/team/local-agent counts without changing lifecycle or rollups.
 - [x] Preserve unseen Done until the background result is viewed.
 - [x] Keep a viewed blocked prompt blocked until new terminal evidence clears
   it.

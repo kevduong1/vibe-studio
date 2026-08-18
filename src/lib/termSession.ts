@@ -24,6 +24,7 @@ import {
 import {
   boundedLogicalTail,
   classifyAgentScreen,
+  extractAgentScreenAnnotations,
   normalizeAgentScreenLines,
 } from "./agentProfiles";
 import type { AgentKind, AgentRuntimeState } from "./agentState";
@@ -594,7 +595,13 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     const state = useAgentRuntimeStore.getState().states[id];
     if (!state) return;
     const generation = state.generation;
-    const classification = classifyAgentScreen(state.kind, logicalScreenTail(), true);
+    const logicalLines = logicalScreenTail();
+    const classification = classifyAgentScreen(state.kind, logicalLines, true);
+    const annotations = extractAgentScreenAnnotations(
+      state.kind,
+      logicalLines,
+      true,
+    );
     const delay = classification.strong
       ? 0
       : classification.lifecycle === "idle"
@@ -607,7 +614,7 @@ export function createTermSession(opts: TermSessionOptions): TermSession {
     // writes, but the debounce coalesces them into a single landing.
     const land = () => {
       noteAgentPromptOutput(id, generation);
-      applyAgentScreen(id, generation, classification, watched());
+      applyAgentScreen(id, generation, classification, watched(), annotations);
       settleAgentPromptTurn(id, generation, classification);
     };
     if (classification.strong) {

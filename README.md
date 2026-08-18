@@ -95,7 +95,9 @@ app session:
 - A global **Agent Sessions** view (the first activity-rail item, the titlebar
   shortcut, or **⌘⇧I**) combines both docks in attention / active / quiet
   sections, with exact-terminal navigation, a bounded review-context peek,
-  independent review status, and check evidence
+  independent review status, and check evidence. Claude background shells,
+  monitors, teams, and local agents appear as a live count/summary chip without
+  making an otherwise input-ready session look Working
 - Drag & drop tabs into splits; the layout survives workspace switches during
   the current app session, and a relaunch starts with an empty dock
 - Drop a file or image from Finder onto a pane to paste its path — image
@@ -118,7 +120,9 @@ below it, with Worktrees available as a tab inside Source Control.
   session you were about to select.
 - Every row includes a state-aware pixel-art avatar, agent identity,
   terminal/topic title, project, elapsed time, textual lifecycle state, and
-  separate review/check evidence. The avatar character follows the source
+  separate background/review/check evidence. Idle Claude sessions with live
+  background tasks remain safely promptable and read, for example,
+  **Idle · 1 shell running**. The avatar character follows the source
   project's editable color and the detected agent: Blue uses Athena/Zeus,
   Purple Hera/Hades, Green Artemis/Demeter, and Orange Hermes/Hephaestus for
   Claude/Codex respectively; Pink uses Aphrodite, Cyan Poseidon, Yellow Apollo,

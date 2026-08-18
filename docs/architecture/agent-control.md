@@ -33,6 +33,8 @@ The snapshot contains stable workspace paths, terminal UUIDs, scope, requested
 tab kind (nullable for plain shells), detected/effective agent kind, occupancy,
 occupant PID, monotonic generation,
 lifecycle, seen state, transition time, and bounded reason/authority/rule IDs.
+It also carries the live background-work count and CLI-authored noun summary;
+this is read-only semantic context containing no command text.
 The existing `kind` field remains the detected kind while an occupant is live;
 the additive `requestedKind` field explains dedicated-tab defaults and
 cross-kind occupants without breaking existing clients.

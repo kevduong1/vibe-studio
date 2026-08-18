@@ -21,6 +21,7 @@ import {
   useAgentRuntimeStore,
 } from "../stores/agentRuntime";
 import {
+  agentStateLabel,
   agentStateTooltip,
   displayAgentState,
   displayLabel,
@@ -93,9 +94,15 @@ const TerminalPane = memo(function TerminalPane({
   const rawTopic = useTerminal((state) => state.paneTitle[terminal.id]);
   const agentPresent = terminal.kind !== "shell" || runtime?.occupancy === "present";
   const display = displayAgentState(runtime);
+  const showSemantic =
+    display === "working" ||
+    display === "starting" ||
+    display === "blocked" ||
+    display === "done" ||
+    (display === "idle" && Boolean(runtime?.background));
   const semantic =
-    display === "working" || display === "starting" || display === "blocked" || display === "done"
-      ? displayLabel(display)
+    showSemantic
+      ? runtime ? agentStateLabel(runtime) : displayLabel(display)
       : "";
   const topic = agentPaneTitle(
     runtime?.kind ?? (terminal.kind === "shell" ? "claude" : terminal.kind),

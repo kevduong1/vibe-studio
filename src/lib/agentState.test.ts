@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentAlertAction,
+  agentStateLabel,
   agentStateTooltip,
   displayAgentState,
   rollupAgentStates,
@@ -28,6 +29,27 @@ describe("semantic notification edges", () => {
   it("explains when the detected occupant differs from the tab default", () => {
     const state = { ...runtime("idle", true), requestedKind: "claude" as const };
     expect(agentStateTooltip(state)).toContain("Codex — Idle\nTab default: Claude");
+  });
+
+  it("composes background work into labels and tooltips without changing idle", () => {
+    const state = {
+      ...runtime("idle", true),
+      background: { count: 1, summary: "1 shell" },
+    };
+    expect(displayAgentState(state)).toBe("idle");
+    expect(agentStateLabel(state)).toBe("Idle · 1 shell running");
+    expect(agentStateTooltip(state)).toContain("Background: 1 shell");
+  });
+
+  it("does not create or dismiss an alert for an annotation-only edge", () => {
+    const idle = runtime("idle", true);
+    expect(
+      agentAlertAction(idle, {
+        ...idle,
+        background: { count: 2, summary: "2 shells" },
+        changedAt: 2,
+      }),
+    ).toBe("none");
   });
 
   it("alerts once for background blocked and not on redraw", () => {

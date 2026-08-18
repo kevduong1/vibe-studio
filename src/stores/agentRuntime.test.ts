@@ -49,12 +49,14 @@ const screen = (
   lifecycle: "working" | "blocked" | "idle" | "unknown",
   watched: boolean,
   extra: { reason?: "permission" | "question"; matchedRule?: string } = {},
+  annotations: { background?: { count: number; summary: string } } = {},
 ) => {
   applyAgentScreen(
     id,
     state(id).generation,
     { lifecycle, strong: lifecycle === "blocked", ...extra },
     watched,
+    annotations,
   );
 };
 
@@ -398,6 +400,88 @@ describe("agent runtime transitions", () => {
     expect(state("a")).toMatchObject({ lifecycle: "working", authority: "screen" });
     applyAgentScreen("a", 1, { lifecycle: "unknown", strong: false }, false);
     expect(state("a")).toMatchObject({ lifecycle: "working", authority: "activity" });
+  });
+});
+
+describe("background-work annotations", () => {
+  const oneShell = { background: { count: 1, summary: "1 shell" } };
+  const twoShells = { background: { count: 2, summary: "2 shells" } };
+
+  it("sets, refreshes, retains, and conclusively clears footer evidence", () => {
+    register("a");
+    makePresent("a");
+    screen("a", "idle", true, { matchedRule: "claude.idle" }, oneShell);
+    expect(state("a").background).toEqual(oneShell.background);
+
+    screen("a", "idle", true, { matchedRule: "claude.idle" }, twoShells);
+    expect(state("a").background).toEqual(twoShells.background);
+
+    screen("a", "unknown", true);
+    expect(state("a").background).toEqual(twoShells.background);
+    screen("a", "blocked", true, { reason: "permission", matchedRule: "permission" });
+    expect(state("a").background).toEqual(twoShells.background);
+
+    screen("a", "working", true, { matchedRule: "claude.work" });
+    expect(state("a").background).toBeUndefined();
+  });
+
+  it("retains the annotation through Claude's busy override branch", () => {
+    register("a");
+    makePresent("a");
+    screen("a", "idle", true, { matchedRule: "claude.idle" }, oneShell);
+    applyAgentActivity("a", { busy: true, attention: false }, true);
+    screen("a", "idle", true, { matchedRule: "claude.idle" });
+    expect(state("a")).toMatchObject({
+      lifecycle: "working",
+      authority: "activity",
+      background: oneShell.background,
+    });
+  });
+
+  it("reuses equal parsed values without publishing a repaint", () => {
+    register("a");
+    makePresent("a");
+    screen("a", "idle", true, { matchedRule: "claude.idle" }, oneShell);
+    const previous = state("a");
+    const transitions: unknown[] = [];
+    const unsubscribe = subscribeAgentTransitions((transition) => transitions.push(transition));
+
+    screen("a", "idle", true, { matchedRule: "claude.idle" }, {
+      background: { ...oneShell.background },
+    });
+
+    expect(state("a")).toBe(previous);
+    expect(transitions).toHaveLength(0);
+    unsubscribe();
+  });
+
+  it("retains through an occupancy mask but clears on exit and replacement", () => {
+    register("a");
+    makePresent("a", 42);
+    screen("a", "idle", true, { matchedRule: "claude.idle" }, oneShell);
+    const background = state("a").background;
+    const changedAt = state("a").changedAt;
+
+    markAgentProcessQueryFailed(["a"]);
+    expect(state("a")).toMatchObject({ background, changedAt });
+    applyAgentProcessResult("a", 42, 1);
+    expect(state("a")).toMatchObject({ background, changedAt });
+
+    applyAgentProcessResult("a", 43, 1);
+    expect(state("a").background).toBeUndefined();
+    screen("a", "idle", true, { matchedRule: "claude.idle" }, oneShell);
+    markAgentTerminalExited("a");
+    expect(state("a").background).toBeUndefined();
+  });
+
+  it("keeps unseen Done semantics when completion clears background work", () => {
+    register("a");
+    makePresent("a");
+    screen("a", "idle", true, { matchedRule: "claude.idle" }, oneShell);
+    screen("a", "working", false, { matchedRule: "claude.work" }, oneShell);
+    screen("a", "idle", false, { matchedRule: "claude.idle" });
+    expect(state("a").background).toBeUndefined();
+    expect(displayAgentState(state("a"))).toBe("done");
   });
 });
 

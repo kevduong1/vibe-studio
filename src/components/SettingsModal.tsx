@@ -474,7 +474,7 @@ function AgentDetectionDiagnostics() {
                   : `${runtime.kind} discovered`} · {runtime.terminalId.slice(0, 8)} · generation {runtime.generation}
             </span>
             <span className="settings-row-status">
-              {runtime.occupancy} / {runtime.lifecycle} · pid {runtime.occupantPid ?? "none"} · authority {runtime.authority ?? "none"} · rule {runtime.matchedRule ?? "none"}
+              {runtime.occupancy} / {runtime.lifecycle} · pid {runtime.occupantPid ?? "none"} · authority {runtime.authority ?? "none"} · rule {runtime.matchedRule ?? "none"} · background {runtime.background?.summary ?? "none"}
             </span>
             <span className="settings-row-status" title={runtime.workspacePath}>
               {runtime.scope} · {runtime.workspacePath}

@@ -26,6 +26,13 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentBackgroundWork {
+    count: u64,
+    summary: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentControlSnapshot {
     terminal_id: String,
     workspace_path: String,
@@ -41,6 +48,7 @@ pub struct AgentControlSnapshot {
     authority: Option<String>,
     reason: Option<String>,
     matched_rule: Option<String>,
+    background: Option<AgentBackgroundWork>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1184,6 +1192,7 @@ mod tests {
             authority: None,
             reason: None,
             matched_rule: None,
+            background: None,
         }
     }
 
@@ -1194,6 +1203,18 @@ mod tests {
             &agent("a", "working"),
             &["idle".to_string()]
         ));
+    }
+
+    #[test]
+    fn snapshot_exposes_privacy_bounded_background_work() {
+        let mut snapshot = agent("a", "idle");
+        snapshot.background = Some(AgentBackgroundWork {
+            count: 3,
+            summary: "2 shells, 1 monitor".to_string(),
+        });
+        let value = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(value["background"]["count"], 3);
+        assert_eq!(value["background"]["summary"], "2 shells, 1 monitor");
     }
 
     #[test]

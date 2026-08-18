@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   boundedLogicalTail,
   classifyAgentScreen,
+  extractAgentScreenAnnotations,
 } from "./agentProfiles";
 
 /**
@@ -108,6 +109,66 @@ const codex = {
   auth: ["Not signed in"],
   quota: ["You've hit your usage limit. Upgrade to Plus to continue."],
 } as const;
+
+describe("agent screen annotations", () => {
+  it.each([
+    ["1 shell", 1],
+    ["2 shells", 2],
+    ["1 monitor", 1],
+    ["3 monitors", 3],
+    ["1 team", 1],
+    ["2 teams", 2],
+    ["1 local agent", 1],
+    ["4 local agents", 4],
+  ])("extracts the Claude footer task chip %s", (summary, count) => {
+    expect(
+      extractAgentScreenAnnotations("claude", [
+        "⏺ Finished the foreground turn",
+        "> ",
+        `  ⏵⏵ auto mode on · ${summary} · ← for agents`,
+      ]),
+    ).toEqual({ background: { count, summary } });
+  });
+
+  it("sums comma-joined task groups and shares box normalization", () => {
+    expect(
+      extractAgentScreenAnnotations("claude", [
+        "│ >                                            │",
+        "│ ⏵⏵ auto mode on · 2 shells, 1 monitor, 3 local agents · ← for agents │",
+      ]),
+    ).toEqual({
+      background: {
+        count: 6,
+        summary: "2 shells, 1 monitor, 3 local agents",
+      },
+    });
+  });
+
+  it("never treats scrollback, prose, drafts, or an obscured footer as live work", () => {
+    for (const lines of [
+      ["✻ Churned for 3m 12s · 1 shell still running"],
+      ["I found 2 shells and 1 local agent in the test fixtures."],
+      ["> kill the 2 shells please"],
+      [
+        "⏵⏵ auto mode on · 1 shell · ← for agents",
+        "Bash command",
+        "Do you want to proceed?",
+        "❯ 1. Yes",
+        "  2. No",
+      ],
+    ]) {
+      expect(extractAgentScreenAnnotations("claude", lines)).toEqual({});
+    }
+  });
+
+  it("has no Codex annotation rules", () => {
+    expect(
+      extractAgentScreenAnnotations("codex", [
+        "⏵⏵ auto mode on · 2 shells · ← for agents",
+      ]),
+    ).toEqual({});
+  });
+});
 
 describe("agent screen profiles", () => {
   it("recognizes a framed Claude composer, empty or holding a draft", () => {

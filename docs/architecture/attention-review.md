@@ -146,6 +146,11 @@ accent-derived selection, focus, and state styling uses that terminal's
 path-keyed project color rather than the currently active workspace's color;
 the selected review detail inherits the same project scope.
 
+Rows also show Claude's live background-task summary as an orthogonal chip.
+Idle-with-background reads `Idle · 1 shell running`, stays in the normal quiet
+section, and does not affect attention ordering, acknowledgement, review state,
+or notifications.
+
 ## Check pipeline execution and trust
 
 `.vscode/tasks.json` build/test tasks are selectable roots. Dependencies may

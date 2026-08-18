@@ -4,7 +4,10 @@ import {
   type AgentProcessInfo,
   type AgentProcessTarget,
 } from "../lib/ipc";
-import type { ScreenClassification } from "../lib/agentProfiles";
+import type {
+  AgentScreenAnnotations,
+  ScreenClassification,
+} from "../lib/agentProfiles";
 import {
   buildAgentDetectionRegistry,
   type AgentDetectionRegistry,
@@ -347,6 +350,7 @@ export function markAgentLaunching(terminalId: string): void {
       authority: undefined,
       reason: undefined,
       matchedRule: undefined,
+      background: undefined,
     }),
   );
 }
@@ -371,6 +375,7 @@ export function markAgentTerminalExited(terminalId: string): void {
       authority: undefined,
       reason: undefined,
       matchedRule: undefined,
+      background: undefined,
     }),
   );
   stopMonitorIfIdle();
@@ -426,6 +431,26 @@ const settled = (signal?: AgentActivitySignal): boolean =>
 const activityLifecycle = (signal?: AgentActivitySignal): AgentLifecycle =>
   signal?.busy ? "working" : notified(signal) ? "blocked" : settled(signal) ? "idle" : "unknown";
 
+/** Only a conclusive live footer read may set, refresh, or clear background
+ * work. Reuse the current object when its parsed value is unchanged so
+ * repeated xterm repaints stay reference-stable. */
+const screenAnnotationPatch = (
+  current: AgentRuntimeState,
+  classification: ScreenClassification,
+  annotations: AgentScreenAnnotations,
+): Partial<AgentRuntimeState> => {
+  if (
+    classification.lifecycle !== "idle" &&
+    classification.lifecycle !== "working"
+  ) return {};
+  const next = annotations.background;
+  if (
+    current.background?.count === next?.count &&
+    current.background?.summary === next?.summary
+  ) return {};
+  return { background: next };
+};
+
 const fallbackFor = (
   current: AgentRuntimeState,
   watched: boolean,
@@ -472,6 +497,7 @@ export function applyAgentScreen(
   generation: number,
   classification: ScreenClassification,
   watched: boolean,
+  annotations: AgentScreenAnnotations = {},
 ): void {
   const current = useAgentRuntimeStore.getState().states[terminalId];
   if (
@@ -506,14 +532,17 @@ export function applyAgentScreen(
     terminalId,
     changed(
       current,
-      lifecyclePatch(
-        current,
-        classification.lifecycle,
-        "screen",
-        watched,
-        classification.reason,
-        classification.matchedRule,
-      ),
+      {
+        ...lifecyclePatch(
+          current,
+          classification.lifecycle,
+          "screen",
+          watched,
+          classification.reason,
+          classification.matchedRule,
+        ),
+        ...screenAnnotationPatch(current, classification, annotations),
+      },
     ),
   );
 }
@@ -623,6 +652,7 @@ export function applyAgentProcessResult(
         authority: undefined,
         reason: undefined,
         matchedRule: undefined,
+        background: undefined,
       }),
     );
     return;
@@ -662,6 +692,7 @@ export function applyAgentProcessResult(
     authority: undefined,
     reason: undefined,
     matchedRule: undefined,
+    background: undefined,
   };
   const startupSignal = fallbacks.get(terminalId)?.activity;
   const startupPatch = firstOccupant && (startupSignal?.busy || startupSignal?.attention)

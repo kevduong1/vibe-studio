@@ -32,6 +32,8 @@ closed and empty; terminals exist only after an explicit user or task action.
 - `seen`: whether the current blocked/completed state has been viewed
 - `authority`: `screen | osc | activity`
 - optional structured `reason` and diagnostic `matchedRule`
+- optional screen-derived `background` count and CLI-authored summary; this is
+  an annotation, never a lifecycle or input-availability state
 - `generation`: incremented when an agent appears or its PID/detected kind
   changes
 
@@ -39,7 +41,7 @@ Presentation is derived, never stored. In particular, **Done** means a present
 agent is `lifecycle === "idle"` with `seen === false`; the store (below) only
 ever sets `seen: false` on that idle transition when a work stretch actually
 ran, so by the time this pure derivation sees it, Done already excludes idle
-reached without background work. The display states are `starting`, `working`,
+reached without an observed work stretch. The display states are `starting`, `working`,
 `blocked`, `done`, `idle`, `unknown`, and `absent`. Blocked outranks the
 `starting`/launch-grace occupancy: an agent that asks for permission before its
 PID has even been captured still displays as blocked rather than Working, so
@@ -127,10 +129,11 @@ the bound to raw rows would let frame chrome spend the caller's budget and
 push real evidence out of the window.
 
 `src/lib/agentProfiles.ts` contains independently authored profiles for Claude
-Code 2.1.233 (schema version 3) and Codex CLI 0.147.0 (schema version 4),
-including their structured multi-question overlays. Every profile declares a
-schema version and authored-for CLI version; Settings exposes rule counts and
-current privacy-bounded match diagnostics.
+Code 2.1.233 lifecycle UI plus a Claude 2.1.235 live-captured background footer
+(schema version 4), and Codex CLI 0.147.0 (schema version 4), including their
+structured multi-question overlays. Every profile declares a schema version
+and authored-for CLI provenance; Settings exposes rule counts and current
+privacy-bounded match diagnostics.
 
 Before rules run, the tail is normalized in two passes: wrapped physical rows
 are joined into logical lines and trailing blank rows are trimmed
@@ -139,6 +142,16 @@ stripped from each line and pure horizontal-rule lines are dropped entirely
 (`normalizeAgentScreenLines` in `agentProfiles.ts`, idempotent —
 `classifyAgentScreen` applies it again for free on tails a caller already
 prepared). Only the resulting lines are matched against rules.
+
+Background work uses a separate annotation pass over that same already-
+normalized tail. Claude's live footer renders a middot-delimited task chip such
+as `⏵⏵ auto mode on · 2 shells, 1 monitor · ← for agents`. The
+extractor examines only the bottom four logical lines, preserves the CLI's
+comma-joined summary, and sums its shell/monitor/team/local-agent counts. Its
+right segment boundary rejects the stale turn-summary scrollback form
+(`· 1 shell still running`), which must never become evidence. Codex has no
+annotation rule because it remains visibly Working while it waits for a
+background terminal.
 
 The scan walks the bounded tail newest line to oldest and stops at the first
 line any eligible rule matches (a rule is eligible once the line's depth from
@@ -218,6 +231,16 @@ activity tracker's `attention` ping, never its `completed` turn-boundary
 signal — see below) without touching lifecycle. The occupant exiting or being
 replaced by a new PID unconditionally resets lifecycle to `unknown` under a
 fresh generation, independent of everything below.
+
+The background annotation has its own evidence discipline. A conclusive idle
+or working screen read sets, updates, or clears it; equal count/summary values
+reuse the existing object so repaints do not publish. Unknown reads, blocked
+overlays, Claude's busy-output override, generic activity reconciliation, and
+temporary process-query masking retain it because none proves the footer
+repainted without the chip. Agent exit, launch, proven absence, PID/kind
+replacement, and every new generation clear it explicitly. Nothing in prompt
+queue settlement, Done derivation, rollup priority, or notification edges reads
+the annotation.
 
 The activity fallback's own priority, inside `fallbackFor`, is: a `busy`
 signal wins unconditionally, checked before anything else and regardless of
@@ -336,7 +359,13 @@ below a divider, with Worktrees as an internal Source Control tab. The view
 remains available with no workspace
 open, preserves stable live-session sections, routes to the exact
 workspace/group/tab/session, and projects review state beside (never into)
-lifecycle state. Each row also resolves a large 80px pixel-art avatar tile
+lifecycle state. Agent Sessions shows the background summary as a small row
+chip. An idle row reads `Idle · 1 shell running`; working/Done rows keep their
+lifecycle chip and show the background summary alongside it. The row remains
+in its ordinary active/quiet section because background work does not require
+attention. Dock badges and semantic tooltips expose the same summary, while
+rollups continue to treat the session as idle. Each row also resolves a large
+80px pixel-art avatar tile
 through the pure `agentAvatars.ts` personality/sprite/state model and the
 `AgentAvatar.tsx` Canvas renderer. Character identity is a pure function of the
 project's current palette index and the *detected* runtime kind (not the tab's

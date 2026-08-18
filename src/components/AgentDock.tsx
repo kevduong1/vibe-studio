@@ -22,6 +22,7 @@ import {
   useAgentRuntimeStore,
 } from "../stores/agentRuntime";
 import {
+  agentStateLabel,
   agentStateTooltip,
   displayAgentState,
   displayLabel,
@@ -80,9 +81,15 @@ function AgentBadge({
     [terminal.title, agentTitleBase(terminal.workspacePath), basename(terminal.workspacePath)],
   );
   const display = displayAgentState(runtime);
+  const showSemantic =
+    display === "working" ||
+    display === "starting" ||
+    display === "blocked" ||
+    display === "done" ||
+    (display === "idle" && Boolean(runtime?.background));
   const semantic =
-    display === "working" || display === "starting" || display === "blocked" || display === "done"
-      ? displayLabel(display)
+    showSemantic
+      ? runtime ? agentStateLabel(runtime) : displayLabel(display)
       : "";
   if (!topic && !semantic) return null;
 

@@ -12,6 +12,7 @@ import {
   type AgentSessionsSection,
 } from "../lib/agentSessionsView";
 import {
+  agentStateLabel,
   displayAgentState,
   displayLabel,
   type AgentKind,
@@ -98,6 +99,7 @@ function AgentSessionRow({
     (state) => selectAgentSubagents(state, item.runtime.terminalId).length,
   );
   const display = displayAgentState(item.runtime);
+  const stateLabel = agentStateLabel(item.runtime);
   const avatar = selectAgentAvatar(
     projectColorIndex,
     item.runtime.kind,
@@ -119,13 +121,13 @@ function AgentSessionRow({
       className="agent-session-row accent-scope"
       style={{ "--accent": projectColor } as CSSProperties}
       onClick={() => onOpen(item.runtime.terminalId)}
-      title={`Open ${item.title} in ${item.project}\n${avatarIdentity} — ${displayLabel(display)}`}
+      title={`Open ${item.title} in ${item.project}\n${avatarIdentity} — ${stateLabel}`}
     >
       <span
         className={`agent-session-avatar ${display}${avatar.subdued ? " subdued" : ""}${display === "blocked" && !item.runtime.seen ? " unseen" : ""}`}
         role="img"
-        aria-label={`${avatarIdentity}, ${displayLabel(display)}`}
-        title={`${avatarIdentity} — ${displayLabel(display)}`}
+        aria-label={`${avatarIdentity}, ${stateLabel}`}
+        title={`${avatarIdentity} — ${stateLabel}`}
       >
         <AgentAvatar
           avatar={avatar}
@@ -146,9 +148,21 @@ function AgentSessionRow({
           )}
         </span>
         <span className="agent-session-chips">
-          <span className={`agent-session-chip lifecycle ${display}`}>
-            {displayLabel(display)}
-          </span>
+          {(!item.runtime.background || display !== "idle") && (
+            <span className={`agent-session-chip lifecycle ${display}`}>
+              {displayLabel(display)}
+            </span>
+          )}
+          {item.runtime.background && (
+            <span
+              className="agent-session-chip background"
+              title={`Background: ${item.runtime.background.summary}`}
+            >
+              {display === "idle"
+                ? stateLabel
+                : `${item.runtime.background.summary} running`}
+            </span>
+          )}
           {item.task && (
             <span className={`agent-session-chip review ${item.task.reviewState}`}>
               {REVIEW_LABEL[item.task.reviewState]}

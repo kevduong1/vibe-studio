@@ -439,6 +439,13 @@
   height: 10px;
 }
 
+.agent-session-chip.background {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-subtle));
+  background: var(--bg-active);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 .agent-session-chip.lifecycle.blocked,
 .agent-session-chip.review.stale,
 .agent-session-chip.evidence.conflicted,

@@ -1,4 +1,9 @@
-import type { AgentKind, AgentLifecycle, AgentReason } from "./agentState";
+import type {
+  AgentBackgroundWork,
+  AgentKind,
+  AgentLifecycle,
+  AgentReason,
+} from "./agentState";
 
 interface DetectionRule {
   id: string;
@@ -57,16 +62,17 @@ export function normalizeAgentScreenLines(
 }
 
 /**
- * Authored against Claude Code 2.1.233, verified against the shipped binary's
- * rendered strings. Claude keeps its composer on screen while it works, so
- * working evidence lives in the footer hint row BELOW the composer and wins on
- * recency; spinner verbs are randomized from a large list and are matched by
- * frame glyph + gerund shape rather than by enumerating them.
+ * Lifecycle rules were authored against Claude Code 2.1.233. The independent
+ * background-work footer annotation was live-captured on 2.1.235. Claude keeps
+ * its composer on screen while it works, so working evidence lives in the
+ * footer hint row BELOW the composer and wins on recency; spinner verbs are
+ * randomized from a large list and are matched by frame glyph + gerund shape
+ * rather than by enumerating them.
  */
 export const CLAUDE_PROFILE: AgentDetectionProfile = {
   kind: "claude",
-  version: 3,
-  authoredFor: "Claude Code 2.1.233",
+  version: 4,
+  authoredFor: "Claude Code 2.1.233; background footer 2.1.235",
   executableNames: ["claude"],
   rules: [
     // Permission and plan-approval dialogs. Options are numbered rows whose
@@ -129,6 +135,50 @@ const UNKNOWN_SCREEN: ScreenClassification = {
   lifecycle: "unknown",
   strong: false,
 };
+
+export interface AgentScreenAnnotations {
+  background?: AgentBackgroundWork;
+}
+
+/**
+ * A live Claude footer chip is a middot-delimited, comma-joined task summary:
+ *
+ *   ⏵⏵ auto mode on · 2 shells, 1 monitor · ← for agents
+ *
+ * The right segment boundary deliberately rejects the visually similar
+ * scrollback summary (`· 1 shell still running`). Only the bottom four logical
+ * lines are eligible, keeping ordinary transcript prose out of this channel.
+ */
+const CLAUDE_FOOTER_TASKS =
+  /(?:^|·\s*)(\d+\s+(?:shells?|monitors?|teams?|local agents?)(?:,\s*\d+\s+(?:shells?|monitors?|teams?|local agents?))*)(?=\s*·|\s*$)/;
+const CLAUDE_TASK_COUNT =
+  /(\d+)\s+(?:shells?|monitors?|teams?|local agents?)/g;
+
+/** Extract orthogonal screen annotations without consuming lifecycle rules. */
+export function extractAgentScreenAnnotations(
+  kind: AgentKind,
+  logicalLines: readonly string[],
+  normalized = false,
+): AgentScreenAnnotations {
+  if (kind !== "claude") return {};
+  const prepared = normalized
+    ? logicalLines
+    : normalizeAgentScreenLines(logicalLines);
+  const lines = prepared.slice(-4);
+  for (let index = lines.length - 1; index >= 0; index--) {
+    CLAUDE_FOOTER_TASKS.lastIndex = 0;
+    const match = CLAUDE_FOOTER_TASKS.exec(lines[index]);
+    if (!match) continue;
+    const summary = match[1];
+    let count = 0;
+    CLAUDE_TASK_COUNT.lastIndex = 0;
+    for (const group of summary.matchAll(CLAUDE_TASK_COUNT)) {
+      count += Number(group[1]);
+    }
+    if (count > 0) return { background: { count, summary } };
+  }
+  return {};
+}
 
 /** Classify only current tail evidence. The scan walks newest line to oldest
  * and stops at the first line any eligible rule matches, so recency wins
